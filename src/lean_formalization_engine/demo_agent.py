@@ -1,104 +1,129 @@
 from __future__ import annotations
 
-from .models import AgentTurn, FormalizationPlan, LeanDraft, TheoremSpec, to_jsonable
+import json
+from dataclasses import asdict
+from typing import Optional, Tuple
+
+from .models import (
+    AgentTurn,
+    CompileAttempt,
+    ContextPack,
+    FormalizationPlan,
+    LeanDraft,
+    SourceRef,
+    TheoremSpec,
+)
 
 
 class DemoFormalizationAgent:
     """Deterministic agent used to exercise the scaffold end to end."""
 
-    def draft_spec(self, normalized_text: str) -> AgentTurn:
+    name = "demo_zero_add_agent"
+
+    def draft_theorem_spec(
+        self,
+        source_ref: SourceRef,
+        normalized_text: str,
+    ) -> Tuple[TheoremSpec, AgentTurn]:
+        lowered = normalized_text.lower()
+        if "0 + n = n" not in normalized_text and "zero on the left" not in lowered:
+            raise ValueError(
+                "The demo agent only supports the shipped zero-add example. "
+                "Add a real provider adapter for broader theorem coverage."
+            )
+
         theorem_spec = TheoremSpec(
-            title="Zero Add",
-            informal_statement=normalized_text,
-            assumptions=["n is a natural number"],
+            title="Zero-add on natural numbers",
+            informal_statement=normalized_text.strip(),
+            assumptions=["n : Nat"],
             conclusion="0 + n = n",
-            symbols=["0", "+", "n", "Nat"],
+            symbols=["0", "+", "Nat"],
             ambiguities=[],
+            paraphrase="For every natural number n, adding zero on the left returns n.",
         )
-        prompt = (
-            "Read the theorem text and produce a structured theorem specification with "
-            "assumptions, conclusion, symbols, and ambiguities."
-        )
-        raw_response = (
-            "Structured theorem spec: title=Zero Add, assumptions=[n : Nat], "
-            "conclusion=0 + n = n, ambiguities=[]"
-        )
-        return AgentTurn(
-            prompt=prompt,
-            request_payload={"normalized_text": normalized_text},
-            raw_response=raw_response,
-            parsed_output=theorem_spec,
-        )
-
-    def draft_plan(self, theorem_spec: TheoremSpec) -> AgentTurn:
-        plan = FormalizationPlan(
-            theorem_name="zero_add_demo",
-            imports=[],
-            helper_definitions=[],
-            proof_strategy=[
-                "Use the core theorem Nat.zero_add.",
-                "Finish the goal with simpa.",
-            ],
-            target_statement="theorem zero_add_demo (n : Nat) : 0 + n = n",
-        )
-        prompt = (
-            "Given the approved theorem specification, choose a theorem name, imports, "
-            "target statement, and proof strategy."
-        )
-        raw_response = (
-            "Plan: theorem zero_add_demo (n : Nat) : 0 + n = n := by "
-            "simpa using Nat.zero_add n"
-        )
-        return AgentTurn(
-            prompt=prompt,
-            request_payload={"theorem_spec": to_jsonable(theorem_spec)},
-            raw_response=raw_response,
-            parsed_output=plan,
-        )
-
-    def draft_lean(self, theorem_spec: TheoremSpec, plan: FormalizationPlan) -> AgentTurn:
-        draft = LeanDraft(
-            theorem_name=plan.theorem_name,
-            code=(
-                "theorem zero_add_demo (n : Nat) : 0 + n = n := by\n"
-                "  simpa using Nat.zero_add n\n"
-            ),
-            rationale=[
-                "The theorem uses only core Lean naturals.",
-                "Nat.zero_add discharges the goal directly.",
-            ],
-        )
-        prompt = "Produce a full Lean file that matches the approved formalization plan."
-        raw_response = draft.code
-        return AgentTurn(
-            prompt=prompt,
+        turn = AgentTurn(
             request_payload={
-                "theorem_spec": to_jsonable(theorem_spec),
-                "plan": to_jsonable(plan),
+                "source_path": source_ref.path,
+                "normalized_text": normalized_text,
             },
-            raw_response=raw_response,
-            parsed_output=draft,
+            prompt=(
+                "Extract a structured theorem specification from the normalized theorem text.\n"
+                f"Source: {source_ref.path}\n"
+            ),
+            raw_response=json.dumps(asdict(theorem_spec), indent=2, sort_keys=True),
         )
+        return theorem_spec, turn
 
-    def repair_lean(
+    def draft_formalization_plan(
         self,
         theorem_spec: TheoremSpec,
-        plan: FormalizationPlan,
-        previous_draft: LeanDraft,
-        diagnostics: str,
-        attempt: int,
-    ) -> AgentTurn:
-        prompt = "Repair the Lean draft using the compile diagnostics."
-        raw_response = previous_draft.code
-        return AgentTurn(
-            prompt=prompt,
-            request_payload={
-                "theorem_spec": to_jsonable(theorem_spec),
-                "plan": to_jsonable(plan),
-                "previous_draft": to_jsonable(previous_draft),
-                "diagnostics": diagnostics,
-                "attempt": attempt,
-            },
-            raw_response=raw_response,
-            parsed_output=previous_draft,
+        context_pack: ContextPack,
+    ) -> Tuple[FormalizationPlan, AgentTurn]:
+        plan = FormalizationPlan(
+            theorem_name="zero_add_demo",
+            imports=["FormalizationEngineWorkspace.Basic"],
+            helper_definitions=[],
+            target_statement="theorem zero_add_demo (n : Nat) : 0 + n = n",
+            proof_sketch=[
+                "Import the local basic workspace module.",
+                "Use the core theorem `Nat.zero_add`.",
+                "Close the goal with `simpa`.",
+            ],
         )
+        turn = AgentTurn(
+            request_payload={
+                "theorem_spec": asdict(theorem_spec),
+                "context_pack": asdict(context_pack),
+            },
+            prompt=(
+                "Produce a Lean-facing plan for the approved theorem spec.\n"
+                f"Spec title: {theorem_spec.title}\n"
+                f"Imports available: {', '.join(context_pack.recommended_imports)}\n"
+            ),
+            raw_response=json.dumps(asdict(plan), indent=2, sort_keys=True),
+        )
+        return plan, turn
+
+    def draft_lean_file(
+        self,
+        plan: FormalizationPlan,
+        attempt: int,
+        previous_result: Optional[CompileAttempt],
+    ) -> Tuple[LeanDraft, AgentTurn]:
+        diagnostics = ""
+        if previous_result is not None:
+            diagnostics = previous_result.stderr or previous_result.stdout
+
+        content = "\n".join(
+            [
+                "import FormalizationEngineWorkspace.Basic",
+                "",
+                "theorem zero_add_demo (n : Nat) : 0 + n = n := by",
+                "  simpa using Nat.zero_add n",
+                "",
+            ]
+        )
+        draft = LeanDraft(
+            theorem_name=plan.theorem_name,
+            module_name="FormalizationEngineWorkspace.Generated",
+            imports=plan.imports,
+            content=content,
+            rationale="Use the standard library theorem `Nat.zero_add` directly.",
+        )
+        prompt = (
+            "Generate a full Lean file for the approved plan.\n"
+            f"Attempt: {attempt}\n"
+            f"Target statement: {plan.target_statement}\n"
+        )
+        if diagnostics:
+            prompt += f"\nPrevious diagnostics:\n{diagnostics}\n"
+        turn = AgentTurn(
+            request_payload={
+                "plan": asdict(plan),
+                "attempt": attempt,
+                "previous_result": asdict(previous_result) if previous_result else None,
+            },
+            prompt=prompt,
+            raw_response=content,
+        )
+        return draft, turn

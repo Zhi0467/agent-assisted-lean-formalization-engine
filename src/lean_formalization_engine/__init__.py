@@ -1,5 +1,11 @@
-"""Agent-assisted Lean formalization engine."""
+"""Filesystem-first scaffold for theorem-to-Lean workflows."""
 
-from .workflow import FormalizationWorkflow, WorkflowOptions
+from .agents import FormalizationAgent
+from .demo_agent import DemoFormalizationAgent
+from .workflow import FormalizationWorkflow
 
-__all__ = ["FormalizationWorkflow", "WorkflowOptions"]
+__all__ = [
+    "DemoFormalizationAgent",
+    "FormalizationAgent",
+    "FormalizationWorkflow",
+]

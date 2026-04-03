@@ -1,26 +1,39 @@
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Optional, Protocol, Tuple
 
-from .models import AgentTurn, FormalizationPlan, LeanDraft, TheoremSpec
+from .models import (
+    AgentTurn,
+    CompileAttempt,
+    ContextPack,
+    FormalizationPlan,
+    LeanDraft,
+    SourceRef,
+    TheoremSpec,
+)
 
 
 class FormalizationAgent(Protocol):
-    def draft_spec(self, normalized_text: str) -> AgentTurn:
+    name: str
+
+    def draft_theorem_spec(
+        self,
+        source_ref: SourceRef,
+        normalized_text: str,
+    ) -> Tuple[TheoremSpec, AgentTurn]:
         ...
 
-    def draft_plan(self, theorem_spec: TheoremSpec) -> AgentTurn:
-        ...
-
-    def draft_lean(self, theorem_spec: TheoremSpec, plan: FormalizationPlan) -> AgentTurn:
-        ...
-
-    def repair_lean(
+    def draft_formalization_plan(
         self,
         theorem_spec: TheoremSpec,
+        context_pack: ContextPack,
+    ) -> Tuple[FormalizationPlan, AgentTurn]:
+        ...
+
+    def draft_lean_file(
+        self,
         plan: FormalizationPlan,
-        previous_draft: LeanDraft,
-        diagnostics: str,
         attempt: int,
-    ) -> AgentTurn:
+        previous_result: Optional[CompileAttempt],
+    ) -> Tuple[LeanDraft, AgentTurn]:
         ...

@@ -32,3 +32,9 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+lean_formalization_engine = [
+  "workspace_template/*",
+  "workspace_template/FormalizationEngineWorkspace/*",
+]

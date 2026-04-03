@@ -6,5 +6,5 @@ Workflow traces and generated outputs live here.
 - `canonical/` — future curated outputs worth keeping stable
 
 Each run should preserve prompts, parsed outputs, generated Lean drafts, compile logs,
-and final approved files. Build caches can be ignored; the point is to keep the
-decision-relevant artifacts in version control.
+review decisions, and final approved files. Build caches can be ignored; the point is to
+keep the decision-relevant artifacts in version control.

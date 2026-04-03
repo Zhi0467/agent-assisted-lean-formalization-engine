@@ -1,80 +1,79 @@
-# Landscape
+# External Systems Worth Borrowing From
 
-This project is not trying to be a full theorem-proving research stack on day one.
-The main goal of the current scaffold is a clean agentic engine surface with persisted
-artifacts and a Lean compile loop.
+These are the main adjacent systems relevant to this repo right now.
 
-## Lean Interaction / Proving Infrastructure
+## Lean interaction and verification
 
-### LeanDojo / LeanDojo-v2
+### `lean-dojo/LeanDojo-v2`
+URL: https://github.com/lean-dojo/LeanDojo-v2
 
-- Repo: https://github.com/lean-dojo/LeanDojo
-- Repo: https://github.com/lean-dojo/LeanDojo-v2
-- Influence here:
-  retrieval, tracing, and larger-scale Lean interaction patterns.
-- Does not solve here:
-  PDF/Markdown ingestion, explicit human checkpoints, or a small public-engine scaffold.
+Borrow:
+- ideas about Lean-facing infrastructure, tracing, and evaluation surfaces
 
-### LeanInteract
+Do not borrow as-is:
+- the repo is much broader than a lightweight scaffold and is not the right foundation for a small explicit engine
 
-- Repo: https://github.com/augustepoiroux/LeanInteract
-- Influence here:
-  future shape of a richer Lean backend if the engine graduates from whole-file compile
-  checks to command-level interaction.
-- Does not solve here:
-  theorem extraction, artifact persistence, or the human review loop.
+### `augustepoiroux/LeanInteract`
+URL: https://github.com/augustepoiroux/LeanInteract
 
-### PyPantograph
+Borrow:
+- the shape of a future Python-facing Lean backend if file-level compilation becomes too coarse
 
-- Repo: https://github.com/stanford-centaur/PyPantograph
-- Influence here:
-  another future backend option for programmatic Lean interaction from Python.
-- Does not solve here:
-  source ingestion, model orchestration, or review checkpoints.
+Do not borrow as-is:
+- it does not solve theorem extraction, human review, or artifact persistence
 
-## Natural Language To Formalization
+### `stanford-centaur/PyPantograph`
+URL: https://github.com/stanford-centaur/PyPantograph
 
-### LeanAide
+Borrow:
+- machine-to-machine Lean interaction patterns for a later richer backend
 
-- Repo: https://github.com/siddhartha-gadgil/LeanAide
-- Influence here:
-  statement-first formalization. The engine should lock the intended theorem meaning
-  before it starts proof generation.
-- Does not solve here:
-  the repo’s run-state machine, compile/repair loop, or artifact audit trail.
+Do not borrow as-is:
+- it is backend infrastructure, not a theorem-to-Lean workflow product
 
-### DeepSeek-Prover
+## Natural-language to formalization
 
-- Repo: https://github.com/deepseek-ai/DeepSeek-Prover-V1.5
-- Influence here:
-  model-side proof generation and repair intuition once a real provider is added.
-- Does not solve here:
-  turning PDFs/Markdown into approved theorem specs or handling human checkpoints.
+### `siddhartha-gadgil/LeanAide`
+URL: https://github.com/siddhartha-gadgil/LeanAide
 
-## Agent-Style Theorem Workflows
+Borrow:
+- the statement-first mentality: stabilize the formal target before chasing proof search
 
-### COPRA
+Do not borrow as-is:
+- it does not give this repo a persisted run schema or a human approval loop
 
-- Repo: https://github.com/trishullab/copra
-- Influence here:
-  bounded retry against proof-environment feedback instead of a single shot.
-- Does not solve here:
-  source ingestion, repo-local artifacts, or a clean single-engine scaffold.
+### `deepseek-ai/DeepSeek-Prover-V1.5`
+URL: https://github.com/deepseek-ai/DeepSeek-Prover-V1.5
 
-### LeanAgent
+Borrow:
+- proof-generation priors and prompt ideas once the engine has a real provider adapter
 
-- Repo: https://github.com/lean-dojo/LeanAgent
-- Influence here:
-  long-horizon theorem-proving loops and agentic search ideas.
-- Does not solve here:
-  the current product surface, which is intentionally much smaller and more auditable.
+Do not borrow as-is:
+- it is a proving/model artifact, not an auditable theorem-ingestion engine
 
-## Working Conclusion
+## Agent-style theorem workflows
 
-For this repo, the right v0 is smaller than the research systems above:
+### `trishullab/copra`
+URL: https://github.com/trishullab/copra
 
-- one engine,
-- one persisted run record,
-- explicit checkpoints,
-- whole-file Lean compile and repair,
-- future-compatible interfaces for richer backends later.
+Borrow:
+- compile or proof-environment feedback loops with bounded retries
+
+Do not borrow as-is:
+- this repo also needs source ingestion, artifact persistence, and human checkpoints
+
+### `lean-dojo/LeanAgent`
+URL: https://github.com/lean-dojo/LeanAgent
+
+Borrow:
+- the idea that theorem proving can be treated as an agentic loop rather than a single generation pass
+
+Do not borrow as-is:
+- the current repo needs a clean single-run scaffold before it grows into a more elaborate agent system
+
+## Landscape index
+
+### `WoojinCho-Ryan/awesome-autoformalization`
+URL: https://github.com/WoojinCho-Ryan/awesome-autoformalization
+
+Use this as a survey pointer when the project expands beyond the current shortlist.

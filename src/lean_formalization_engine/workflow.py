@@ -1,213 +1,355 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
 from .agents import FormalizationAgent
 from .ingest import ingest_source
 from .lean_runner import LeanRunner
 from .models import (
-    AgentTurn,
     CompileAttempt,
+    ContextPack,
     FormalizationPlan,
+    HumanDecision,
     LeanDraft,
     RunManifest,
     RunStage,
-    RunStatus,
+    SourceKind,
     SourceRef,
     TheoremSpec,
+    utc_now,
 )
-from .storage import ArtifactStore, utc_timestamp
-
-
-@dataclass
-class WorkflowOptions:
-    auto_approve_spec: bool = False
-    auto_approve_plan: bool = False
-    auto_finalize: bool = False
-    max_repair_attempts: int = 2
+from .storage import RunStore
 
 
 class FormalizationWorkflow:
     def __init__(
         self,
-        store: ArtifactStore,
+        repo_root: Path,
         agent: FormalizationAgent,
-        lean_runner: LeanRunner,
-    ) -> None:
-        self.store = store
+        lean_runner: LeanRunner | None = None,
+        max_attempts: int = 3,
+    ):
+        self.repo_root = repo_root
         self.agent = agent
-        self.lean_runner = lean_runner
+        self.max_attempts = max_attempts
+        self.artifacts_root = repo_root / "artifacts"
+        self.lean_runner = lean_runner or LeanRunner(
+            repo_root / "lean_workspace_template"
+        )
 
-    def run(self, run_id: str, source: SourceRef, options: WorkflowOptions) -> RunManifest:
-        run_dir = self.store.initialize_run(run_id)
+    def run(self, source_path: Path, run_id: str, auto_approve: bool = False) -> RunManifest:
+        store = RunStore(self.artifacts_root, run_id)
+        store.ensure()
+
+        source_ref, ingested = ingest_source(source_path)
         manifest = RunManifest(
             run_id=run_id,
-            source=source,
+            source=source_ref,
+            agent_name=self.agent.name,
+            created_at=utc_now(),
+            updated_at=utc_now(),
             current_stage=RunStage.CREATED,
-            status=RunStatus.RUNNING,
-            created_at=utc_timestamp(),
-            updated_at=utc_timestamp(),
         )
-        self._save_manifest(run_dir, manifest)
-
-        ingested = ingest_source(source)
-        self.store.write_text(run_dir, "00_input/source.txt", ingested.raw_text)
-        self.store.write_json(run_dir, "00_input/provenance.json", ingested.provenance)
-        self.store.write_text(run_dir, "01_normalized/normalized.txt", ingested.normalized_text)
-        self._advance(manifest, run_dir, RunStage.INGESTED, RunStatus.RUNNING)
-
-        theorem_spec = self._record_agent_turn(
-            run_dir=run_dir,
-            prefix="02_spec",
-            turn=self.agent.draft_spec(ingested.normalized_text),
-            parsed_filename="theorem_spec.json",
+        self._save_manifest(store, manifest)
+        store.write_text("00_input/source.txt", ingested.raw_text)
+        store.write_text("01_normalized/normalized.md", ingested.normalized_text)
+        store.write_json(
+            "00_input/provenance.json",
+            {
+                "source": source_ref,
+                "extraction_method": ingested.extraction_method,
+            },
         )
-        self._advance(manifest, run_dir, RunStage.SPEC_DRAFTED, RunStatus.RUNNING)
-
-        if not options.auto_approve_spec:
-            self.store.write_json(
-                run_dir,
-                "02_spec/pending_review.json",
-                {"message": "Approve or edit theorem_spec.json before continuing."},
-            )
-            self._advance(manifest, run_dir, RunStage.WAITING_FOR_SPEC_APPROVAL, RunStatus.WAITING_HUMAN)
-            return manifest
-
-        self.store.write_json(run_dir, "02_spec/decision.json", {"approved": True, "source": "auto"})
-        self.store.write_json(run_dir, "02_spec/theorem_spec.approved.json", theorem_spec)
-        self._advance(manifest, run_dir, RunStage.SPEC_APPROVED, RunStatus.RUNNING)
-
-        plan = self._record_agent_turn(
-            run_dir=run_dir,
-            prefix="03_plan",
-            turn=self.agent.draft_plan(theorem_spec),
-            parsed_filename="formalization_plan.json",
+        store.append_event(
+            "run_created",
+            {"run_id": run_id, "source_path": str(source_path), "agent": self.agent.name},
         )
-        self._advance(manifest, run_dir, RunStage.PLAN_DRAFTED, RunStatus.RUNNING)
 
-        if not options.auto_approve_plan:
-            self.store.write_json(
-                run_dir,
-                "03_plan/pending_review.json",
-                {"message": "Approve or edit formalization_plan.json before continuing."},
-            )
-            self._advance(manifest, run_dir, RunStage.WAITING_FOR_PLAN_APPROVAL, RunStatus.WAITING_HUMAN)
-            return manifest
-
-        self.store.write_json(run_dir, "03_plan/decision.json", {"approved": True, "source": "auto"})
-        self.store.write_json(run_dir, "03_plan/formalization_plan.approved.json", plan)
-        self._advance(manifest, run_dir, RunStage.PLAN_APPROVED, RunStatus.RUNNING)
-
-        draft_turn = self.agent.draft_lean(theorem_spec, plan)
-        draft = self._record_agent_turn(
-            run_dir=run_dir,
-            prefix="04_draft",
-            turn=draft_turn,
-            parsed_filename="draft.json",
+        theorem_spec, spec_turn = self.agent.draft_theorem_spec(
+            source_ref,
+            ingested.normalized_text,
         )
-        self.store.write_text(run_dir, "04_draft/draft_0001.lean", draft.code)
-        self._advance(manifest, run_dir, RunStage.DRAFT_GENERATED, RunStatus.RUNNING)
+        self._write_agent_turn(store, "02_spec", spec_turn, theorem_spec)
+        store.write_json("02_spec/theorem_spec.json", theorem_spec)
 
-        final_draft, compile_attempt = self._compile_with_repairs(
-            run_dir, theorem_spec, plan, draft, options
-        )
-        manifest.attempt_count = compile_attempt.attempt
-        self._record_compile(run_dir, compile_attempt)
+        if auto_approve:
+            self._seed_spec_approval(store)
+        if not store.exists("02_spec/theorem_spec.approved.json"):
+            manifest.current_stage = RunStage.AWAITING_SPEC_REVIEW
+            return self._save_manifest(store, manifest)
 
-        if compile_attempt.passed and compile_attempt.quality_gate_passed:
-            self._advance(manifest, run_dir, RunStage.COMPILE_PASSED, RunStatus.RUNNING)
-            self.store.write_text(run_dir, "06_final/final.lean", final_draft.code)
-            self.store.write_json(
-                run_dir,
-                "06_final/final_report.json",
-                {
-                    "theorem_name": final_draft.theorem_name,
-                    "compile_attempt": compile_attempt.attempt,
-                    "quality_gate_passed": compile_attempt.quality_gate_passed,
-                },
-            )
-            manifest.final_output_path = "06_final/final.lean"
-            if options.auto_finalize:
-                self.store.write_json(run_dir, "06_final/decision.json", {"approved": True, "source": "auto"})
-                self._advance(manifest, run_dir, RunStage.COMPLETED, RunStatus.COMPLETED)
-            else:
-                self._advance(manifest, run_dir, RunStage.WAITING_FOR_FINAL_APPROVAL, RunStatus.WAITING_HUMAN)
-            return manifest
+        self._build_context_pack(store, theorem_spec)
+        plan = self._draft_plan(store, auto_approve=auto_approve)
+        if isinstance(plan, RunManifest):
+            return plan
 
-        self._advance(manifest, run_dir, RunStage.COMPILE_FAILED, RunStatus.WAITING_HUMAN)
+        return self._compile_loop(store, plan, auto_approve=auto_approve)
+
+    def resume(self, run_id: str, auto_approve: bool = False) -> RunManifest:
+        store = RunStore(self.artifacts_root, run_id)
+        manifest = self._load_manifest(store)
+
+        if manifest.current_stage == RunStage.AWAITING_SPEC_REVIEW:
+            if auto_approve:
+                self._seed_spec_approval(store)
+            if not store.exists("02_spec/theorem_spec.approved.json"):
+                return manifest
+            theorem_spec = self._load_theorem_spec(store, approved=True)
+            self._build_context_pack(store, theorem_spec)
+            plan = self._draft_plan(store, auto_approve=auto_approve)
+            if isinstance(plan, RunManifest):
+                return plan
+            return self._compile_loop(store, plan, auto_approve=auto_approve)
+
+        if manifest.current_stage == RunStage.AWAITING_PLAN_REVIEW:
+            if auto_approve:
+                self._seed_plan_approval(store)
+            if not store.exists("04_plan/formalization_plan.approved.json"):
+                return manifest
+            plan = self._load_plan(store, approved=True)
+            return self._compile_loop(store, plan, auto_approve=auto_approve)
+
+        if manifest.current_stage == RunStage.AWAITING_FINAL_REVIEW:
+            if auto_approve:
+                self._seed_final_approval(store)
+            if not store.exists("08_final/decision.json"):
+                return manifest
+            return self._complete_from_candidate(store, manifest)
+
         return manifest
 
-    def _compile_with_repairs(
+    def approve_spec(self, run_id: str, notes: str = "Approved by CLI.") -> None:
+        store = RunStore(self.artifacts_root, run_id)
+        payload = store.read_json("02_spec/theorem_spec.json")
+        store.write_json("02_spec/theorem_spec.approved.json", payload)
+        store.write_json(
+            "02_spec/decision.json",
+            HumanDecision(approved=True, updated_at=utc_now(), notes=notes),
+        )
+
+    def approve_plan(self, run_id: str, notes: str = "Approved by CLI.") -> None:
+        store = RunStore(self.artifacts_root, run_id)
+        payload = store.read_json("04_plan/formalization_plan.json")
+        store.write_json("04_plan/formalization_plan.approved.json", payload)
+        store.write_json(
+            "04_plan/decision.json",
+            HumanDecision(approved=True, updated_at=utc_now(), notes=notes),
+        )
+
+    def approve_final(self, run_id: str, notes: str = "Approved by CLI.") -> None:
+        store = RunStore(self.artifacts_root, run_id)
+        store.write_json(
+            "08_final/decision.json",
+            HumanDecision(approved=True, updated_at=utc_now(), notes=notes),
+        )
+
+    def status(self, run_id: str) -> RunManifest:
+        store = RunStore(self.artifacts_root, run_id)
+        return self._load_manifest(store)
+
+    def _draft_plan(self, store: RunStore, auto_approve: bool) -> FormalizationPlan | RunManifest:
+        theorem_spec = self._load_theorem_spec(store, approved=True)
+        context_payload = store.read_json("03_context/context_pack.json")
+        context_pack = ContextPack(**context_payload)
+        plan, plan_turn = self.agent.draft_formalization_plan(theorem_spec, context_pack)
+        self._write_agent_turn(store, "04_plan", plan_turn, plan)
+        store.write_json("04_plan/formalization_plan.json", plan)
+
+        if auto_approve:
+            self._seed_plan_approval(store)
+
+        if not store.exists("04_plan/formalization_plan.approved.json"):
+            manifest = self._load_manifest(store)
+            manifest.current_stage = RunStage.AWAITING_PLAN_REVIEW
+            return self._save_manifest(store, manifest)
+
+        return self._load_plan(store, approved=True)
+
+    def _compile_loop(
         self,
-        run_dir: Path,
-        theorem_spec: TheoremSpec,
+        store: RunStore,
         plan: FormalizationPlan,
-        draft: LeanDraft,
-        options: WorkflowOptions,
-    ) -> tuple[LeanDraft, CompileAttempt]:
-        current_draft = draft
-        for attempt in range(1, options.max_repair_attempts + 2):
-            result = self.lean_runner.compile_draft(run_dir, current_draft, attempt)
-            if result.passed and result.quality_gate_passed:
-                if attempt > 1:
-                    self.store.write_text(run_dir, f"04_draft/draft_{attempt:04d}.lean", current_draft.code)
-                return current_draft, result
-            if result.missing_toolchain or attempt > options.max_repair_attempts:
-                if attempt > 1:
-                    self.store.write_text(run_dir, f"04_draft/draft_{attempt:04d}.lean", current_draft.code)
-                return current_draft, result
-            repair_turn = self.agent.repair_lean(
-                theorem_spec=theorem_spec,
-                plan=plan,
-                previous_draft=current_draft,
-                diagnostics=result.stderr,
-                attempt=attempt,
-            )
-            current_draft = repair_turn.parsed_output
-            self._record_agent_turn(
-                run_dir=run_dir,
-                prefix="04_draft",
-                turn=repair_turn,
-                parsed_filename=f"repair_{attempt:04d}.json",
-            )
-            self.store.write_text(run_dir, f"04_draft/draft_{attempt + 1:04d}.lean", current_draft.code)
-        return current_draft, result
+        auto_approve: bool,
+    ) -> RunManifest:
+        manifest = self._load_manifest(store)
+        previous_result: CompileAttempt | None = None
 
-    def _record_agent_turn(
+        while manifest.attempt_count < self.max_attempts:
+            attempt = manifest.attempt_count + 1
+            draft, draft_turn = self.agent.draft_lean_file(plan, attempt, previous_result)
+            self._write_attempt(store, attempt, draft_turn, draft)
+            compile_result = self.lean_runner.compile_draft(store, draft, attempt)
+            self._write_compile_result(store, attempt, compile_result)
+
+            manifest.attempt_count = attempt
+            manifest.updated_at = utc_now()
+
+            if compile_result.passed:
+                return self._queue_final_review(store, manifest, draft, auto_approve)
+
+            if compile_result.missing_toolchain:
+                manifest.current_stage = RunStage.AWAITING_STALL_REVIEW
+                manifest.latest_error = compile_result.stderr.strip() or compile_result.status
+                self._save_manifest(store, manifest)
+                store.write_text(
+                    "07_review/stall_report.md",
+                    "Lean toolchain is unavailable, so the run stopped before proving the compile gate.\n\n"
+                    "Install Lean via elan, then resume the run or rerun the example.\n",
+                )
+                return manifest
+
+            manifest.current_stage = RunStage.REPAIRING
+            manifest.latest_error = compile_result.stderr.strip() or compile_result.status
+            self._save_manifest(store, manifest)
+            previous_result = compile_result
+
+        manifest.current_stage = RunStage.AWAITING_STALL_REVIEW
+        manifest.latest_error = previous_result.stderr.strip() if previous_result else "Unknown failure."
+        self._save_manifest(store, manifest)
+        store.write_text(
+            "07_review/stall_report.md",
+            "The compile loop hit the retry cap.\n\n"
+            "Next action should be one of:\n"
+            "- revise the theorem spec\n"
+            "- revise the formalization plan\n"
+            "- allow one more targeted repair attempt\n",
+        )
+        return manifest
+
+    def _build_context_pack(self, store: RunStore, theorem_spec: TheoremSpec) -> ContextPack:
+        context_pack = ContextPack(
+            recommended_imports=["FormalizationEngineWorkspace.Basic"],
+            local_examples=["examples/inputs/zero_add.md"],
+            notes=[
+                f"Title: {theorem_spec.title}",
+                "Start from repo-local examples before adding retrieval or external corpora.",
+            ],
+        )
+        store.write_json("03_context/context_pack.json", context_pack)
+        return context_pack
+
+    def _queue_final_review(
         self,
-        run_dir: Path,
-        prefix: str,
-        turn: AgentTurn,
-        parsed_filename: str,
-    ):
-        self.store.write_text(run_dir, f"{prefix}/prompt.md", turn.prompt + "\n")
-        self.store.write_json(run_dir, f"{prefix}/request.json", turn.request_payload)
-        self.store.write_json(run_dir, f"{prefix}/raw_response.json", {"raw_response": turn.raw_response})
-        self.store.write_json(run_dir, f"{prefix}/{parsed_filename}", turn.parsed_output)
-        return turn.parsed_output
-
-    def _record_compile(self, run_dir: Path, compile_attempt: CompileAttempt) -> None:
-        prefix = f"05_compile/attempt_{compile_attempt.attempt:04d}"
-        self.store.write_json(run_dir, f"{prefix}/result.json", compile_attempt)
-        self.store.write_text(run_dir, f"{prefix}/stdout.txt", compile_attempt.stdout)
-        self.store.write_text(run_dir, f"{prefix}/stderr.txt", compile_attempt.stderr)
-        self.store.write_json(
-            run_dir,
-            f"{prefix}/quality_gate.json",
+        store: RunStore,
+        manifest: RunManifest,
+        draft: LeanDraft,
+        auto_approve: bool,
+    ) -> RunManifest:
+        candidate_path = store.write_text("08_final/final_candidate.lean", draft.content)
+        store.write_text(
+            "08_final/final_report.md",
+            "Candidate Lean file passed the compile gate and the no-`sorry` quality check.\n",
+        )
+        store.write_json(
+            "08_final/provenance.json",
             {
-                "passed": compile_attempt.quality_gate_passed,
+                "agent_name": self.agent.name,
+                "candidate_path": str(candidate_path),
+                "generated_at": utc_now(),
+            },
+        )
+        if auto_approve:
+            self._seed_final_approval(store)
+        if not store.exists("08_final/decision.json"):
+            manifest.current_stage = RunStage.AWAITING_FINAL_REVIEW
+            manifest.final_output_path = str(candidate_path)
+            return self._save_manifest(store, manifest)
+        return self._complete_from_candidate(store, manifest)
+
+    def _complete_from_candidate(self, store: RunStore, manifest: RunManifest) -> RunManifest:
+        candidate_path = store.path("08_final/final_candidate.lean")
+        final_path = store.write_text(
+            "08_final/final.lean",
+            candidate_path.read_text(encoding="utf-8"),
+        )
+        manifest.current_stage = RunStage.COMPLETED
+        manifest.updated_at = utc_now()
+        manifest.final_output_path = str(final_path)
+        manifest.latest_error = None
+        return self._save_manifest(store, manifest)
+
+    def _seed_spec_approval(self, store: RunStore) -> None:
+        payload = store.read_json("02_spec/theorem_spec.json")
+        store.write_json("02_spec/theorem_spec.approved.json", payload)
+        store.write_json(
+            "02_spec/decision.json",
+            HumanDecision(approved=True, updated_at=utc_now(), notes="Auto-approved."),
+        )
+
+    def _seed_plan_approval(self, store: RunStore) -> None:
+        payload = store.read_json("04_plan/formalization_plan.json")
+        store.write_json("04_plan/formalization_plan.approved.json", payload)
+        store.write_json(
+            "04_plan/decision.json",
+            HumanDecision(approved=True, updated_at=utc_now(), notes="Auto-approved."),
+        )
+
+    def _seed_final_approval(self, store: RunStore) -> None:
+        store.write_json(
+            "08_final/decision.json",
+            HumanDecision(approved=True, updated_at=utc_now(), notes="Auto-approved."),
+        )
+
+    def _write_agent_turn(self, store: RunStore, stage_dir: str, turn, parsed_output) -> None:
+        store.write_json(f"{stage_dir}/request.json", turn.request_payload)
+        store.write_text(f"{stage_dir}/prompt.md", turn.prompt)
+        store.write_json(f"{stage_dir}/raw_response.json", {"raw_response": turn.raw_response})
+        store.write_json(f"{stage_dir}/parsed_output.json", parsed_output)
+
+    def _write_attempt(self, store: RunStore, attempt: int, turn, draft: LeanDraft) -> None:
+        attempt_dir = f"05_draft/attempt_{attempt:04d}"
+        self._write_agent_turn(store, attempt_dir, turn, draft)
+        store.write_text(f"{attempt_dir}/draft.lean", draft.content)
+
+    def _write_compile_result(self, store: RunStore, attempt: int, compile_result: CompileAttempt) -> None:
+        attempt_dir = f"06_compile/attempt_{attempt:04d}"
+        store.write_json(f"{attempt_dir}/result.json", compile_result)
+        store.write_text(f"{attempt_dir}/stdout.txt", compile_result.stdout)
+        store.write_text(f"{attempt_dir}/stderr.txt", compile_result.stderr)
+        store.write_json(
+            f"{attempt_dir}/quality_gate.json",
+            {
+                "passed": compile_result.quality_gate_passed,
                 "checks": ["no_sorry_literals"],
             },
         )
 
-    def _advance(self, manifest: RunManifest, run_dir: Path, stage: RunStage, status: RunStatus) -> None:
-        manifest.current_stage = stage
-        manifest.status = status
-        manifest.updated_at = utc_timestamp()
-        self.store.write_manifest(run_dir, manifest)
-        self.store.append_event(run_dir, "stage_advanced", {"stage": stage.value, "status": status.value})
+    def _save_manifest(self, store: RunStore, manifest: RunManifest) -> RunManifest:
+        manifest.updated_at = utc_now()
+        store.write_json("manifest.json", manifest)
+        return manifest
 
-    def _save_manifest(self, run_dir: Path, manifest: RunManifest) -> None:
-        self.store.write_manifest(run_dir, manifest)
-        self.store.append_event(run_dir, "run_created", {"run_id": manifest.run_id})
+    def _load_manifest(self, store: RunStore) -> RunManifest:
+        payload = store.read_json("manifest.json")
+        return RunManifest(
+            run_id=payload["run_id"],
+            source=SourceRef(
+                path=payload["source"]["path"],
+                kind=SourceKind(payload["source"]["kind"]),
+            ),
+            agent_name=payload["agent_name"],
+            created_at=payload["created_at"],
+            updated_at=payload["updated_at"],
+            current_stage=RunStage(payload["current_stage"]),
+            attempt_count=payload.get("attempt_count", 0),
+            latest_error=payload.get("latest_error"),
+            final_output_path=payload.get("final_output_path"),
+        )
+
+    def _load_theorem_spec(self, store: RunStore, approved: bool) -> TheoremSpec:
+        filename = (
+            "02_spec/theorem_spec.approved.json"
+            if approved
+            else "02_spec/theorem_spec.json"
+        )
+        payload = store.read_json(filename)
+        return TheoremSpec(**payload)
+
+    def _load_plan(self, store: RunStore, approved: bool) -> FormalizationPlan:
+        filename = (
+            "04_plan/formalization_plan.approved.json"
+            if approved
+            else "04_plan/formalization_plan.json"
+        )
+        payload = store.read_json(filename)
+        return FormalizationPlan(**payload)

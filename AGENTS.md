@@ -12,14 +12,13 @@ compile-checked demo path.
 
 ## Sub-Session Instructions
 
-- Install: `python3 -m pip install . --user`
-- Example run: `python3 examples/run_zero_add_demo.py`
-- Tests: `python3 -m unittest discover -s tests`
+- Example run: `PYTHONPATH=src python3 examples/run_zero_add_demo.py`
+- Tests: `PYTHONPATH=src python3 -m unittest discover -s tests`
 - Lean tools: `source "$HOME/.elan/env"`
 - Do not communicate on Slack from inside the project repo
 
 ## Context Loading
 
-- New to the project? Read `roadmap.md` then `docs/README.md`
+- New to this project? Read `roadmap.md` then `docs/README.md`
 - Changing engine contracts? Read `docs/architecture.md`
 - Comparing against existing systems? Read `docs/landscape.md`

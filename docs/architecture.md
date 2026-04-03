@@ -12,52 +12,54 @@
 
 - `src/lean_formalization_engine/models.py`
   Defines source types, theorem specs, formalization plans, Lean drafts, compile attempts,
-  and the persisted run manifest.
-- `src/lean_formalization_engine/ingest.py`
-  Reads Markdown/LaTeX directly and provides an optional PDF extraction path.
+  human decisions, and the persisted run manifest.
 - `src/lean_formalization_engine/agents.py`
-  Declares the `FormalizationAgent` protocol and the typed `AgentTurn` wrapper.
+  Declares the `FormalizationAgent` protocol.
 - `src/lean_formalization_engine/demo_agent.py`
-  Deterministic agent implementation for the shipped example workflow.
+  Deterministic agent implementation for the shipped zero-add example.
+- `src/lean_formalization_engine/ingest.py`
+  Reads Markdown and LaTeX directly and provides an optional PDF extraction path.
 - `src/lean_formalization_engine/storage.py`
-  Owns run directory creation, JSON/text persistence, and event logging.
+  Owns run directory creation, JSON and text persistence, and event logging.
 - `src/lean_formalization_engine/lean_runner.py`
-  Copies the Lean template into a run-local workspace and executes `lake build`.
+  Copies the Lean template into a run-local workspace and executes the compile checks.
 - `src/lean_formalization_engine/workflow.py`
   The state machine that advances a run until it blocks or completes.
 - `src/lean_formalization_engine/cli.py`
-  Thin CLI surface for running the engine without importing it manually.
+  Thin CLI surface for running, resuming, and approving stages.
 
 ## State Machine
 
 The engine advances through these persisted stages:
 
 1. `created`
-2. `ingested`
-3. `spec_drafted`
-4. `waiting_for_spec_approval`
-5. `spec_approved`
-6. `plan_drafted`
-7. `waiting_for_plan_approval`
-8. `plan_approved`
-9. `draft_generated`
-10. `compile_passed` or `compile_failed`
-11. `waiting_for_final_approval`
-12. `completed`
+2. `awaiting_spec_review`
+3. `awaiting_plan_review`
+4. `repairing`
+5. `awaiting_final_review`
+6. `awaiting_stall_review`
+7. `completed`
 
-## Run Directory Shape
+The artifact tree still captures the sub-steps between those gates:
 
-Each run lives under `artifacts/runs/<run_id>/`:
-
-- `manifest.json`
-- `events.jsonl`
 - `00_input/`
 - `01_normalized/`
 - `02_spec/`
-- `03_plan/`
-- `04_draft/`
-- `05_compile/`
-- `06_final/`
+- `03_context/`
+- `04_plan/`
+- `05_draft/`
+- `06_compile/`
+- `07_review/`
+- `08_final/`
+
+## Run Directory Shape
+
+Each run lives under `artifacts/runs/<run_id>/` and preserves:
+
+- `manifest.json`
+- `events.jsonl`
+- one artifact directory per workflow stage
+- a reusable `workspace/` copy of the Lean template with build caches removed
 
 Each agentic stage persists:
 
@@ -73,7 +75,7 @@ Each agentic stage persists:
 - Plan approval:
   confirm the theorem name, imports, target statement, and proof strategy outline.
 - Final approval:
-  confirm the compiling Lean file is the one worth keeping.
+  confirm the compiling Lean candidate is the one worth keeping.
 
-The example workflow auto-approves these checkpoints. The engine contracts keep the
-checkpoints explicit so model-backed runs can stop there later.
+The example workflow auto-approves these checkpoints. The contracts keep the checkpoints
+explicit so model-backed runs can stop there later.
