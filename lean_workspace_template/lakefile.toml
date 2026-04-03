@@ -1,0 +1,6 @@
+name = "formalization_engine_workspace"
+version = "0.1.0"
+defaultTargets = ["FormalizationEngineWorkspace"]
+
+[[lean_lib]]
+name = "FormalizationEngineWorkspace"

@@ -1,0 +1,3 @@
+{
+  "normalized_text": "# Zero Add\n\nTheorem: for every natural number `n`, `0 + n = n`.\n\nPlease formalize this theorem in Lean 4 and make the resulting file compile.\n"
+}

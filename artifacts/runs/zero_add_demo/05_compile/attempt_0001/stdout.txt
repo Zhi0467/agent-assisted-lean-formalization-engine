@@ -1,0 +1,6 @@
+⚠ [2/4] Built FormalizationEngineWorkspace.Draft (152ms)
+warning: FormalizationEngineWorkspace/Draft.lean:2:2: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+✔ [3/4] Built FormalizationEngineWorkspace (143ms)
+Build completed successfully (4 jobs).

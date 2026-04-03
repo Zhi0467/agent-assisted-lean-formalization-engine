@@ -1,0 +1,17 @@
+{
+  "theorem_spec": {
+    "title": "Zero Add",
+    "informal_statement": "# Zero Add\n\nTheorem: for every natural number `n`, `0 + n = n`.\n\nPlease formalize this theorem in Lean 4 and make the resulting file compile.\n",
+    "assumptions": [
+      "n is a natural number"
+    ],
+    "conclusion": "0 + n = n",
+    "symbols": [
+      "0",
+      "+",
+      "n",
+      "Nat"
+    ],
+    "ambiguities": []
+  }
+}

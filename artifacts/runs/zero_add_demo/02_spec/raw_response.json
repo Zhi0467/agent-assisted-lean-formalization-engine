@@ -1,0 +1,3 @@
+{
+  "raw_response": "Structured theorem spec: title=Zero Add, assumptions=[n : Nat], conclusion=0 + n = n, ambiguities=[]"
+}

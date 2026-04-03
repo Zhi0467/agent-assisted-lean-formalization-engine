@@ -1,0 +1,18 @@
+{"timestamp": "2026-04-03T09:38:05Z", "event_type": "run_created", "payload": {"run_id": "zero_add_demo"}}
+{"timestamp": "2026-04-03T09:38:05Z", "event_type": "stage_advanced", "payload": {"stage": "ingested", "status": "running"}}
+{"timestamp": "2026-04-03T09:38:05Z", "event_type": "stage_advanced", "payload": {"stage": "spec_drafted", "status": "running"}}
+{"timestamp": "2026-04-03T09:38:05Z", "event_type": "stage_advanced", "payload": {"stage": "spec_approved", "status": "running"}}
+{"timestamp": "2026-04-03T09:38:05Z", "event_type": "stage_advanced", "payload": {"stage": "plan_drafted", "status": "running"}}
+{"timestamp": "2026-04-03T09:38:05Z", "event_type": "stage_advanced", "payload": {"stage": "plan_approved", "status": "running"}}
+{"timestamp": "2026-04-03T09:38:05Z", "event_type": "stage_advanced", "payload": {"stage": "draft_generated", "status": "running"}}
+{"timestamp": "2026-04-03T09:38:05Z", "event_type": "stage_advanced", "payload": {"stage": "compile_passed", "status": "running"}}
+{"timestamp": "2026-04-03T09:38:05Z", "event_type": "stage_advanced", "payload": {"stage": "completed", "status": "completed"}}
+{"timestamp": "2026-04-03T09:38:13Z", "event_type": "run_created", "payload": {"run_id": "zero_add_demo"}}
+{"timestamp": "2026-04-03T09:38:13Z", "event_type": "stage_advanced", "payload": {"stage": "ingested", "status": "running"}}
+{"timestamp": "2026-04-03T09:38:13Z", "event_type": "stage_advanced", "payload": {"stage": "spec_drafted", "status": "running"}}
+{"timestamp": "2026-04-03T09:38:13Z", "event_type": "stage_advanced", "payload": {"stage": "spec_approved", "status": "running"}}
+{"timestamp": "2026-04-03T09:38:13Z", "event_type": "stage_advanced", "payload": {"stage": "plan_drafted", "status": "running"}}
+{"timestamp": "2026-04-03T09:38:13Z", "event_type": "stage_advanced", "payload": {"stage": "plan_approved", "status": "running"}}
+{"timestamp": "2026-04-03T09:38:13Z", "event_type": "stage_advanced", "payload": {"stage": "draft_generated", "status": "running"}}
+{"timestamp": "2026-04-03T09:38:13Z", "event_type": "stage_advanced", "payload": {"stage": "compile_passed", "status": "running"}}
+{"timestamp": "2026-04-03T09:38:13Z", "event_type": "stage_advanced", "payload": {"stage": "completed", "status": "completed"}}

@@ -1,0 +1,10 @@
+{
+  "theorem_name": "zero_add_demo",
+  "imports": [],
+  "helper_definitions": [],
+  "proof_strategy": [
+    "Use the core theorem Nat.zero_add.",
+    "Finish the goal with simpa."
+  ],
+  "target_statement": "theorem zero_add_demo (n : Nat) : 0 + n = n"
+}
