@@ -2,6 +2,7 @@
 
 ## Immediate Follow-Ups
 
+- Add a `ProofSession` interface for stepwise Lean interaction before wiring in a real model provider.
 - Add a real LLM/provider adapter behind the `FormalizationAgent` protocol.
 - Add richer theorem examples beyond the deterministic `0 + n = n` demo.
 - Extend PDF ingestion with optional `PyMuPDF` or `pypdf` adapters once dependency policy is settled.

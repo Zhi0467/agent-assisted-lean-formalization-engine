@@ -35,7 +35,7 @@ Gate:
 - [2026-04-03 10:25 UTC] Added `docs/landscape.md` so the repo starts with explicit borrow-vs-rebuild guidance rather than an ungrounded agent loop.
 - [2026-04-03 10:59 UTC] Synced the repo-local and packaged Lean workspace templates so both surfaces compile the same generated module path.
 - [2026-04-03 10:59 UTC] Switched persisted source and final-output metadata to repo-relative paths so checked-in artifacts stay portable across machines.
-- [2026-04-03 10:59 UTC] Athena deep consult confirmed the local direction: keep Python for v0, use a filesystem-backed state machine with explicit human gates, avoid a heavyweight agent framework, and borrow selectively from LeanDojo, LeanInteract, PyPantograph, LeanAide, DeepSeek-Prover, and COPRA. Full consult record: `.agent/runtime/consult_history/1775197696.768269.jsonl`.
+- [2026-04-03 10:59 UTC] Athena standard consult confirmed the local direction: keep Python for v0, use a filesystem-backed state machine with explicit human gates, avoid a heavyweight agent framework, and add a `ProofSession` layer next. Immediate borrow targets are LeanInteract and PyPantograph, with LeanDojo-v2 as the broader later substrate. Full consult record: `.agent/runtime/consult_history/1775197696.768269.jsonl`.
 
 ## Milestone 2 — Add A Real Provider Adapter
 
