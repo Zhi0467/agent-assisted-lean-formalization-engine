@@ -11,6 +11,12 @@ from lean_formalization_engine.workflow import FormalizationWorkflow
 
 
 class DemoWorkflowTest(unittest.TestCase):
+    def _resolve_output_path(self, repo_root: Path, run_id: str, output_path: str) -> Path:
+        path = Path(output_path)
+        if path.is_absolute():
+            return path
+        return repo_root / "artifacts" / "runs" / run_id / path
+
     def _write_fake_lake(self, directory: Path) -> Path:
         fake_lake = directory / "lake"
         fake_lake.write_text(
@@ -65,7 +71,11 @@ class DemoWorkflowTest(unittest.TestCase):
 
             self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
             self.assertIsNotNone(manifest.final_output_path)
-            final_output = Path(manifest.final_output_path or "")
+            final_output = self._resolve_output_path(
+                temp_root,
+                "demo-test",
+                manifest.final_output_path or "",
+            )
             self.assertTrue(final_output.exists())
             self.assertIn("zero_add_demo", final_output.read_text(encoding="utf-8"))
 
@@ -101,3 +111,20 @@ class DemoWorkflowTest(unittest.TestCase):
             workflow.approve_final("manual-review")
             manifest = workflow.resume("manual-review", auto_approve=False)
             self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
+
+    def test_packaged_template_matches_repo_template(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        repo_template = project_root / "lean_workspace_template"
+        package_template = project_root / "src" / "lean_formalization_engine" / "workspace_template"
+
+        for relative_path in [
+            "FormalizationEngineWorkspace.lean",
+            "FormalizationEngineWorkspace/Basic.lean",
+            "FormalizationEngineWorkspace/Generated.lean",
+            "lakefile.toml",
+            "lean-toolchain",
+        ]:
+            self.assertEqual(
+                (repo_template / relative_path).read_text(encoding="utf-8"),
+                (package_template / relative_path).read_text(encoding="utf-8"),
+            )

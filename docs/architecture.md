@@ -27,6 +27,9 @@
   The state machine that advances a run until it blocks or completes.
 - `src/lean_formalization_engine/cli.py`
   Thin CLI surface for running, resuming, and approving stages.
+- `lean_workspace_template/` plus `src/lean_formalization_engine/workspace_template/`
+  Matching repo-local and packaged Lean templates so source-tree and installed runs use the
+  same compile surface.
 
 ## State Machine
 
@@ -79,3 +82,12 @@ Each agentic stage persists:
 
 The example workflow auto-approves these checkpoints. The contracts keep the checkpoints
 explicit so model-backed runs can stop there later.
+
+## Current v0 decision
+
+Athena and the local prototype agreed on the same initial shape:
+
+- Python hosts the orchestration layer.
+- Lean remains the acceptance gate rather than the host runtime.
+- The artifact trail is the system of record.
+- Human review stays explicit instead of disappearing behind a generic agent framework.

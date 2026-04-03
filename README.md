@@ -34,6 +34,8 @@ collapse into an untyped scripting surface.
    `source "$HOME/.elan/env"`
 3. Run the demo from the repo root:
    `PYTHONPATH=src python3 examples/run_zero_add_demo.py`
+4. Optional installed CLI surface:
+   `python3 -m pip install . --user`
 
 The demo writes a full run record under `artifacts/runs/demo-zero-add/`, including:
 
@@ -44,8 +46,9 @@ The demo writes a full run record under `artifacts/runs/demo-zero-add/`, includi
 - compile logs,
 - final review artifacts.
 
-If you prefer an install step, use a modern virtualenv-based Python and then install the
-package in editable mode.
+The packaged CLI falls back to the same Lean workspace template shipped inside
+`src/lean_formalization_engine/workspace_template/`, so repo-local and installed runs share
+the same compile surface.
 
 ## Human-In-The-Loop Flow
 

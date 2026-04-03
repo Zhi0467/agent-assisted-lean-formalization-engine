@@ -41,7 +41,7 @@ class FormalizationWorkflow:
         store = RunStore(self.artifacts_root, run_id)
         store.ensure()
 
-        source_ref, ingested = ingest_source(source_path)
+        source_ref, ingested = ingest_source(source_path, repo_root=self.repo_root)
         manifest = RunManifest(
             run_id=run_id,
             source=source_ref,
@@ -62,7 +62,7 @@ class FormalizationWorkflow:
         )
         store.append_event(
             "run_created",
-            {"run_id": run_id, "source_path": str(source_path), "agent": self.agent.name},
+            {"run_id": run_id, "source_path": source_ref.path, "agent": self.agent.name},
         )
 
         theorem_spec, spec_turn = self.agent.draft_theorem_spec(
@@ -235,7 +235,8 @@ class FormalizationWorkflow:
         draft: LeanDraft,
         auto_approve: bool,
     ) -> RunManifest:
-        candidate_path = store.write_text("08_final/final_candidate.lean", draft.content)
+        candidate_relative_path = "08_final/final_candidate.lean"
+        store.write_text(candidate_relative_path, draft.content)
         store.write_text(
             "08_final/final_report.md",
             "Candidate Lean file passed the compile gate and the no-`sorry` quality check.\n",
@@ -244,7 +245,7 @@ class FormalizationWorkflow:
             "08_final/provenance.json",
             {
                 "agent_name": self.agent.name,
-                "candidate_path": str(candidate_path),
+                "candidate_path": candidate_relative_path,
                 "generated_at": utc_now(),
             },
         )
@@ -252,19 +253,21 @@ class FormalizationWorkflow:
             self._seed_final_approval(store)
         if not store.exists("08_final/decision.json"):
             manifest.current_stage = RunStage.AWAITING_FINAL_REVIEW
-            manifest.final_output_path = str(candidate_path)
+            manifest.final_output_path = candidate_relative_path
             return self._save_manifest(store, manifest)
         return self._complete_from_candidate(store, manifest)
 
     def _complete_from_candidate(self, store: RunStore, manifest: RunManifest) -> RunManifest:
-        candidate_path = store.path("08_final/final_candidate.lean")
-        final_path = store.write_text(
-            "08_final/final.lean",
+        candidate_relative_path = "08_final/final_candidate.lean"
+        final_relative_path = "08_final/final.lean"
+        candidate_path = store.path(candidate_relative_path)
+        store.write_text(
+            final_relative_path,
             candidate_path.read_text(encoding="utf-8"),
         )
         manifest.current_stage = RunStage.COMPLETED
         manifest.updated_at = utc_now()
-        manifest.final_output_path = str(final_path)
+        manifest.final_output_path = final_relative_path
         manifest.latest_error = None
         return self._save_manifest(store, manifest)
 

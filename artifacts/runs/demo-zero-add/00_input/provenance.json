@@ -2,6 +2,6 @@
   "extraction_method": "plain_text",
   "source": {
     "kind": "markdown",
-    "path": "/Users/murphy/Research/projects/agent-assisted-lean-formalization-engine/examples/inputs/zero_add.md"
+    "path": "examples/inputs/zero_add.md"
   }
 }

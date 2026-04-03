@@ -1,1 +1,1 @@
-{"event_type": "run_created", "payload": {"agent": "demo_zero_add_agent", "run_id": "demo-zero-add", "source_path": "/Users/murphy/Research/projects/agent-assisted-lean-formalization-engine/examples/inputs/zero_add.md"}, "timestamp": "2026-04-03T09:42:03Z"}
+{"event_type": "run_created", "payload": {"agent": "demo_zero_add_agent", "run_id": "demo-zero-add", "source_path": "examples/inputs/zero_add.md"}, "timestamp": "2026-04-03T09:49:18Z"}

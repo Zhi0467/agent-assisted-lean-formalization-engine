@@ -16,9 +16,12 @@ def detect_source_kind(source_path: Path) -> SourceKind:
     return SourceKind.TEXT
 
 
-def ingest_source(source_path: Path) -> tuple[SourceRef, IngestedSource]:
+def ingest_source(
+    source_path: Path,
+    repo_root: Path | None = None,
+) -> tuple[SourceRef, IngestedSource]:
     kind = detect_source_kind(source_path)
-    source_ref = SourceRef(path=str(source_path), kind=kind)
+    source_ref = SourceRef(path=_display_path(source_path, repo_root), kind=kind)
 
     if kind == SourceKind.PDF:
         raw_text, extraction_method = _extract_pdf_text(source_path)
@@ -51,7 +54,7 @@ def _extract_pdf_text(source_path: Path) -> tuple[str, str]:
     except ImportError as exc:
         raise RuntimeError(
             "PDF ingestion requires either PyMuPDF or pypdf. "
-            "Install with `python3 -m pip install -e '.[pdf]'`."
+            "Install with `python3 -m pip install '.[pdf]' --user`."
         ) from exc
 
 
@@ -68,3 +71,14 @@ def _normalize_text(raw_text: str) -> str:
         if blank_streak <= 1:
             compact_lines.append("")
     return "\n".join(compact_lines).strip() + "\n"
+
+
+def _display_path(path: Path, repo_root: Path | None) -> str:
+    resolved_path = path.resolve()
+    if repo_root is None:
+        return str(resolved_path)
+
+    try:
+        return str(resolved_path.relative_to(repo_root.resolve()))
+    except ValueError:
+        return str(resolved_path)

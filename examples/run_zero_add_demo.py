@@ -21,7 +21,11 @@ def main() -> None:
         auto_approve=True,
     )
     print(f"Run stage: {manifest.current_stage.value}")
-    print(f"Final output: {manifest.final_output_path}")
+    if manifest.final_output_path:
+        final_output_path = Path(manifest.final_output_path)
+        if not final_output_path.is_absolute():
+            final_output_path = Path("artifacts") / "runs" / run_id / final_output_path
+        print(f"Final output: {final_output_path}")
     if manifest.latest_error:
         print(f"Latest error: {manifest.latest_error}")
 

@@ -1,4 +1,4 @@
-name = "formalization_engine_workspace"
+name = "FormalizationEngineWorkspace"
 version = "0.1.0"
 defaultTargets = ["FormalizationEngineWorkspace"]
 

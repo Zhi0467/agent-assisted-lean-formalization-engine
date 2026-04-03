@@ -1,8 +1,0 @@
-{
-  "theorem_name": "zero_add_demo",
-  "code": "theorem zero_add_demo (n : Nat) : 0 + n = n := by\n  simpa using Nat.zero_add n\n",
-  "rationale": [
-    "The theorem uses only core Lean naturals.",
-    "Nat.zero_add discharges the goal directly."
-  ]
-}

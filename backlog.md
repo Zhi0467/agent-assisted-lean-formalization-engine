@@ -5,8 +5,8 @@
 - Add a real LLM/provider adapter behind the `FormalizationAgent` protocol.
 - Add richer theorem examples beyond the deterministic `0 + n = n` demo.
 - Extend PDF ingestion with optional `PyMuPDF` or `pypdf` adapters once dependency policy is settled.
-- Retry the Athena consult once the MCP path stops timing out.
 - Decide whether long-term artifact storage should keep every run in Git or only selected canonical runs.
+- Decide when to swap the file-copy Lean runner for a richer backend such as LeanInteract or PyPantograph.
 
 ## Lean-Side Follow-Ups
 

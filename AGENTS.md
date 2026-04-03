@@ -13,6 +13,7 @@ compile-checked demo path.
 ## Sub-Session Instructions
 
 - Example run: `PYTHONPATH=src python3 examples/run_zero_add_demo.py`
+- Optional install: `python3 -m pip install . --user`
 - Tests: `PYTHONPATH=src python3 -m unittest discover -s tests`
 - Lean tools: `source "$HOME/.elan/env"`
 - Do not communicate on Slack from inside the project repo

@@ -2,6 +2,10 @@
 
 These are the main adjacent systems relevant to this repo right now.
 
+Athena's implementation advice matched the current scaffold: stay in Python for v0, keep the
+state machine file-backed, make human checkpoints first-class, and borrow narrow subsystems
+instead of adopting a full agent framework.
+
 ## Lean interaction and verification
 
 ### `lean-dojo/LeanDojo-v2`
