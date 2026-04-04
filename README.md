@@ -40,6 +40,8 @@ collapse into an untyped scripting surface.
    `PYTHONPATH=src python3 examples/run_command_agent_demo.py`
 6. Run the live Codex-backed demo locally:
    `PYTHONPATH=src python3 examples/run_codex_agent_demo.py`
+7. Run the explicit human-review Codex demo locally:
+   `PYTHONPATH=src python3 examples/run_codex_manual_review_demo.py`
 
 The demo writes a full run record in this repo under `artifacts/runs/demo-zero-add/`,
 including:
@@ -64,6 +66,8 @@ The checked-in command-backed example run lives under
 `artifacts/runs/demo-command-agent/`.
 The checked-in live Codex-backed example run lives under
 `artifacts/runs/demo-codex-agent/`.
+The checked-in manual-review Codex run on `n + 0 = n` lives under
+`artifacts/runs/demo-codex-manual-right-add/`.
 
 Each run ID is treated as a durable artifact object under `artifacts/runs/`, so starting
 another run with the same ID fails instead of silently reusing old approvals or
@@ -82,7 +86,12 @@ The engine is built around three explicit checkpoints:
 2. approve the intended Lean target and imports,
 3. approve the final compiling Lean candidate.
 
-The demo auto-approves those checkpoints so the flow can run end to end.
+The deterministic, command-backed, and first Codex demo auto-approve those checkpoints so
+the flow can run end to end.
+
+`examples/run_codex_manual_review_demo.py` exercises the same live Codex path without
+`--auto-approve`: it waits at spec review, plan review, and final review, records explicit
+human notes at each gate, then resumes the run.
 
 The model-call surface is intentionally narrow:
 

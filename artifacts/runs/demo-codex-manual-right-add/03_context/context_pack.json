@@ -1,0 +1,12 @@
+{
+  "local_examples": [
+    "examples/inputs/zero_add.md"
+  ],
+  "notes": [
+    "Title: Right Addition by Zero on Naturals",
+    "Start from repo-local examples before adding retrieval or external corpora."
+  ],
+  "recommended_imports": [
+    "FormalizationEngineWorkspace.Basic"
+  ]
+}

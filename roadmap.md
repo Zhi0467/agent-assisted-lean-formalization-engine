@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-04-04 05:03 UTC
+Last updated: 2026-04-04 05:36 UTC
 
 ## Current Status
 
@@ -13,12 +13,12 @@ The repo now has a concrete v0 scaffold:
 
 The repo's core agentic object is now pinned more sharply than the first scaffold note
 made it sound: spec, plan, then a bounded compile-repair loop. The generic external turn
-boundary is still there via a subprocess-backed agent, and the next live step now exists
-too: a built-in Codex-backed backend can drive theorem-spec, plan, and Lean-draft turns
-without changing the artifact contract. Wangzhi already approved Codex as the default
-orchestration layer for real runs, so the next gate is implementation: make that path the
-default non-demo surface in the CLI/runtime, then gather quality and cost evidence on
-non-demo theorems.
+boundary is still there via a subprocess-backed agent, and the live Codex path now has
+two checked-in surfaces: an auto-approved zero-add run and a manual-review run on the
+non-demo theorem `n + 0 = n`. That means the repo now proves both halves of the intended
+workflow object: live model turns plus explicit human checkpoints on a real theorem path.
+The next gate is to make Codex the default real-run backend in the CLI/runtime and then
+push onto harder theorems that actually exercise repair quality.
 
 ## Milestone 1 — Lock the Engine Skeleton
 
@@ -65,6 +65,10 @@ Success criteria:
 Gate:
 
 - at least one non-demo theorem runs through a live API-backed path with persisted prompts and diagnostics.
+
+### Activity Log
+
+- [2026-04-04 05:36 UTC] Simulated the full human-in-the-loop Codex path on a first non-demo theorem (`n + 0 = n`) without `--auto-approve`. The run paused at spec review, plan review, and final review in turn, accepted explicit human notes at each gate, compiled on the first attempt, and was checked into the repo at `artifacts/runs/demo-codex-manual-right-add/`.
 
 ## Milestone 3 — Improve Lean Context And Repair
 

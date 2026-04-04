@@ -1,0 +1,5 @@
+$ /Users/murphy/.elan/bin/lake build FormalizationEngineWorkspace
+✔ [2/5] Built FormalizationEngineWorkspace.Basic (1.7s)
+✔ [3/5] Built FormalizationEngineWorkspace.Generated (132ms)
+✔ [4/5] Built FormalizationEngineWorkspace (119ms)
+Build completed successfully (5 jobs).
