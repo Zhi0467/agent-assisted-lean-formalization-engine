@@ -94,6 +94,9 @@ The loop stops when one of three things happens:
 
 If a run is interrupted mid-repair, `resume()` reloads the last persisted compile result
 and draft so the next repair attempt still has the previous diagnostics and code in context.
+If Lean was missing, `resume()` retries the stalled run after the toolchain is installed.
+If the retry cap was the blocker, `approve-stall` records a fresh human decision to allow
+one more repair attempt on the same persisted run.
 
 ## Run Directory Shape
 
@@ -103,6 +106,9 @@ Each run lives under `artifacts/runs/<run_id>/` and preserves:
 - `events.jsonl`
 - one artifact directory per workflow stage
 - a reusable `workspace/` copy of the Lean template with build caches removed
+
+Run IDs are validated as single safe path segments and are never silently reused, so a
+new run cannot escape `artifacts/runs/` or inherit stale approvals from an older run.
 
 Each agentic stage persists:
 

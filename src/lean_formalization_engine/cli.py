@@ -50,6 +50,16 @@ def build_parser() -> argparse.ArgumentParser:
     approve_final_parser.add_argument("--run-id", required=True)
     approve_final_parser.add_argument("--notes", default="Approved by CLI.")
 
+    approve_stall_parser = subparsers.add_parser(
+        "approve-stall",
+        help="Approve one more repair attempt after a stalled run.",
+    )
+    approve_stall_parser.add_argument("--run-id", required=True)
+    approve_stall_parser.add_argument(
+        "--notes",
+        default="Approved one more repair attempt.",
+    )
+
     status_parser = subparsers.add_parser("status", help="Show manifest state for a run.")
     status_parser.add_argument("--run-id", required=True)
 
@@ -60,14 +70,22 @@ def build_agent(args: argparse.Namespace, repo_root: Path):
     if not args.agent_command:
         return DemoFormalizationAgent()
     command = _resolve_agent_command(shlex.split(args.agent_command), repo_root)
-    return SubprocessFormalizationAgent(command)
+    return SubprocessFormalizationAgent(command, working_directory=repo_root)
 
 
 def _resolve_agent_command(command: list[str], repo_root: Path) -> list[str]:
     resolved_command: list[str] = []
+    preserve_next_part = False
     for index, part in enumerate(command):
+        if preserve_next_part:
+            resolved_command.append(part)
+            preserve_next_part = False
+            continue
+
         if Path(part).is_absolute() or part.startswith("-"):
             resolved_command.append(part)
+            if part in {"-m", "-c"}:
+                preserve_next_part = True
             continue
 
         candidate = repo_root / part
@@ -79,6 +97,12 @@ def _resolve_agent_command(command: list[str], repo_root: Path) -> list[str]:
             continue
         resolved_command.append(part)
     return resolved_command
+
+
+def _resolve_source_path(source_path: Path, repo_root: Path) -> Path:
+    if source_path.is_absolute():
+        return source_path
+    return repo_root / source_path
 
 
 def main() -> None:
@@ -96,7 +120,11 @@ def main() -> None:
     )
 
     if args.command == "run":
-        manifest = workflow.run(args.source, args.run_id, auto_approve=args.auto_approve)
+        manifest = workflow.run(
+            _resolve_source_path(args.source, repo_root),
+            args.run_id,
+            auto_approve=args.auto_approve,
+        )
     elif args.command == "resume":
         manifest = workflow.resume(args.run_id, auto_approve=args.auto_approve)
     elif args.command == "approve-spec":
@@ -107,6 +135,9 @@ def main() -> None:
         manifest = workflow.status(args.run_id)
     elif args.command == "approve-final":
         workflow.approve_final(args.run_id, notes=args.notes)
+        manifest = workflow.status(args.run_id)
+    elif args.command == "approve-stall":
+        workflow.approve_stall(args.run_id, notes=args.notes)
         manifest = workflow.status(args.run_id)
     else:
         manifest = workflow.status(args.run_id)

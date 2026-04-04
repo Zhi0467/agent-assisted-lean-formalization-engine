@@ -61,6 +61,10 @@ run-state machine:
 The checked-in command-backed example run lives under
 `artifacts/runs/demo-command-agent/`.
 
+Each run ID is treated as a durable artifact object under `artifacts/runs/`, so starting
+another run with the same ID fails instead of silently reusing old approvals or
+overwriting the older record.
+
 ## Human-In-The-Loop Flow
 
 The engine is built around three explicit checkpoints:
@@ -82,6 +86,10 @@ demo keeps those turns deterministic so the repo can prove the workflow shape be
 live API-backed provider is added. The subprocess adapter now pins the exact boundary:
 each turn can already be delegated to an external command, and the repair turn receives
 structured retry state plus the previous draft and compile result.
+
+If Lean was missing, `resume` retries the same stalled run after the toolchain is
+installed. If the run stalled on the retry cap, `approve-stall` records the explicit
+human decision to allow one more repair attempt on the same artifact trail.
 
 ## Key Docs
 

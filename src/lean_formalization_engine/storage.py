@@ -1,20 +1,39 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 from .models import to_jsonable, utc_now
 
+_SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def validate_run_id(run_id: str) -> str:
+    if not _SAFE_RUN_ID.fullmatch(run_id):
+        raise ValueError(
+            "Run IDs must be a single safe path segment containing only letters, "
+            "numbers, dots, underscores, or hyphens."
+        )
+    return run_id
+
 
 class RunStore:
     def __init__(self, artifacts_root: Path, run_id: str):
         self.artifacts_root = artifacts_root
-        self.run_id = run_id
-        self.run_root = artifacts_root / "runs" / run_id
+        self.run_id = validate_run_id(run_id)
+        self.run_root = artifacts_root / "runs" / self.run_id
 
     def ensure(self) -> None:
         self.run_root.mkdir(parents=True, exist_ok=True)
+
+    def ensure_new(self) -> None:
+        if self.run_root.exists():
+            raise FileExistsError(
+                f"Run ID `{self.run_id}` already exists under artifacts/runs."
+            )
+        self.run_root.mkdir(parents=True, exist_ok=False)
 
     def path(self, relative_path: str) -> Path:
         return self.run_root / relative_path

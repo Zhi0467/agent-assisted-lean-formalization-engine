@@ -6,19 +6,22 @@ from argparse import Namespace
 from pathlib import Path
 import sys
 
-from lean_formalization_engine.cli import build_agent
+from lean_formalization_engine.cli import _resolve_source_path, build_agent
 from lean_formalization_engine.demo_agent import DemoFormalizationAgent
 from lean_formalization_engine.lean_runner import LeanRunner
 from lean_formalization_engine.models import (
     AgentTurn,
     ContextPack,
     FormalizationPlan,
+    HumanDecision,
     LeanDraft,
     RepairContext,
     RunStage,
     SourceRef,
     TheoremSpec,
+    utc_now,
 )
+from lean_formalization_engine.storage import RunStore
 from lean_formalization_engine.subprocess_agent import SubprocessFormalizationAgent
 from lean_formalization_engine.workflow import FormalizationWorkflow
 
@@ -103,6 +106,19 @@ class CrashBeforeRepairAgent(RepairResumeAgent):
     ) -> tuple[LeanDraft, AgentTurn]:
         if repair_context.current_attempt == 2:
             raise RuntimeError("simulated crash before second attempt")
+        return super().draft_lean_file(plan, repair_context)
+
+
+class CrashBeforeFirstDraftAgent(RepairResumeAgent):
+    name = "crash_before_first_draft_agent"
+
+    def draft_lean_file(
+        self,
+        plan: FormalizationPlan,
+        repair_context: RepairContext,
+    ) -> tuple[LeanDraft, AgentTurn]:
+        if repair_context.current_attempt == 1:
+            raise RuntimeError("simulated crash before first draft")
         return super().draft_lean_file(plan, repair_context)
 
 
@@ -265,6 +281,179 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertEqual(manifest.attempt_count, 2)
             self.assertIsNotNone(manifest.final_output_path)
 
+    def test_resume_created_run_retries_after_precompile_agent_crash(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        template_dir = project_root / "lean_workspace_template"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            fake_lake = self._write_fake_lake(temp_root)
+            source_path = temp_root / "input.md"
+            source_path.write_text(
+                "For every natural number n, adding zero on the left gives back n.\n"
+                "Target statement: 0 + n = n.\n",
+                encoding="utf-8",
+            )
+
+            crashing_workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=CrashBeforeFirstDraftAgent(),
+                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
+            )
+            with self.assertRaisesRegex(RuntimeError, "simulated crash before first draft"):
+                crashing_workflow.run(
+                    source_path=source_path,
+                    run_id="created-resume",
+                    auto_approve=True,
+                )
+
+            manifest = crashing_workflow.status("created-resume")
+            self.assertEqual(manifest.current_stage, RunStage.CREATED)
+            self.assertEqual(manifest.attempt_count, 0)
+
+            resumed_workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
+            )
+            manifest = resumed_workflow.resume("created-resume", auto_approve=True)
+
+            self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
+            self.assertEqual(manifest.attempt_count, 2)
+
+    def test_resume_after_missing_toolchain_retries_same_run(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        template_dir = project_root / "lean_workspace_template"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text(
+                "For every natural number n, adding zero on the left gives back n.\n"
+                "Target statement: 0 + n = n.\n",
+                encoding="utf-8",
+            )
+
+            stalled_workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                lean_runner=LeanRunner(template_dir=template_dir, lake_path="missing-lake"),
+            )
+            manifest = stalled_workflow.run(
+                source_path=source_path,
+                run_id="stall-missing-toolchain",
+                auto_approve=True,
+            )
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_STALL_REVIEW)
+
+            fake_lake = self._write_fake_lake(temp_root)
+            resumed_workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
+            )
+            manifest = resumed_workflow.resume(
+                "stall-missing-toolchain",
+                auto_approve=True,
+            )
+
+            self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
+            self.assertEqual(manifest.attempt_count, 2)
+
+    def test_retry_cap_requires_fresh_stall_approval(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        template_dir = project_root / "lean_workspace_template"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            fake_lake = self._write_fake_lake(temp_root)
+            source_path = temp_root / "input.md"
+            source_path.write_text(
+                "For every natural number n, adding zero on the left gives back n.\n"
+                "Target statement: 0 + n = n.\n",
+                encoding="utf-8",
+            )
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
+                max_attempts=1,
+            )
+            manifest = workflow.run(
+                source_path=source_path,
+                run_id="stall-retry-cap",
+                auto_approve=True,
+            )
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_STALL_REVIEW)
+            self.assertEqual(manifest.attempt_count, 1)
+
+            workflow.approve_stall("stall-retry-cap")
+            manifest = workflow.resume("stall-retry-cap", auto_approve=True)
+
+            self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
+            self.assertEqual(manifest.attempt_count, 2)
+
+    def test_rejected_final_decision_does_not_complete_run(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        template_dir = project_root / "lean_workspace_template"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            fake_lake = self._write_fake_lake(temp_root)
+            source_path = temp_root / "input.md"
+            source_path.write_text(
+                "For every natural number n, adding zero on the left gives back n.\n"
+                "Target statement: 0 + n = n.\n",
+                encoding="utf-8",
+            )
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=DemoFormalizationAgent(),
+                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
+            )
+
+            manifest = workflow.run(source_path=source_path, run_id="reject-final", auto_approve=False)
+            workflow.approve_spec("reject-final")
+            manifest = workflow.resume("reject-final", auto_approve=False)
+            workflow.approve_plan("reject-final")
+            manifest = workflow.resume("reject-final", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_FINAL_REVIEW)
+
+            store = RunStore(temp_root / "artifacts", "reject-final")
+            store.write_json(
+                "08_final/decision.json",
+                HumanDecision(approved=False, updated_at=utc_now(), notes="Needs changes."),
+            )
+
+            manifest = workflow.resume("reject-final", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_FINAL_REVIEW)
+            self.assertEqual(manifest.final_output_path, "08_final/final_candidate.lean")
+            self.assertFalse(store.exists("08_final/final.lean"))
+
+    def test_run_ids_must_be_safe_and_unique(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        template_dir = project_root / "lean_workspace_template"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            fake_lake = self._write_fake_lake(temp_root)
+            source_path = temp_root / "input.md"
+            source_path.write_text(
+                "For every natural number n, adding zero on the left gives back n.\n"
+                "Target statement: 0 + n = n.\n",
+                encoding="utf-8",
+            )
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=DemoFormalizationAgent(),
+                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
+            )
+
+            with self.assertRaises(ValueError):
+                workflow.run(source_path=source_path, run_id="../escape", auto_approve=True)
+
+            workflow.run(source_path=source_path, run_id="safe-run", auto_approve=True)
+            with self.assertRaises(FileExistsError):
+                workflow.run(source_path=source_path, run_id="safe-run", auto_approve=True)
+
     def test_subprocess_agent_repair_loop_uses_external_provider(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         template_dir = project_root / "lean_workspace_template"
@@ -324,3 +513,22 @@ class DemoWorkflowTest(unittest.TestCase):
             project_root / "examples" / "providers" / "scripted_repair_provider.py",
         )
         self.assertEqual(agent.name, "subprocess:scripted_repair_provider.py")
+        self.assertEqual(agent.working_directory, project_root)
+
+    def test_cli_build_agent_preserves_python_module_invocation(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        args = Namespace(agent_command="python3 -m examples")
+
+        agent = build_agent(args, project_root)
+
+        self.assertIsInstance(agent, SubprocessFormalizationAgent)
+        self.assertEqual(agent.command, ["python3", "-m", "examples"])
+        self.assertEqual(agent.name, "subprocess:examples")
+
+    def test_cli_resolves_source_against_repo_root(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+
+        self.assertEqual(
+            _resolve_source_path(Path("examples/inputs/zero_add.md"), project_root),
+            project_root / "examples" / "inputs" / "zero_add.md",
+        )

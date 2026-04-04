@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -84,7 +85,14 @@ class LeanRunner:
 
     def _resolve_lake(self) -> str | None:
         if self.lake_path:
-            return self.lake_path
+            configured = shutil.which(self.lake_path)
+            if configured:
+                return configured
+
+            configured_path = Path(self.lake_path).expanduser()
+            if configured_path.exists() and os.access(configured_path, os.X_OK):
+                return str(configured_path)
+            return None
 
         candidate = shutil.which("lake")
         if candidate:

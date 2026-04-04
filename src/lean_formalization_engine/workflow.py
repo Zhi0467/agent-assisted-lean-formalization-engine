@@ -40,9 +40,8 @@ class FormalizationWorkflow:
 
     def run(self, source_path: Path, run_id: str, auto_approve: bool = False) -> RunManifest:
         store = RunStore(self.artifacts_root, run_id)
-        store.ensure()
-
         source_ref, ingested = ingest_source(source_path, repo_root=self.repo_root)
+        store.ensure_new()
         manifest = RunManifest(
             run_id=run_id,
             source=source_ref,
@@ -90,6 +89,9 @@ class FormalizationWorkflow:
         store = RunStore(self.artifacts_root, run_id)
         manifest = self._load_manifest(store)
 
+        if manifest.current_stage == RunStage.CREATED:
+            return self._resume_created_run(store, manifest, auto_approve=auto_approve)
+
         if manifest.current_stage == RunStage.AWAITING_SPEC_REVIEW:
             if auto_approve:
                 self._seed_spec_approval(store)
@@ -114,10 +116,39 @@ class FormalizationWorkflow:
             plan = self._load_plan(store, approved=True)
             return self._compile_loop(store, plan, auto_approve=auto_approve)
 
+        if manifest.current_stage == RunStage.AWAITING_STALL_REVIEW:
+            plan = self._load_plan(store, approved=True)
+            previous_result = self._load_previous_compile_result(store, manifest)
+            if previous_result is None:
+                return manifest
+
+            next_attempt_limit = max(self.max_attempts, manifest.attempt_count + 1)
+            if previous_result.missing_toolchain:
+                return self._compile_loop(
+                    store,
+                    plan,
+                    auto_approve=auto_approve,
+                    max_attempts=next_attempt_limit,
+                )
+
+            if auto_approve:
+                self._seed_stall_approval(store)
+            stall_decision = self._load_decision(store, "07_review/decision.json")
+            if stall_decision is None or not stall_decision.approved:
+                return manifest
+            if stall_decision.updated_at < manifest.updated_at:
+                return manifest
+            return self._compile_loop(
+                store,
+                plan,
+                auto_approve=auto_approve,
+                max_attempts=next_attempt_limit,
+            )
+
         if manifest.current_stage == RunStage.AWAITING_FINAL_REVIEW:
             if auto_approve:
                 self._seed_final_approval(store)
-            if not store.exists("08_final/decision.json"):
+            if not self._decision_is_approved(store, "08_final/decision.json"):
                 return manifest
             return self._complete_from_candidate(store, manifest)
 
@@ -148,6 +179,13 @@ class FormalizationWorkflow:
             HumanDecision(approved=True, updated_at=utc_now(), notes=notes),
         )
 
+    def approve_stall(self, run_id: str, notes: str = "Approved one more repair attempt.") -> None:
+        store = RunStore(self.artifacts_root, run_id)
+        store.write_json(
+            "07_review/decision.json",
+            HumanDecision(approved=True, updated_at=utc_now(), notes=notes),
+        )
+
     def status(self, run_id: str) -> RunManifest:
         store = RunStore(self.artifacts_root, run_id)
         return self._load_manifest(store)
@@ -170,23 +208,64 @@ class FormalizationWorkflow:
 
         return self._load_plan(store, approved=True)
 
+    def _resume_created_run(
+        self,
+        store: RunStore,
+        manifest: RunManifest,
+        auto_approve: bool,
+    ) -> RunManifest:
+        if store.exists("04_plan/formalization_plan.approved.json"):
+            plan = self._load_plan(store, approved=True)
+            return self._compile_loop(store, plan, auto_approve=auto_approve)
+
+        if store.exists("02_spec/theorem_spec.approved.json"):
+            theorem_spec = self._load_theorem_spec(store, approved=True)
+            if not store.exists("03_context/context_pack.json"):
+                self._build_context_pack(store, theorem_spec)
+            plan = self._draft_plan(store, auto_approve=auto_approve)
+            if isinstance(plan, RunManifest):
+                return plan
+            return self._compile_loop(store, plan, auto_approve=auto_approve)
+
+        normalized_text = store.path("01_normalized/normalized.md").read_text(encoding="utf-8")
+        theorem_spec, spec_turn = self.agent.draft_theorem_spec(
+            manifest.source,
+            normalized_text,
+        )
+        self._write_agent_turn(store, "02_spec", spec_turn, theorem_spec)
+        store.write_json("02_spec/theorem_spec.json", theorem_spec)
+
+        if auto_approve:
+            self._seed_spec_approval(store)
+        if not store.exists("02_spec/theorem_spec.approved.json"):
+            manifest.current_stage = RunStage.AWAITING_SPEC_REVIEW
+            return self._save_manifest(store, manifest)
+
+        self._build_context_pack(store, theorem_spec)
+        plan = self._draft_plan(store, auto_approve=auto_approve)
+        if isinstance(plan, RunManifest):
+            return plan
+        return self._compile_loop(store, plan, auto_approve=auto_approve)
+
     def _compile_loop(
         self,
         store: RunStore,
         plan: FormalizationPlan,
         auto_approve: bool,
+        max_attempts: int | None = None,
     ) -> RunManifest:
         manifest = self._load_manifest(store)
         previous_result = self._load_previous_compile_result(store, manifest)
         previous_draft = self._load_previous_draft(store, manifest)
+        attempt_limit = max_attempts or self.max_attempts
 
-        while manifest.attempt_count < self.max_attempts:
+        while manifest.attempt_count < attempt_limit:
             attempt = manifest.attempt_count + 1
             repair_context = RepairContext(
                 current_attempt=attempt,
-                max_attempts=self.max_attempts,
+                max_attempts=attempt_limit,
                 prior_attempts=attempt - 1,
-                attempts_remaining=self.max_attempts - attempt + 1,
+                attempts_remaining=attempt_limit - attempt + 1,
                 previous_draft=previous_draft,
                 previous_result=previous_result,
             )
@@ -266,7 +345,7 @@ class FormalizationWorkflow:
         )
         if auto_approve:
             self._seed_final_approval(store)
-        if not store.exists("08_final/decision.json"):
+        if not self._decision_is_approved(store, "08_final/decision.json"):
             manifest.current_stage = RunStage.AWAITING_FINAL_REVIEW
             manifest.final_output_path = candidate_relative_path
             return self._save_manifest(store, manifest)
@@ -306,6 +385,16 @@ class FormalizationWorkflow:
         store.write_json(
             "08_final/decision.json",
             HumanDecision(approved=True, updated_at=utc_now(), notes="Auto-approved."),
+        )
+
+    def _seed_stall_approval(self, store: RunStore) -> None:
+        store.write_json(
+            "07_review/decision.json",
+            HumanDecision(
+                approved=True,
+                updated_at=utc_now(),
+                notes="Auto-approved one more repair attempt.",
+            ),
         )
 
     def _write_agent_turn(self, store: RunStore, stage_dir: str, turn, parsed_output) -> None:
@@ -397,3 +486,13 @@ class FormalizationWorkflow:
             return None
         payload = store.read_json(draft_path)
         return LeanDraft(**payload)
+
+    def _load_decision(self, store: RunStore, relative_path: str) -> HumanDecision | None:
+        if not store.exists(relative_path):
+            return None
+        payload = store.read_json(relative_path)
+        return HumanDecision(**payload)
+
+    def _decision_is_approved(self, store: RunStore, relative_path: str) -> bool:
+        decision = self._load_decision(store, relative_path)
+        return bool(decision and decision.approved)

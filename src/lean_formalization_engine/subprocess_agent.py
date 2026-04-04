@@ -22,11 +22,17 @@ ParsedOutput = TypeVar("ParsedOutput", TheoremSpec, FormalizationPlan, LeanDraft
 class SubprocessFormalizationAgent:
     """Delegate each agent turn to an external command over stdin/stdout."""
 
-    def __init__(self, command: list[str], name: str | None = None):
+    def __init__(
+        self,
+        command: list[str],
+        name: str | None = None,
+        working_directory: Path | None = None,
+    ):
         if not command:
             raise ValueError("SubprocessFormalizationAgent requires a non-empty command.")
         self.command = command
         self.name = name or _default_agent_name(command)
+        self.working_directory = working_directory
 
     def draft_theorem_spec(
         self,
@@ -82,6 +88,7 @@ class SubprocessFormalizationAgent:
         }
         response = subprocess.run(
             self.command,
+            cwd=self.working_directory,
             input=json.dumps(request_payload),
             capture_output=True,
             text=True,
@@ -123,5 +130,9 @@ class SubprocessFormalizationAgent:
 def _default_agent_name(command: list[str]) -> str:
     executable_name = Path(command[0]).name
     if executable_name.startswith("python") and len(command) > 1:
+        if command[1] == "-m" and len(command) > 2:
+            return f"subprocess:{command[2]}"
+        if command[1] == "-c":
+            return "subprocess:python-inline"
         return f"subprocess:{Path(command[1]).name}"
     return f"subprocess:{executable_name}"
