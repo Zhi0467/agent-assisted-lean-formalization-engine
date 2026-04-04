@@ -1,5 +1,8 @@
-$ /Users/murphy/.elan/bin/lake build FormalizationEngineWorkspace
-✔ [2/5] Built FormalizationEngineWorkspace.Basic (1.7s)
-✔ [3/5] Built FormalizationEngineWorkspace.Generated (132ms)
-✔ [4/5] Built FormalizationEngineWorkspace (119ms)
-Build completed successfully (5 jobs).
+$ lake build FormalizationEngineWorkspace
+✔ [2/5] Built FormalizationEngineWorkspace.Basic (800ms)
+✖ [3/5] Building FormalizationEngineWorkspace.Generated (792ms)
+trace: .> LEAN_PATH=artifacts/runs/demo-codex-manual-right-add/workspace/.lake/build/lib/lean ~/.elan/toolchains/leanprover--lean4---v4.29.0/bin/lean artifacts/runs/demo-codex-manual-right-add/workspace/FormalizationEngineWorkspace/Generated.lean -o artifacts/runs/demo-codex-manual-right-add/workspace/.lake/build/lib/lean/FormalizationEngineWorkspace/Generated.olean -i artifacts/runs/demo-codex-manual-right-add/workspace/.lake/build/lib/lean/FormalizationEngineWorkspace/Generated.ilean -c artifacts/runs/demo-codex-manual-right-add/workspace/.lake/build/ir/FormalizationEngineWorkspace/Generated.c --setup artifacts/runs/demo-codex-manual-right-add/workspace/.lake/build/ir/FormalizationEngineWorkspace/Generated.setup.json --json
+error: FormalizationEngineWorkspace/Generated.lean:1:0: unexpected token '{'; expected command
+error: Lean exited with code 1
+Some required targets logged failures:
+- FormalizationEngineWorkspace.Generated

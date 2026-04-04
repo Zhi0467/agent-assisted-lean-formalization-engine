@@ -1,0 +1,21 @@
+{
+  "attempt": 2,
+  "build_passed": true,
+  "command": [
+    "lake build FormalizationEngineWorkspace"
+  ],
+  "contains_sorry": false,
+  "diagnostics": [
+    "$ lake build FormalizationEngineWorkspace",
+    "info: FormalizationEngineWorkspace: no previous manifest, creating one from scratch",
+    "info: toolchain not updated; already up-to-date"
+  ],
+  "fast_check_passed": true,
+  "missing_toolchain": false,
+  "passed": true,
+  "quality_gate_passed": true,
+  "returncode": 0,
+  "status": "passed",
+  "stderr": "$ lake build FormalizationEngineWorkspace\ninfo: FormalizationEngineWorkspace: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\n",
+  "stdout": "$ lake build FormalizationEngineWorkspace\n\u2714 [2/5] Built FormalizationEngineWorkspace.Basic (136ms)\n\u2714 [3/5] Built FormalizationEngineWorkspace.Generated (121ms)\n\u2714 [4/5] Built FormalizationEngineWorkspace (114ms)\nBuild completed successfully (5 jobs).\n"
+}

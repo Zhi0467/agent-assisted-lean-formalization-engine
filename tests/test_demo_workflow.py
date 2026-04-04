@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from argparse import Namespace
@@ -190,6 +191,44 @@ class DemoWorkflowTest(unittest.TestCase):
             )
             self.assertTrue(final_output.exists())
             self.assertIn("zero_add_demo", final_output.read_text(encoding="utf-8"))
+
+    def test_compile_artifacts_hide_resolved_lake_path(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        template_dir = project_root / "lean_workspace_template"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            fake_lake = self._write_fake_lake(temp_root)
+            source_path = temp_root / "input.md"
+            source_path.write_text(
+                "For every natural number n, adding zero on the left gives back n.\n"
+                "Target statement: 0 + n = n.\n",
+                encoding="utf-8",
+            )
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=DemoFormalizationAgent(),
+                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
+            )
+            workflow.run(source_path=source_path, run_id="portable-command", auto_approve=True)
+
+            result_path = (
+                temp_root
+                / "artifacts"
+                / "runs"
+                / "portable-command"
+                / "06_compile"
+                / "attempt_0001"
+                / "result.json"
+            )
+            result_text = result_path.read_text(encoding="utf-8")
+            payload = json.loads(result_text)
+
+            self.assertEqual(payload["command"], ["lake build FormalizationEngineWorkspace"])
+            self.assertIn("$ lake build FormalizationEngineWorkspace", payload["stdout"])
+            self.assertIn("$ lake build FormalizationEngineWorkspace", payload["stderr"])
+            self.assertNotIn(str(fake_lake), result_text)
+            self.assertNotIn(str(temp_root), result_text)
 
     def test_manual_review_path_is_explicit(self) -> None:
         project_root = Path(__file__).resolve().parents[1]

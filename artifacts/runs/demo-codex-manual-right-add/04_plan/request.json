@@ -4,7 +4,7 @@
       "examples/inputs/zero_add.md"
     ],
     "notes": [
-      "Title: Right Addition by Zero on Naturals",
+      "Title: Right-add-zero on natural numbers",
       "Start from repo-local examples before adding retrieval or external corpora."
     ],
     "recommended_imports": [
@@ -16,18 +16,16 @@
   "theorem_spec": {
     "ambiguities": [],
     "assumptions": [
-      "n ranges over Lean's natural numbers `Nat`.",
-      "`+` and `0` are the standard addition and zero on `Nat`.",
-      "The statement is universally quantified over `n` with no extra hypotheses."
+      "n : Nat"
     ],
-    "conclusion": "forall n : Nat, n + 0 = n",
-    "informal_statement": "For every natural number n, adding zero on the right leaves n unchanged.",
-    "paraphrase": "Zero is a right identity for addition on the natural numbers.",
+    "conclusion": "n + 0 = n",
+    "informal_statement": "For every natural number n, adding zero on the right leaves n unchanged.\nTarget statement: n + 0 = n.",
+    "paraphrase": "For every natural number n, adding zero on the right returns n.",
     "symbols": [
-      "n : Nat",
-      "0 : Nat",
-      "+ : Nat -> Nat -> Nat"
+      "0",
+      "+",
+      "Nat"
     ],
-    "title": "Right Addition by Zero on Naturals"
+    "title": "Right-add-zero on natural numbers"
   }
 }

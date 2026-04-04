@@ -20,10 +20,15 @@ class LeanRunner:
         generated_path.write_text(draft.content, encoding="utf-8")
 
         lake_path = self._resolve_lake()
+        display_command = [
+            self._display_lake(),
+            "build",
+            "FormalizationEngineWorkspace",
+        ]
         if lake_path is None:
             return CompileAttempt(
                 attempt=attempt,
-                command=["lake", "build", "FormalizationEngineWorkspace"],
+                command=[" ".join(display_command)],
                 stdout="",
                 stderr="Lean toolchain is not available on PATH and ~/.elan/bin/lake was not found.",
                 returncode=127,
@@ -51,13 +56,20 @@ class LeanRunner:
         build_passed = build_result.returncode == 0
         quality_gate_passed = not contains_sorry
         passed = fast_check_passed and build_passed and quality_gate_passed
-        stdout = f"$ {' '.join(build_command)}\n{build_result.stdout}"
-        stderr = f"$ {' '.join(build_command)}\n{build_result.stderr}"
+        display_command_text = " ".join(display_command)
+        stdout = (
+            f"$ {display_command_text}\n"
+            f"{self._sanitize_output(build_result.stdout, store, workspace)}"
+        )
+        stderr = (
+            f"$ {display_command_text}\n"
+            f"{self._sanitize_output(build_result.stderr, store, workspace)}"
+        )
 
         self._cleanup_workspace(workspace)
         return CompileAttempt(
             attempt=attempt,
-            command=[" ".join(build_command)],
+            command=[display_command_text],
             stdout=stdout,
             stderr=stderr,
             returncode=0 if passed else build_result.returncode,
@@ -102,6 +114,21 @@ class LeanRunner:
         if elan_candidate.exists():
             return str(elan_candidate)
         return None
+
+    def _display_lake(self) -> str:
+        if self.lake_path:
+            configured = Path(self.lake_path).expanduser()
+            if configured.is_absolute() or "/" in self.lake_path:
+                return configured.name
+            return self.lake_path
+        return "lake"
+
+    def _sanitize_output(self, content: str, store: RunStore, workspace: Path) -> str:
+        run_root_display = f"artifacts/runs/{store.run_id}"
+        sanitized = content.replace(str(workspace), f"{run_root_display}/workspace")
+        sanitized = sanitized.replace(str(store.run_root), run_root_display)
+        sanitized = sanitized.replace(str(Path.home()), "~")
+        return sanitized
 
 
 def _extract_diagnostics(stderr: str) -> list[str]:

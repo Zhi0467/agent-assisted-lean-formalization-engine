@@ -1,4 +1,1 @@
-import FormalizationEngineWorkspace.Basic
-
-theorem right_add_zero_nat (n : Nat) : n + 0 = n := by
-  exact Nat.add_zero n
+{"theorem_name":"right_add_zero_nat","module_name":"FormalizationEngineWorkspace.Generated","imports":["FormalizationEngineWorkspace.Basic"],"content":"import FormalizationEngineWorkspace.Basic\n\ntheorem right_add_zero_nat (n : Nat) : n + 0 = n := by\n  exact Nat.add_zero n\n","rationale":"Import the local workspace module and close the goal directly with `Nat.add_zero n`."}

@@ -3,7 +3,7 @@
     "examples/inputs/zero_add.md"
   ],
   "notes": [
-    "Title: Right Addition by Zero on Naturals",
+    "Title: Right-add-zero on natural numbers",
     "Start from repo-local examples before adding retrieval or external corpora."
   ],
   "recommended_imports": [
