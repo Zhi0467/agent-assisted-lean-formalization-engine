@@ -1,0 +1,8 @@
+$ /Users/murphy/.elan/bin/lake build FormalizationEngineWorkspace
+✔ [2/5] Built FormalizationEngineWorkspace.Basic (1.6s)
+⚠ [3/5] Built FormalizationEngineWorkspace.Generated (138ms)
+warning: FormalizationEngineWorkspace/Generated.lean:4:2: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+✔ [4/5] Built FormalizationEngineWorkspace (115ms)
+Build completed successfully (5 jobs).

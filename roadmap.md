@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-04-04 03:15 UTC
+Last updated: 2026-04-04 04:40 UTC
 
 ## Current Status
 
@@ -12,11 +12,12 @@ The repo now has a concrete v0 scaffold:
 - and a minimal Lean workspace template for compile checks.
 
 The repo's core agentic object is now pinned more sharply than the first scaffold note
-made it sound: spec, plan, then a bounded compile-repair loop. The next gate is keeping
-the current artifact and approval surface while swapping the internal demo-only turn
-implementation for something that actually crosses an external provider boundary. The repo
-now has that boundary via a subprocess-backed agent plus explicit repair context; the next
-step is replacing the shipped scripted provider with a live API-backed one.
+made it sound: spec, plan, then a bounded compile-repair loop. The generic external turn
+boundary is still there via a subprocess-backed agent, and the next live step now exists
+too: a built-in Codex-backed backend can drive theorem-spec, plan, and Lean-draft turns
+without changing the artifact contract. The next gate is deciding whether that Codex path
+should stay opt-in or become the default non-demo orchestration surface after we gather a
+little more evidence on quality and cost.
 
 ## Milestone 1 — Lock the Engine Skeleton
 
@@ -46,6 +47,9 @@ Gate:
 - [2026-04-04 03:15 UTC] Added a subprocess-backed agent adapter so theorem-spec, plan, and Lean-draft turns can already cross a real external command boundary without changing the run-state machine or artifact schema.
 - [2026-04-04 03:15 UTC] Made repair context explicit in the agent protocol: the repeated draft turn now receives retry-budget state, the previous draft, and the previous compile result, and resumed runs reload both persisted artifacts before re-entering repair.
 - [2026-04-04 03:15 UTC] Added a local command-agent demo plus regression coverage showing a provider can fail once, read the saved compile feedback, and repair the theorem on the next attempt.
+- [2026-04-04 04:40 UTC] Merged PR `#1` on `main`, then tightened the core loop around the review findings: run IDs are now safe and unique, rejected final decisions cannot silently complete a run, stall review can explicitly grant one more repair attempt, and pre-compile provider crashes can resume from the persisted `created` surface instead of stranding the run.
+- [2026-04-04 04:40 UTC] Added `CodexCliFormalizationAgent` as the first built-in live provider path. The CLI can now select `--agent-backend codex`, the repo ships a runnable `examples/run_codex_agent_demo.py`, and the engine still persists the same prompt/request/response artifacts as the demo and subprocess-backed paths.
+- [2026-04-04 04:40 UTC] Ran the new live Codex path end to end on the smallest theorem object (`examples/inputs/zero_add.md`) and checked the resulting canonical artifact into the repo at `artifacts/runs/demo-codex-agent/`. That run compiled on the first attempt and preserved the same stage-by-stage trail as the scripted paths.
 
 ## Milestone 2 — Add A Real Provider Adapter
 

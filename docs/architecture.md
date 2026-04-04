@@ -17,6 +17,9 @@
   Declares the `FormalizationAgent` protocol.
 - `src/lean_formalization_engine/demo_agent.py`
   Deterministic agent implementation for the shipped zero-add example.
+- `src/lean_formalization_engine/codex_agent.py`
+  Live `codex exec` backend that keeps the same theorem-spec, plan, and Lean-draft
+  contracts while letting Codex inspect the repo read-only.
 - `src/lean_formalization_engine/subprocess_agent.py`
   External turn adapter that shells out to a provider command over stdin/stdout while
   preserving the same persisted prompt/request/response artifacts.
@@ -76,6 +79,11 @@ into the engine. A provider command reads the stage request from stdin and retur
 - `prompt`
 - `raw_response`
 - `parsed_output`
+
+The repo now also ships a first built-in live backend for that same seam. The
+`CodexCliFormalizationAgent` uses `codex exec` with an explicit JSON schema per turn, so
+the engine can keep a typed artifact trail even when the provider is a general coding
+agent rather than a custom API wrapper.
 
 ## Compile-Repair Loop
 

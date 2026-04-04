@@ -38,6 +38,8 @@ collapse into an untyped scripting surface.
    `python3 -m pip install . --user`
 5. Run the external-turn demo locally:
    `PYTHONPATH=src python3 examples/run_command_agent_demo.py`
+6. Run the live Codex-backed demo locally:
+   `PYTHONPATH=src python3 examples/run_codex_agent_demo.py`
 
 The demo writes a full run record in this repo under `artifacts/runs/demo-zero-add/`,
 including:
@@ -60,10 +62,17 @@ run-state machine:
 
 The checked-in command-backed example run lives under
 `artifacts/runs/demo-command-agent/`.
+The checked-in live Codex-backed example run lives under
+`artifacts/runs/demo-codex-agent/`.
 
 Each run ID is treated as a durable artifact object under `artifacts/runs/`, so starting
 another run with the same ID fails instead of silently reusing old approvals or
 overwriting the older record.
+
+For a live backend, the CLI can now use Codex directly without going through a separate
+provider script:
+
+`PYTHONPATH=src python3 -m lean_formalization_engine --agent-backend codex run --source examples/inputs/zero_add.md --run-id codex-cli-demo --auto-approve`
 
 ## Human-In-The-Loop Flow
 
@@ -83,9 +92,10 @@ The model-call surface is intentionally narrow:
 
 That post-plan compile-repair loop is the core agentic object of the system. The shipped
 demo keeps those turns deterministic so the repo can prove the workflow shape before a
-live API-backed provider is added. The subprocess adapter now pins the exact boundary:
-each turn can already be delegated to an external command, and the repair turn receives
-structured retry state plus the previous draft and compile result.
+live API-backed provider is added. The subprocess adapter still pins the generic boundary,
+and the repo now also ships a first built-in live provider path through `codex exec`.
+Both surfaces preserve the same persisted prompts, parsed outputs, repair context, and
+compile artifacts.
 
 If Lean was missing, `resume` retries the same stalled run after the toolchain is
 installed. If the run stalled on the retry cap, `approve-stall` records the explicit
