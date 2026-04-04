@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-04-04 05:36 UTC
+Last updated: 2026-04-04 05:49 UTC
 
 ## Current Status
 
@@ -17,8 +17,10 @@ boundary is still there via a subprocess-backed agent, and the live Codex path n
 two checked-in surfaces: an auto-approved zero-add run and a manual-review run on the
 non-demo theorem `n + 0 = n`. That means the repo now proves both halves of the intended
 workflow object: live model turns plus explicit human checkpoints on a real theorem path.
-The next gate is to make Codex the default real-run backend in the CLI/runtime and then
-push onto harder theorems that actually exercise repair quality.
+The current checked-in manual-review artifact also shows a real repair turn, not just a
+clean first pass. The next gate is to make Codex the default real-run backend in the
+CLI/runtime and then push onto harder theorems that stress repair quality beyond this
+small arithmetic case.
 
 ## Milestone 1 — Lock the Engine Skeleton
 
@@ -68,7 +70,8 @@ Gate:
 
 ### Activity Log
 
-- [2026-04-04 05:36 UTC] Simulated the full human-in-the-loop Codex path on a first non-demo theorem (`n + 0 = n`) without `--auto-approve`. The run paused at spec review, plan review, and final review in turn, accepted explicit human notes at each gate, compiled on the first attempt, and was checked into the repo at `artifacts/runs/demo-codex-manual-right-add/`.
+- [2026-04-04 05:36 UTC] Simulated the full human-in-the-loop Codex path on a first non-demo theorem (`n + 0 = n`) without `--auto-approve`. The run paused at spec review, plan review, and final review in turn, accepted explicit human notes at each gate, and the checked-in artifact now captures a real repair cycle: attempt 1 failed at the Lean compile gate, attempt 2 consumed the saved diagnostics and passed. The full run is checked into the repo at `artifacts/runs/demo-codex-manual-right-add/`.
+- [2026-04-04 05:49 UTC] Normalized persisted Lean command and compiler-trace paths so checked-in compile artifacts stop leaking machine-local absolute paths. Added a regression test for this at the runner level and regenerated the manual-review artifact with the sanitized trace surface.
 
 ## Milestone 3 — Improve Lean Context And Repair
 

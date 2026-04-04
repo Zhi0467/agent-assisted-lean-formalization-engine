@@ -91,7 +91,9 @@ the flow can run end to end.
 
 `examples/run_codex_manual_review_demo.py` exercises the same live Codex path without
 `--auto-approve`: it waits at spec review, plan review, and final review, records explicit
-human notes at each gate, then resumes the run.
+human notes at each gate, then resumes the run. The current checked-in manual-review
+artifact also captures a real repair turn: the first draft fails the Lean compile gate,
+the saved diagnostics flow into attempt 2, and the repaired file passes.
 
 The model-call surface is intentionally narrow:
 
