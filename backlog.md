@@ -2,7 +2,6 @@
 
 ## Immediate Follow-Ups
 
-- Make the Codex-backed path the default CLI/backend surface for real runs while keeping the deterministic demo path explicit for examples and tests.
 - Run a second non-demo theorem that forces at least one genuine Codex repair attempt, then check in that artifact alongside the first-pass right-add example.
 - Add an explicit retry/escalation policy so repeated compile failures cleanly route to plan revision, spec revision, or human intervention.
 - Add a `ProofSession` interface for stepwise Lean interaction once the file-level compile-repair loop is stable.
@@ -39,6 +38,5 @@
 ## Product Follow-Ups
 
 - Add a reviewer-friendly summary artifact per run.
-- Add a first-class CLI walkthrough for manual-review runs so the step-by-step human surface is visible without reading the example script.
 - Add source-span provenance for PDF snippets instead of normalized text only.
 - Add a browser or notebook view for run artifacts.

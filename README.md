@@ -42,6 +42,8 @@ collapse into an untyped scripting surface.
    `PYTHONPATH=src python3 examples/run_codex_agent_demo.py`
 7. Run the explicit human-review Codex demo locally:
    `PYTHONPATH=src python3 examples/run_codex_manual_review_demo.py`
+8. Run the CLI directly against the default live backend:
+   `PYTHONPATH=src python3 -m lean_formalization_engine run --source examples/inputs/right_add_zero.md --run-id cli-manual-right-add`
 
 The demo writes a full run record in this repo under `artifacts/runs/demo-zero-add/`,
 including:
@@ -76,7 +78,11 @@ overwriting the older record.
 For a live backend, the CLI can now use Codex directly without going through a separate
 provider script:
 
-`PYTHONPATH=src python3 -m lean_formalization_engine --agent-backend codex run --source examples/inputs/zero_add.md --run-id codex-cli-demo --auto-approve`
+`PYTHONPATH=src python3 -m lean_formalization_engine run --source examples/inputs/zero_add.md --run-id codex-cli-demo --auto-approve`
+
+`codex` is now the default CLI backend for real runs. The deterministic demo backend is
+still available explicitly with `--agent-backend demo`, and `--agent-command` still
+switches the CLI to the subprocess provider path.
 
 ## Human-In-The-Loop Flow
 
@@ -92,6 +98,9 @@ the flow can run end to end.
 `examples/run_codex_manual_review_demo.py` exercises the same live Codex path without
 `--auto-approve`: it waits at spec review, plan review, and final review, records explicit
 human notes at each gate, then resumes the run.
+
+`docs/manual-review-walkthrough.md` shows the same manual-review path as plain CLI
+commands, so the human surface is visible without reading the Python demo script.
 
 The model-call surface is intentionally narrow:
 

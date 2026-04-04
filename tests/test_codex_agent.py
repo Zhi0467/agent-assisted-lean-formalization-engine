@@ -13,6 +13,19 @@ from lean_formalization_engine.models import SourceKind, SourceRef
 
 
 class CodexAgentTest(unittest.TestCase):
+    def test_build_agent_defaults_to_codex_backend(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        args = Namespace(
+            agent_backend=None,
+            codex_model=None,
+            agent_command=None,
+        )
+
+        agent = build_agent(args, project_root)
+
+        self.assertIsInstance(agent, CodexCliFormalizationAgent)
+        self.assertIsNone(agent.model)
+
     def test_build_agent_selects_codex_backend(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         args = Namespace(

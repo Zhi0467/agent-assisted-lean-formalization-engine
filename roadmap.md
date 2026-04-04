@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-04-04 06:04 UTC
+Last updated: 2026-04-04 06:20 UTC
 
 ## Current Status
 
@@ -17,8 +17,10 @@ boundary is still there via a subprocess-backed agent, and the live Codex path n
 two checked-in surfaces: an auto-approved zero-add run and a manual-review run on the
 non-demo theorem `n + 0 = n`. That means the repo now proves both halves of the intended
 workflow object: live model turns plus explicit human checkpoints on a real theorem path.
-The next gate is to make Codex the default real-run backend in the CLI/runtime and then
-push onto harder theorems that stress repair quality beyond this small arithmetic case.
+Codex is now the default CLI backend for real runs, and the repo also has an explicit
+CLI walkthrough for the manual-review path so the human surface is visible without reading
+Python demo code. The next gate is to push onto harder theorems that stress repair quality
+beyond this small arithmetic case.
 
 ## Milestone 1 — Lock the Engine Skeleton
 
@@ -35,6 +37,8 @@ Gate:
 
 ### Activity Log
 
+- [2026-04-04 06:20 UTC] Switched the CLI default backend for real runs from the deterministic demo agent to Codex, while keeping `--agent-backend demo` explicit for examples/tests and preserving `--agent-command` as the subprocess override.
+- [2026-04-04 06:20 UTC] Added `docs/manual-review-walkthrough.md` so the human-reviewed theorem path is visible as direct CLI commands instead of only through the Python demo script.
 - [2026-04-03 10:25 UTC] Initialized the project surface around five durable directories: `src/`, `examples/`, `assets/`, `artifacts/`, and `lean_workspace_template/`.
 - [2026-04-03 10:25 UTC] Chose Python for the v0 engine, using typed dataclasses and protocols instead of an agent framework.
 - [2026-04-03 10:25 UTC] Added an approval-driven workflow scaffold with theorem-spec review, plan review, compile attempts, and final review.
@@ -70,6 +74,7 @@ Gate:
 
 - [2026-04-04 05:36 UTC] Simulated the full human-in-the-loop Codex path on a first non-demo theorem (`n + 0 = n`) without `--auto-approve`. The run paused at spec review, plan review, and final review in turn, accepted explicit human notes at each gate, and was checked into the repo at `artifacts/runs/demo-codex-manual-right-add/`.
 - [2026-04-04 05:49 UTC] Normalized persisted Lean command and compiler-trace paths so checked-in compile artifacts stop leaking machine-local absolute paths. Added a regression test for this at the runner level and regenerated the manual-review artifact with the sanitized trace surface.
+- [2026-04-04 06:12 UTC] Re-ran the same manual-review theorem end to end against the live Codex backend and confirmed the checked-in `n + 0 = n` path still pauses cleanly at spec, plan, and final review before completing after explicit human approvals.
 
 ## Milestone 3 — Improve Lean Context And Repair
 

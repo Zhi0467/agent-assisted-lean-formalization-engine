@@ -25,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--agent-command",
         help=(
             "Optional command that implements theorem-spec, plan, and Lean-draft turns "
-            "over stdin/stdout. If omitted, the deterministic demo agent is used."
+            "over stdin/stdout. If omitted, the CLI uses the default built-in backend."
         ),
     )
     parser.add_argument(
@@ -33,8 +33,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["demo", "command", "codex"],
         help=(
             "Choose the agent backend explicitly. Defaults to `command` when "
-            "`--agent-command` is set, `codex` when `--codex-model` is set, and "
-            "`demo` otherwise."
+            "`--agent-command` is set and `codex` otherwise. Use `demo` explicitly "
+            "for deterministic example runs."
         ),
     )
     parser.add_argument(
@@ -87,10 +87,8 @@ def build_agent(args: argparse.Namespace, repo_root: Path):
     if backend is None:
         if agent_command:
             backend = "command"
-        elif codex_model:
-            backend = "codex"
         else:
-            backend = "demo"
+            backend = "codex"
 
     if backend == "demo":
         return DemoFormalizationAgent()
