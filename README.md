@@ -84,6 +84,11 @@ provider script:
 still available explicitly with `--agent-backend demo`, and `--agent-command` still
 switches the CLI to the subprocess provider path.
 
+Current merge gate: open `PR #2` is still blocked on two workflow issues before the
+default-Codex path is safe to merge. Missing `codex` binaries still crash with a raw
+`FileNotFoundError`, and multi-command runs can silently switch backends on `resume`
+because the selected backend is not yet persisted with the run.
+
 ## Human-In-The-Loop Flow
 
 The engine is built around three explicit checkpoints:

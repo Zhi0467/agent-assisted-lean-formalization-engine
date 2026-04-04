@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-04-04 06:20 UTC
+Last updated: 2026-04-04 06:58 UTC
 
 ## Current Status
 
@@ -19,8 +19,10 @@ non-demo theorem `n + 0 = n`. That means the repo now proves both halves of the 
 workflow object: live model turns plus explicit human checkpoints on a real theorem path.
 Codex is now the default CLI backend for real runs, and the repo also has an explicit
 CLI walkthrough for the manual-review path so the human surface is visible without reading
-Python demo code. The next gate is to push onto harder theorems that stress repair quality
-beyond this small arithmetic case.
+Python demo code. But the next gate is not yet a harder theorem: open `PR #2` still has
+two concrete workflow blockers on its current head. Missing `codex` binaries still crash
+with a raw traceback, and multi-command runs can silently switch providers on `resume`
+because backend choice is not yet persisted with the run.
 
 ## Milestone 1 — Lock the Engine Skeleton
 
@@ -75,6 +77,7 @@ Gate:
 - [2026-04-04 05:36 UTC] Simulated the full human-in-the-loop Codex path on a first non-demo theorem (`n + 0 = n`) without `--auto-approve`. The run paused at spec review, plan review, and final review in turn, accepted explicit human notes at each gate, and was checked into the repo at `artifacts/runs/demo-codex-manual-right-add/`.
 - [2026-04-04 05:49 UTC] Normalized persisted Lean command and compiler-trace paths so checked-in compile artifacts stop leaking machine-local absolute paths. Added a regression test for this at the runner level and regenerated the manual-review artifact with the sanitized trace surface.
 - [2026-04-04 06:12 UTC] Re-ran the same manual-review theorem end to end against the live Codex backend and confirmed the checked-in `n + 0 = n` path still pauses cleanly at spec, plan, and final review before completing after explicit human approvals.
+- [2026-04-04 06:58 UTC] Rechecked `PR #2` on its current head after another local review attempt. The branch still passes the local unit-test gate, but it is not merge-ready yet: missing `codex` still crashes with raw `FileNotFoundError`, and a run started with a non-default backend can still resume through Codex because backend choice is not persisted with the run manifest.
 
 ## Milestone 3 — Improve Lean Context And Repair
 

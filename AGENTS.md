@@ -1,8 +1,8 @@
 # Project: Agent-Assisted Lean Formalization Engine
 
 Scaffold for an agentic workflow that turns theorem sources into compiling Lean 4 code.
-Current focus: keep the compile-repair loop stable while pushing from the first
-manual Codex theorem path toward harder repair-heavy runs.
+Current focus: close PR `#2`'s missing-`codex` and backend-persistence blockers, then
+push from the first manual Codex theorem path toward harder repair-heavy runs.
 
 ## Key Docs
 
