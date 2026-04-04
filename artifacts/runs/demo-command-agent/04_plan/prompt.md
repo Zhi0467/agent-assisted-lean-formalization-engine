@@ -1,0 +1,1 @@
+Produce a Lean-facing plan for the approved theorem specification.

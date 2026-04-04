@@ -1,0 +1,17 @@
+{
+  "attempt": 1,
+  "plan": {
+    "helper_definitions": [],
+    "imports": [
+      "FormalizationEngineWorkspace.Basic"
+    ],
+    "proof_sketch": [
+      "Import the local basic workspace module.",
+      "Use the core theorem `Nat.zero_add`.",
+      "Close the goal with `simpa`."
+    ],
+    "target_statement": "theorem zero_add_demo (n : Nat) : 0 + n = n",
+    "theorem_name": "zero_add_demo"
+  },
+  "previous_result": null
+}

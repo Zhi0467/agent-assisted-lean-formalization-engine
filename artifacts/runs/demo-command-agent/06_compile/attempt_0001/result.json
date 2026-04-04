@@ -1,0 +1,21 @@
+{
+  "attempt": 1,
+  "build_passed": true,
+  "command": [
+    "/Users/murphy/.elan/bin/lake build FormalizationEngineWorkspace"
+  ],
+  "contains_sorry": true,
+  "diagnostics": [
+    "$ /Users/murphy/.elan/bin/lake build FormalizationEngineWorkspace",
+    "info: FormalizationEngineWorkspace: no previous manifest, creating one from scratch",
+    "info: toolchain not updated; already up-to-date"
+  ],
+  "fast_check_passed": true,
+  "missing_toolchain": false,
+  "passed": false,
+  "quality_gate_passed": false,
+  "returncode": 0,
+  "status": "compile_failed",
+  "stderr": "$ /Users/murphy/.elan/bin/lake build FormalizationEngineWorkspace\ninfo: FormalizationEngineWorkspace: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\n",
+  "stdout": "$ /Users/murphy/.elan/bin/lake build FormalizationEngineWorkspace\n\u2714 [2/5] Built FormalizationEngineWorkspace.Basic (1.5s)\n\u26a0 [3/5] Built FormalizationEngineWorkspace.Generated (152ms)\nwarning: FormalizationEngineWorkspace/Generated.lean:3:8: declaration uses `sorry`\n\u2714 [4/5] Built FormalizationEngineWorkspace (131ms)\nBuild completed successfully (5 jobs).\n"
+}

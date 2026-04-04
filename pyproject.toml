@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-assisted-lean-formalization-engine"
+version = "0.1.0"
+description = "Filesystem-first scaffold for an agentic Lean formalization engine."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {file = "LICENSE"}
+authors = [
+  {name = "Murphy"}
+]
+dependencies = []
+
+[project.optional-dependencies]
+pdf = [
+  "PyMuPDF>=1.24",
+  "pypdf>=5.0"
+]
+dev = [
+  "mypy>=1.10",
+  "ruff>=0.6"
+]
+
+[project.scripts]
+lean-formalize = "lean_formalization_engine.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+lean_formalization_engine = [
+  "workspace_template/*",
+  "workspace_template/FormalizationEngineWorkspace/*",
+]

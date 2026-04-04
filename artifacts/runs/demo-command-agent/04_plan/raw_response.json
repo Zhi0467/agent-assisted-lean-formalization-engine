@@ -1,0 +1,3 @@
+{
+  "raw_response": "{\n  \"helper_definitions\": [],\n  \"imports\": [\n    \"FormalizationEngineWorkspace.Basic\"\n  ],\n  \"proof_sketch\": [\n    \"Formalize the approved theorem titled Zero-add on natural numbers.\",\n    \"Use the local basic workspace module.\",\n    \"Repair once compiler or quality feedback arrives.\"\n  ],\n  \"target_statement\": \"theorem zero_add_provider_demo (n : Nat) : 0 + n = n\",\n  \"theorem_name\": \"zero_add_provider_demo\"\n}"
+}
