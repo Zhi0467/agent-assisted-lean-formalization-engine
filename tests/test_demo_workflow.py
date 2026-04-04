@@ -2,20 +2,24 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from argparse import Namespace
 from pathlib import Path
+import sys
 
+from lean_formalization_engine.cli import build_agent
 from lean_formalization_engine.demo_agent import DemoFormalizationAgent
 from lean_formalization_engine.lean_runner import LeanRunner
 from lean_formalization_engine.models import (
     AgentTurn,
-    CompileAttempt,
     ContextPack,
     FormalizationPlan,
     LeanDraft,
+    RepairContext,
     RunStage,
     SourceRef,
     TheoremSpec,
 )
+from lean_formalization_engine.subprocess_agent import SubprocessFormalizationAgent
 from lean_formalization_engine.workflow import FormalizationWorkflow
 
 
@@ -55,20 +59,21 @@ class RepairResumeAgent:
     def draft_lean_file(
         self,
         plan: FormalizationPlan,
-        attempt: int,
-        previous_result: CompileAttempt | None,
+        repair_context: RepairContext,
     ) -> tuple[LeanDraft, AgentTurn]:
-        if attempt == 1:
+        if repair_context.current_attempt == 1:
             content = (
                 "import FormalizationEngineWorkspace.Basic\n\n"
                 "theorem zero_add_resume (n : Nat) : 0 + n = n := by\n"
                 "  sorry\n"
             )
         else:
-            assert previous_result is not None
-            assert previous_result.attempt == 1
-            assert previous_result.contains_sorry
-            assert not previous_result.quality_gate_passed
+            assert repair_context.previous_draft is not None
+            assert "sorry" in repair_context.previous_draft.content
+            assert repair_context.previous_result is not None
+            assert repair_context.previous_result.attempt == 1
+            assert repair_context.previous_result.contains_sorry
+            assert not repair_context.previous_result.quality_gate_passed
             content = (
                 "import FormalizationEngineWorkspace.Basic\n\n"
                 "theorem zero_add_resume (n : Nat) : 0 + n = n := by\n"
@@ -79,9 +84,13 @@ class RepairResumeAgent:
             module_name="FormalizationEngineWorkspace.Generated",
             imports=["FormalizationEngineWorkspace.Basic"],
             content=content,
-            rationale=f"attempt {attempt}",
+            rationale=f"attempt {repair_context.current_attempt}",
         )
-        return draft, AgentTurn(request_payload={"attempt": attempt}, prompt="draft", raw_response="draft")
+        return draft, AgentTurn(
+            request_payload={"attempt": repair_context.current_attempt},
+            prompt="draft",
+            raw_response="draft",
+        )
 
 
 class CrashBeforeRepairAgent(RepairResumeAgent):
@@ -90,12 +99,11 @@ class CrashBeforeRepairAgent(RepairResumeAgent):
     def draft_lean_file(
         self,
         plan: FormalizationPlan,
-        attempt: int,
-        previous_result: CompileAttempt | None,
+        repair_context: RepairContext,
     ) -> tuple[LeanDraft, AgentTurn]:
-        if attempt == 2:
+        if repair_context.current_attempt == 2:
             raise RuntimeError("simulated crash before second attempt")
-        return super().draft_lean_file(plan, attempt, previous_result)
+        return super().draft_lean_file(plan, repair_context)
 
 
 class DemoWorkflowTest(unittest.TestCase):
@@ -256,3 +264,63 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
             self.assertEqual(manifest.attempt_count, 2)
             self.assertIsNotNone(manifest.final_output_path)
+
+    def test_subprocess_agent_repair_loop_uses_external_provider(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        template_dir = project_root / "lean_workspace_template"
+        provider_script = (
+            project_root / "examples" / "providers" / "scripted_repair_provider.py"
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            fake_lake = self._write_fake_lake(temp_root)
+            source_path = temp_root / "input.md"
+            source_path.write_text(
+                "For every natural number n, adding zero on the left gives back n.\n"
+                "Target statement: 0 + n = n.\n",
+                encoding="utf-8",
+            )
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=SubprocessFormalizationAgent(
+                    [sys.executable, str(provider_script)]
+                ),
+                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
+            )
+            manifest = workflow.run(
+                source_path=source_path,
+                run_id="subprocess-demo",
+                auto_approve=True,
+            )
+
+            self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
+            self.assertEqual(manifest.attempt_count, 2)
+            request_path = (
+                temp_root
+                / "artifacts"
+                / "runs"
+                / "subprocess-demo"
+                / "05_draft"
+                / "attempt_0002"
+                / "request.json"
+            )
+            request = request_path.read_text(encoding="utf-8")
+            self.assertIn('"previous_draft"', request)
+            self.assertIn('"attempts_remaining"', request)
+
+    def test_cli_build_agent_resolves_repo_relative_provider_path(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        args = Namespace(
+            agent_command="python3 examples/providers/scripted_repair_provider.py"
+        )
+
+        agent = build_agent(args, project_root)
+
+        self.assertIsInstance(agent, SubprocessFormalizationAgent)
+        self.assertEqual(agent.command[0], "python3")
+        self.assertEqual(
+            Path(agent.command[1]),
+            project_root / "examples" / "providers" / "scripted_repair_provider.py",
+        )
+        self.assertEqual(agent.name, "subprocess:scripted_repair_provider.py")

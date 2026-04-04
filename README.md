@@ -36,6 +36,8 @@ collapse into an untyped scripting surface.
    `PYTHONPATH=src python3 examples/run_zero_add_demo.py`
 4. Optional installed CLI surface:
    `python3 -m pip install . --user`
+5. Run the external-turn demo locally:
+   `PYTHONPATH=src python3 examples/run_command_agent_demo.py`
 
 The demo writes a full run record in this repo under `artifacts/runs/demo-zero-add/`,
 including:
@@ -50,6 +52,14 @@ including:
 The packaged CLI falls back to the same Lean workspace template shipped inside
 `src/lean_formalization_engine/workspace_template/`, so repo-local and installed runs share
 the same compile surface.
+
+The CLI can also swap the demo stub for an external turn provider without changing the
+run-state machine:
+
+`PYTHONPATH=src python3 -m lean_formalization_engine --agent-command "python3 examples/providers/scripted_repair_provider.py" run --source examples/inputs/zero_add.md --run-id cli-command-demo --auto-approve`
+
+The checked-in command-backed example run lives under
+`artifacts/runs/demo-command-agent/`.
 
 ## Human-In-The-Loop Flow
 
@@ -69,7 +79,9 @@ The model-call surface is intentionally narrow:
 
 That post-plan compile-repair loop is the core agentic object of the system. The shipped
 demo keeps those turns deterministic so the repo can prove the workflow shape before a
-real provider adapter is added.
+live API-backed provider is added. The subprocess adapter now pins the exact boundary:
+each turn can already be delegated to an external command, and the repair turn receives
+structured retry state plus the previous draft and compile result.
 
 ## Key Docs
 

@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
-from typing import Optional, Tuple
+from typing import Tuple
 
 from .models import (
     AgentTurn,
-    CompileAttempt,
     ContextPack,
     FormalizationPlan,
     LeanDraft,
+    RepairContext,
     SourceRef,
     TheoremSpec,
 )
@@ -87,12 +87,14 @@ class DemoFormalizationAgent:
     def draft_lean_file(
         self,
         plan: FormalizationPlan,
-        attempt: int,
-        previous_result: Optional[CompileAttempt],
+        repair_context: RepairContext,
     ) -> Tuple[LeanDraft, AgentTurn]:
         diagnostics = ""
-        if previous_result is not None:
-            diagnostics = previous_result.stderr or previous_result.stdout
+        if repair_context.previous_result is not None:
+            diagnostics = (
+                repair_context.previous_result.stderr
+                or repair_context.previous_result.stdout
+            )
 
         content = "\n".join(
             [
@@ -112,7 +114,7 @@ class DemoFormalizationAgent:
         )
         prompt = (
             "Generate a full Lean file for the approved plan.\n"
-            f"Attempt: {attempt}\n"
+            f"Attempt: {repair_context.current_attempt}/{repair_context.max_attempts}\n"
             f"Target statement: {plan.target_statement}\n"
         )
         if diagnostics:
@@ -120,8 +122,7 @@ class DemoFormalizationAgent:
         turn = AgentTurn(
             request_payload={
                 "plan": asdict(plan),
-                "attempt": attempt,
-                "previous_result": asdict(previous_result) if previous_result else None,
+                "repair_context": asdict(repair_context),
             },
             prompt=prompt,
             raw_response=content,

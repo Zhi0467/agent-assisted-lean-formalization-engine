@@ -11,6 +11,7 @@ from .models import (
     FormalizationPlan,
     HumanDecision,
     LeanDraft,
+    RepairContext,
     RunManifest,
     RunStage,
     SourceKind,
@@ -177,10 +178,19 @@ class FormalizationWorkflow:
     ) -> RunManifest:
         manifest = self._load_manifest(store)
         previous_result = self._load_previous_compile_result(store, manifest)
+        previous_draft = self._load_previous_draft(store, manifest)
 
         while manifest.attempt_count < self.max_attempts:
             attempt = manifest.attempt_count + 1
-            draft, draft_turn = self.agent.draft_lean_file(plan, attempt, previous_result)
+            repair_context = RepairContext(
+                current_attempt=attempt,
+                max_attempts=self.max_attempts,
+                prior_attempts=attempt - 1,
+                attempts_remaining=self.max_attempts - attempt + 1,
+                previous_draft=previous_draft,
+                previous_result=previous_result,
+            )
+            draft, draft_turn = self.agent.draft_lean_file(plan, repair_context)
             self._write_attempt(store, attempt, draft_turn, draft)
             compile_result = self.lean_runner.compile_draft(store, draft, attempt)
             self._write_compile_result(store, attempt, compile_result)
@@ -205,6 +215,7 @@ class FormalizationWorkflow:
             manifest.current_stage = RunStage.REPAIRING
             manifest.latest_error = compile_result.stderr.strip() or compile_result.status
             self._save_manifest(store, manifest)
+            previous_draft = draft
             previous_result = compile_result
 
         manifest.current_stage = RunStage.AWAITING_STALL_REVIEW
@@ -373,3 +384,16 @@ class FormalizationWorkflow:
             return None
         payload = store.read_json(result_path)
         return CompileAttempt(**payload)
+
+    def _load_previous_draft(
+        self,
+        store: RunStore,
+        manifest: RunManifest,
+    ) -> LeanDraft | None:
+        if manifest.attempt_count <= 0:
+            return None
+        draft_path = f"05_draft/attempt_{manifest.attempt_count:04d}/parsed_output.json"
+        if not store.exists(draft_path):
+            return None
+        payload = store.read_json(draft_path)
+        return LeanDraft(**payload)

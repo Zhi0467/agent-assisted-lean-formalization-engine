@@ -117,6 +117,16 @@ class CompileAttempt:
 
 
 @dataclass
+class RepairContext:
+    current_attempt: int
+    max_attempts: int
+    prior_attempts: int
+    attempts_remaining: int
+    previous_draft: LeanDraft | None
+    previous_result: CompileAttempt | None
+
+
+@dataclass
 class HumanDecision:
     approved: bool
     updated_at: str

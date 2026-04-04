@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-04-04 00:40 UTC
+Last updated: 2026-04-04 03:15 UTC
 
 ## Current Status
 
@@ -13,9 +13,10 @@ The repo now has a concrete v0 scaffold:
 
 The repo's core agentic object is now pinned more sharply than the first scaffold note
 made it sound: spec, plan, then a bounded compile-repair loop. The next gate is keeping
-the current artifact and approval surface while replacing the deterministic demo agent
-with real model-backed turns at spec generation, plan generation, and especially the
-post-plan Lean-draft repair cycle.
+the current artifact and approval surface while swapping the internal demo-only turn
+implementation for something that actually crosses an external provider boundary. The repo
+now has that boundary via a subprocess-backed agent plus explicit repair context; the next
+step is replacing the shipped scripted provider with a live API-backed one.
 
 ## Milestone 1 — Lock the Engine Skeleton
 
@@ -42,19 +43,22 @@ Gate:
 - [2026-04-04 00:28 UTC] Tightened the project-language after Wangzhi's loop question: the core agentic surface is not generic "provider wiring" but the bounded post-plan Lean compile-repair cycle, where compiler diagnostics feed the next draft attempt until success, retry-cap stall, or escalation back to spec/plan review.
 - [2026-04-04 00:28 UTC] Reordered the backlog so the first follow-ups center on the model-backed compile-repair loop, structured diagnostics, and explicit escalation policy before deeper interactive proof sessions.
 - [2026-04-04 00:40 UTC] Fixed an actual repair-loop gap uncovered by the local review attempt: interrupted runs can now resume from `repairing`, and the workflow reloads the last persisted compile result so the next attempt still sees the prior compiler diagnostics. Added a regression test covering crash-then-resume behavior inside the compile-repair phase.
+- [2026-04-04 03:15 UTC] Added a subprocess-backed agent adapter so theorem-spec, plan, and Lean-draft turns can already cross a real external command boundary without changing the run-state machine or artifact schema.
+- [2026-04-04 03:15 UTC] Made repair context explicit in the agent protocol: the repeated draft turn now receives retry-budget state, the previous draft, and the previous compile result, and resumed runs reload both persisted artifacts before re-entering repair.
+- [2026-04-04 03:15 UTC] Added a local command-agent demo plus regression coverage showing a provider can fail once, read the saved compile feedback, and repair the theorem on the next attempt.
 
 ## Milestone 2 — Add A Real Provider Adapter
 
 Success criteria:
 
-- a model-backed agent can produce theorem specs, plans, and Lean drafts,
+- an external provider can produce theorem specs, plans, and Lean drafts,
 - prompts and responses are persisted without changing the artifact contract,
-- compilation failures feed a bounded repair loop,
+- compilation failures feed a bounded repair loop with explicit repair context,
 - repeated repair failures escalate cleanly instead of silently thrashing.
 
 Gate:
 
-- at least one non-demo theorem runs through the model-backed path with persisted prompts and diagnostics.
+- at least one non-demo theorem runs through a live API-backed path with persisted prompts and diagnostics.
 
 ## Milestone 3 — Improve Lean Context And Repair
 

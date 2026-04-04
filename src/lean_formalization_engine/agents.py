@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from typing import Optional, Protocol, Tuple
+from typing import Protocol, Tuple
 
 from .models import (
     AgentTurn,
-    CompileAttempt,
     ContextPack,
     FormalizationPlan,
     LeanDraft,
+    RepairContext,
     SourceRef,
     TheoremSpec,
 )
@@ -33,7 +33,6 @@ class FormalizationAgent(Protocol):
     def draft_lean_file(
         self,
         plan: FormalizationPlan,
-        attempt: int,
-        previous_result: Optional[CompileAttempt],
+        repair_context: RepairContext,
     ) -> Tuple[LeanDraft, AgentTurn]:
         ...

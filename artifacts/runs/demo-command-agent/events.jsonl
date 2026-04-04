@@ -1,0 +1,1 @@
+{"event_type": "run_created", "payload": {"agent": "subprocess:scripted_repair_provider.py", "run_id": "demo-command-agent", "source_path": "examples/inputs/zero_add.md"}, "timestamp": "2026-04-04T02:48:39Z"}

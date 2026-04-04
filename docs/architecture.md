@@ -17,6 +17,9 @@
   Declares the `FormalizationAgent` protocol.
 - `src/lean_formalization_engine/demo_agent.py`
   Deterministic agent implementation for the shipped zero-add example.
+- `src/lean_formalization_engine/subprocess_agent.py`
+  External turn adapter that shells out to a provider command over stdin/stdout while
+  preserving the same persisted prompt/request/response artifacts.
 - `src/lean_formalization_engine/ingest.py`
   Reads Markdown and LaTeX directly and provides an optional PDF extraction path.
 - `src/lean_formalization_engine/storage.py`
@@ -61,9 +64,18 @@ The artifact tree still captures the sub-steps between those gates:
 
 1. `draft_theorem_spec()` turns source text into a structured theorem spec.
 2. `draft_formalization_plan()` turns the approved spec plus local context into a Lean-facing plan.
-3. `draft_lean_file()` turns the approved plan into a Lean draft.
+3. `draft_lean_file()` turns the approved plan plus repair context into a Lean draft.
 
 The first two turns happen once per approved stage. The third is the repeated one.
+Today that third turn receives explicit retry budget, previous draft, and previous compile
+result instead of only raw stderr text.
+
+The new subprocess adapter makes the model-call seam concrete without baking an API vendor
+into the engine. A provider command reads the stage request from stdin and returns:
+
+- `prompt`
+- `raw_response`
+- `parsed_output`
 
 ## Compile-Repair Loop
 
@@ -72,7 +84,7 @@ After plan approval, the workflow enters the core bounded loop:
 1. draft a Lean file from the approved plan,
 2. compile it in the run-local Lean workspace,
 3. persist the exact compile result,
-4. if it failed, feed the previous compile result into the next `draft_lean_file()` turn.
+4. if it failed, feed the previous draft plus compile result into the next `draft_lean_file()` turn.
 
 The loop stops when one of three things happens:
 
@@ -81,7 +93,7 @@ The loop stops when one of three things happens:
 - the retry cap is hit and the run is kicked to stall review instead of looping forever.
 
 If a run is interrupted mid-repair, `resume()` reloads the last persisted compile result
-so the next repair attempt still has the previous diagnostics in context.
+and draft so the next repair attempt still has the previous diagnostics and code in context.
 
 ## Run Directory Shape
 

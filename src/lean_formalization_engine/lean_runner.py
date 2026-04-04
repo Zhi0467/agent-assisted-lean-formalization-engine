@@ -80,6 +80,7 @@ class LeanRunner:
     def _cleanup_workspace(self, workspace: Path) -> None:
         shutil.rmtree(workspace / ".lake", ignore_errors=True)
         shutil.rmtree(workspace / "build", ignore_errors=True)
+        (workspace / "lake-manifest.json").unlink(missing_ok=True)
 
     def _resolve_lake(self) -> str | None:
         if self.lake_path:

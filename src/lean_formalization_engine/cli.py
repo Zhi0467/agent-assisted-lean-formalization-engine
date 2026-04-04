@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 from dataclasses import asdict
 from pathlib import Path
 
 from .demo_agent import DemoFormalizationAgent
 from .lean_runner import LeanRunner
+from .subprocess_agent import SubprocessFormalizationAgent
 from .workflow import FormalizationWorkflow
 
 
@@ -17,6 +19,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path.cwd(),
         help="Repository root that contains artifacts/, examples/, and lean_workspace_template/.",
+    )
+    parser.add_argument(
+        "--agent-command",
+        help=(
+            "Optional command that implements theorem-spec, plan, and Lean-draft turns "
+            "over stdin/stdout. If omitted, the deterministic demo agent is used."
+        ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -47,6 +56,31 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_agent(args: argparse.Namespace, repo_root: Path):
+    if not args.agent_command:
+        return DemoFormalizationAgent()
+    command = _resolve_agent_command(shlex.split(args.agent_command), repo_root)
+    return SubprocessFormalizationAgent(command)
+
+
+def _resolve_agent_command(command: list[str], repo_root: Path) -> list[str]:
+    resolved_command: list[str] = []
+    for index, part in enumerate(command):
+        if Path(part).is_absolute() or part.startswith("-"):
+            resolved_command.append(part)
+            continue
+
+        candidate = repo_root / part
+        if index == 0 and "/" not in part:
+            resolved_command.append(part)
+            continue
+        if candidate.exists():
+            resolved_command.append(str(candidate))
+            continue
+        resolved_command.append(part)
+    return resolved_command
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -57,7 +91,7 @@ def main() -> None:
 
     workflow = FormalizationWorkflow(
         repo_root=repo_root,
-        agent=DemoFormalizationAgent(),
+        agent=build_agent(args, repo_root),
         lean_runner=LeanRunner(template_dir=template_root),
     )
 

@@ -2,9 +2,7 @@
 
 ## Immediate Follow-Ups
 
-- Make the post-plan compile-repair loop genuinely model-backed instead of using the deterministic zero-add stub.
-- Feed structured compiler diagnostics, prior draft context, and retry budget state into each repair attempt rather than passing raw stderr alone.
-- Add a real LLM/provider adapter behind the `FormalizationAgent` protocol for theorem-spec, plan, and Lean-draft turns.
+- Replace the scripted subprocess provider demo with a live API-backed provider for theorem-spec, plan, and Lean-draft turns.
 - Add an explicit retry/escalation policy so repeated compile failures cleanly route to plan revision, spec revision, or human intervention.
 - Add a `ProofSession` interface for stepwise Lean interaction once the file-level compile-repair loop is stable.
 - Add richer theorem examples beyond the deterministic `0 + n = n` demo.
