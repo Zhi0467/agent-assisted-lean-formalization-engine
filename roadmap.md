@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-04-04 04:40 UTC
+Last updated: 2026-04-04 05:03 UTC
 
 ## Current Status
 
@@ -15,9 +15,10 @@ The repo's core agentic object is now pinned more sharply than the first scaffol
 made it sound: spec, plan, then a bounded compile-repair loop. The generic external turn
 boundary is still there via a subprocess-backed agent, and the next live step now exists
 too: a built-in Codex-backed backend can drive theorem-spec, plan, and Lean-draft turns
-without changing the artifact contract. The next gate is deciding whether that Codex path
-should stay opt-in or become the default non-demo orchestration surface after we gather a
-little more evidence on quality and cost.
+without changing the artifact contract. Wangzhi already approved Codex as the default
+orchestration layer for real runs, so the next gate is implementation: make that path the
+default non-demo surface in the CLI/runtime, then gather quality and cost evidence on
+non-demo theorems.
 
 ## Milestone 1 — Lock the Engine Skeleton
 
@@ -50,6 +51,7 @@ Gate:
 - [2026-04-04 04:40 UTC] Merged PR `#1` on `main`, then tightened the core loop around the review findings: run IDs are now safe and unique, rejected final decisions cannot silently complete a run, stall review can explicitly grant one more repair attempt, and pre-compile provider crashes can resume from the persisted `created` surface instead of stranding the run.
 - [2026-04-04 04:40 UTC] Added `CodexCliFormalizationAgent` as the first built-in live provider path. The CLI can now select `--agent-backend codex`, the repo ships a runnable `examples/run_codex_agent_demo.py`, and the engine still persists the same prompt/request/response artifacts as the demo and subprocess-backed paths.
 - [2026-04-04 04:40 UTC] Ran the new live Codex path end to end on the smallest theorem object (`examples/inputs/zero_add.md`) and checked the resulting canonical artifact into the repo at `artifacts/runs/demo-codex-agent/`. That run compiled on the first attempt and preserved the same stage-by-stage trail as the scripted paths.
+- [2026-04-04 05:03 UTC] Removed the stale wording that framed Codex-as-default as an open product choice. The remaining work is to implement Codex as the default real-run path and push it through a non-demo theorem, not to re-ask for direction that was already given in-thread.
 
 ## Milestone 2 — Add A Real Provider Adapter
 

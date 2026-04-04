@@ -1,8 +1,8 @@
 # Project: Agent-Assisted Lean Formalization Engine
 
 Scaffold for an agentic workflow that turns theorem sources into compiling Lean 4 code.
-Current focus: keep the scaffold surface stable while making the bounded post-plan
-compile-repair loop and model-call surface explicit.
+Current focus: keep the compile-repair loop stable while turning the approved
+Codex-backed real-run path into the default orchestration surface.
 
 ## Key Docs
 

@@ -2,8 +2,8 @@
 
 ## Immediate Follow-Ups
 
-- Add a checked-in canonical run artifact for the new live Codex-backed path once we decide which first theorem should represent it.
-- Decide whether the Codex-backed path should stay opt-in or become the CLI default once we have a stable quality envelope.
+- Run the Codex-backed path on a first non-demo theorem and check in that canonical artifact alongside the zero-add trace.
+- Make the Codex-backed path the default CLI/backend surface for real runs while keeping the deterministic demo path explicit for examples and tests.
 - Add an explicit retry/escalation policy so repeated compile failures cleanly route to plan revision, spec revision, or human intervention.
 - Add a `ProofSession` interface for stepwise Lean interaction once the file-level compile-repair loop is stable.
 - Add richer theorem examples beyond the deterministic `0 + n = n` demo.
