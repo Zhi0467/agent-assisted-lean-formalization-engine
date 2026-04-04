@@ -109,6 +109,10 @@ class FormalizationWorkflow:
             plan = self._load_plan(store, approved=True)
             return self._compile_loop(store, plan, auto_approve=auto_approve)
 
+        if manifest.current_stage == RunStage.REPAIRING:
+            plan = self._load_plan(store, approved=True)
+            return self._compile_loop(store, plan, auto_approve=auto_approve)
+
         if manifest.current_stage == RunStage.AWAITING_FINAL_REVIEW:
             if auto_approve:
                 self._seed_final_approval(store)
@@ -172,7 +176,7 @@ class FormalizationWorkflow:
         auto_approve: bool,
     ) -> RunManifest:
         manifest = self._load_manifest(store)
-        previous_result: CompileAttempt | None = None
+        previous_result = self._load_previous_compile_result(store, manifest)
 
         while manifest.attempt_count < self.max_attempts:
             attempt = manifest.attempt_count + 1
@@ -356,3 +360,16 @@ class FormalizationWorkflow:
         )
         payload = store.read_json(filename)
         return FormalizationPlan(**payload)
+
+    def _load_previous_compile_result(
+        self,
+        store: RunStore,
+        manifest: RunManifest,
+    ) -> CompileAttempt | None:
+        if manifest.attempt_count <= 0:
+            return None
+        result_path = f"06_compile/attempt_{manifest.attempt_count:04d}/result.json"
+        if not store.exists(result_path):
+            return None
+        payload = store.read_json(result_path)
+        return CompileAttempt(**payload)

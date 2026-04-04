@@ -37,7 +37,8 @@ collapse into an untyped scripting surface.
 4. Optional installed CLI surface:
    `python3 -m pip install . --user`
 
-The demo writes a full run record under `artifacts/runs/demo-zero-add/`, including:
+The demo writes a full run record in this repo under `artifacts/runs/demo-zero-add/`,
+including:
 
 - normalized source,
 - drafted theorem spec,
@@ -59,6 +60,16 @@ The engine is built around three explicit checkpoints:
 3. approve the final compiling Lean candidate.
 
 The demo auto-approves those checkpoints so the flow can run end to end.
+
+The model-call surface is intentionally narrow:
+
+- one turn to draft the theorem spec from source text,
+- one turn to draft the Lean-facing formalization plan,
+- then a bounded Lean-draft repair loop where compiler feedback drives repeated draft attempts.
+
+That post-plan compile-repair loop is the core agentic object of the system. The shipped
+demo keeps those turns deterministic so the repo can prove the workflow shape before a
+real provider adapter is added.
 
 ## Key Docs
 

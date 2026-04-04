@@ -2,8 +2,11 @@
 
 ## Immediate Follow-Ups
 
-- Add a `ProofSession` interface for stepwise Lean interaction before wiring in a real model provider.
-- Add a real LLM/provider adapter behind the `FormalizationAgent` protocol.
+- Make the post-plan compile-repair loop genuinely model-backed instead of using the deterministic zero-add stub.
+- Feed structured compiler diagnostics, prior draft context, and retry budget state into each repair attempt rather than passing raw stderr alone.
+- Add a real LLM/provider adapter behind the `FormalizationAgent` protocol for theorem-spec, plan, and Lean-draft turns.
+- Add an explicit retry/escalation policy so repeated compile failures cleanly route to plan revision, spec revision, or human intervention.
+- Add a `ProofSession` interface for stepwise Lean interaction once the file-level compile-repair loop is stable.
 - Add richer theorem examples beyond the deterministic `0 + n = n` demo.
 - Extend PDF ingestion with optional `PyMuPDF` or `pypdf` adapters once dependency policy is settled.
 - Decide whether long-term artifact storage should keep every run in Git or only selected canonical runs.
@@ -32,6 +35,7 @@
 - Add import selection heuristics beyond the local basic workspace module.
 - Distinguish parse and type errors from proof failures in compile diagnostics.
 - Add a quality gate that checks for placeholders beyond the literal string `sorry`.
+- Preserve machine-readable Lean diagnostics alongside the raw compiler logs so repair prompts can stay structured.
 
 ## Product Follow-Ups
 

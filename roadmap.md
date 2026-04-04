@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-04-03 10:59 UTC
+Last updated: 2026-04-04 00:40 UTC
 
 ## Current Status
 
@@ -11,8 +11,11 @@ The repo now has a concrete v0 scaffold:
 - persisted run artifacts under `artifacts/`,
 - and a minimal Lean workspace template for compile checks.
 
-The next gate is replacing the deterministic demo agent with a real model-backed
-formalization loop while preserving the same artifact and approval surface.
+The repo's core agentic object is now pinned more sharply than the first scaffold note
+made it sound: spec, plan, then a bounded compile-repair loop. The next gate is keeping
+the current artifact and approval surface while replacing the deterministic demo agent
+with real model-backed turns at spec generation, plan generation, and especially the
+post-plan Lean-draft repair cycle.
 
 ## Milestone 1 — Lock the Engine Skeleton
 
@@ -36,6 +39,9 @@ Gate:
 - [2026-04-03 10:59 UTC] Synced the repo-local and packaged Lean workspace templates so both surfaces compile the same generated module path.
 - [2026-04-03 10:59 UTC] Switched persisted source and final-output metadata to repo-relative paths so checked-in artifacts stay portable across machines.
 - [2026-04-03 10:59 UTC] Athena standard consult confirmed the local direction: keep Python for v0, use a filesystem-backed state machine with explicit human gates, avoid a heavyweight agent framework, and add a `ProofSession` layer next. Immediate borrow targets are LeanInteract and PyPantograph, with LeanDojo-v2 as the broader later substrate. Full consult record: `.agent/runtime/consult_history/1775197696.768269.jsonl`.
+- [2026-04-04 00:28 UTC] Tightened the project-language after Wangzhi's loop question: the core agentic surface is not generic "provider wiring" but the bounded post-plan Lean compile-repair cycle, where compiler diagnostics feed the next draft attempt until success, retry-cap stall, or escalation back to spec/plan review.
+- [2026-04-04 00:28 UTC] Reordered the backlog so the first follow-ups center on the model-backed compile-repair loop, structured diagnostics, and explicit escalation policy before deeper interactive proof sessions.
+- [2026-04-04 00:40 UTC] Fixed an actual repair-loop gap uncovered by the local review attempt: interrupted runs can now resume from `repairing`, and the workflow reloads the last persisted compile result so the next attempt still sees the prior compiler diagnostics. Added a regression test covering crash-then-resume behavior inside the compile-repair phase.
 
 ## Milestone 2 — Add A Real Provider Adapter
 
@@ -43,7 +49,8 @@ Success criteria:
 
 - a model-backed agent can produce theorem specs, plans, and Lean drafts,
 - prompts and responses are persisted without changing the artifact contract,
-- compilation failures feed a bounded repair loop.
+- compilation failures feed a bounded repair loop,
+- repeated repair failures escalate cleanly instead of silently thrashing.
 
 Gate:
 

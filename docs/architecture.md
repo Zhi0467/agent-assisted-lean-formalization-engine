@@ -55,6 +55,34 @@ The artifact tree still captures the sub-steps between those gates:
 - `07_review/`
 - `08_final/`
 
+## Where Model Calls Happen
+
+`FormalizationAgent` exposes three generation turns:
+
+1. `draft_theorem_spec()` turns source text into a structured theorem spec.
+2. `draft_formalization_plan()` turns the approved spec plus local context into a Lean-facing plan.
+3. `draft_lean_file()` turns the approved plan into a Lean draft.
+
+The first two turns happen once per approved stage. The third is the repeated one.
+
+## Compile-Repair Loop
+
+After plan approval, the workflow enters the core bounded loop:
+
+1. draft a Lean file from the approved plan,
+2. compile it in the run-local Lean workspace,
+3. persist the exact compile result,
+4. if it failed, feed the previous compile result into the next `draft_lean_file()` turn.
+
+The loop stops when one of three things happens:
+
+- the draft passes the compile and quality gates,
+- the Lean toolchain is missing and the run stalls for human intervention,
+- the retry cap is hit and the run is kicked to stall review instead of looping forever.
+
+If a run is interrupted mid-repair, `resume()` reloads the last persisted compile result
+so the next repair attempt still has the previous diagnostics in context.
+
 ## Run Directory Shape
 
 Each run lives under `artifacts/runs/<run_id>/` and preserves:
