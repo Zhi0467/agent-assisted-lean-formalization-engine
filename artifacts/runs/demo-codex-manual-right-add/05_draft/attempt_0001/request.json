@@ -7,8 +7,8 @@
     ],
     "proof_sketch": [
       "Import the local basic workspace module.",
-      "Use the core theorem `Nat.add_zero`.",
-      "Close the goal with `exact Nat.add_zero n`."
+      "State `theorem right_add_zero_nat (n : Nat) : n + 0 = n`.",
+      "Close the goal directly with `exact Nat.add_zero n`."
     ],
     "target_statement": "theorem right_add_zero_nat (n : Nat) : n + 0 = n",
     "theorem_name": "right_add_zero_nat"

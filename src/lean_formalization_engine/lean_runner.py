@@ -59,11 +59,11 @@ class LeanRunner:
         display_command_text = " ".join(display_command)
         stdout = (
             f"$ {display_command_text}\n"
-            f"{self._sanitize_output(build_result.stdout, store, workspace)}"
+            f"{self._sanitize_output(build_result.stdout, store, workspace, lake_path)}"
         )
         stderr = (
             f"$ {display_command_text}\n"
-            f"{self._sanitize_output(build_result.stderr, store, workspace)}"
+            f"{self._sanitize_output(build_result.stderr, store, workspace, lake_path)}"
         )
 
         self._cleanup_workspace(workspace)
@@ -123,10 +123,17 @@ class LeanRunner:
             return self.lake_path
         return "lake"
 
-    def _sanitize_output(self, content: str, store: RunStore, workspace: Path) -> str:
+    def _sanitize_output(
+        self,
+        content: str,
+        store: RunStore,
+        workspace: Path,
+        lake_path: str,
+    ) -> str:
         run_root_display = f"artifacts/runs/{store.run_id}"
         sanitized = content.replace(str(workspace), f"{run_root_display}/workspace")
         sanitized = sanitized.replace(str(store.run_root), run_root_display)
+        sanitized = sanitized.replace(lake_path, self._display_lake())
         sanitized = sanitized.replace(str(Path.home()), "~")
         return sanitized
 

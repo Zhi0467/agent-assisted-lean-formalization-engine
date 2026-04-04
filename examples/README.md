@@ -15,5 +15,3 @@ requires a working Codex CLI login.
 `run_codex_manual_review_demo.py` formalizes a different theorem (`n + 0 = n`) through
 the same live Codex backend without `--auto-approve`. It stops at spec, plan, and final
 review in turn, then records explicit human approval notes before resuming each stage.
-The checked-in artifact for that run currently shows one failed draft followed by a
-repaired second attempt.

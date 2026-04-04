@@ -1,9 +1,0 @@
-{
-  "content": "import FormalizationEngineWorkspace.Basic\n\ntheorem right_add_zero_nat (n : Nat) : n + 0 = n := by\n  exact Nat.add_zero n\n",
-  "imports": [
-    "FormalizationEngineWorkspace.Basic"
-  ],
-  "module_name": "FormalizationEngineWorkspace.Generated",
-  "rationale": "Fix the prior failure by returning raw Lean source in `content` rather than nested JSON, and prove the theorem directly with `Nat.add_zero n`.",
-  "theorem_name": "right_add_zero_nat"
-}

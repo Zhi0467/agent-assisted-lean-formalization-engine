@@ -10,7 +10,7 @@ Approved theorem spec:
   ],
   "conclusion": "n + 0 = n",
   "informal_statement": "For every natural number n, adding zero on the right leaves n unchanged.\nTarget statement: n + 0 = n.",
-  "paraphrase": "For every natural number n, adding zero on the right returns n.",
+  "paraphrase": "For every natural number n, n plus zero equals n.",
   "symbols": [
     "0",
     "+",
