@@ -1,3 +1,1 @@
-$ /Users/murphy/.elan/bin/lake build FormalizationEngineWorkspace
-info: FormalizationEngineWorkspace: no previous manifest, creating one from scratch
-info: toolchain not updated; already up-to-date
+Lean toolchain is not available on PATH and ~/.elan/bin/lake was not found.
