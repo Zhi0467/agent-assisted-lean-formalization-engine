@@ -191,6 +191,45 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertTrue(final_output.exists())
             self.assertIn("zero_add_demo", final_output.read_text(encoding="utf-8"))
 
+    def test_compile_artifacts_hide_resolved_lake_path(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        template_dir = project_root / "lean_workspace_template"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            fake_lake = temp_root / "lake"
+            fake_lake.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env python3",
+                        "import sys",
+                        "print(sys.argv[0])",
+                        "raise SystemExit(1)",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_lake.chmod(0o755)
+
+            store = RunStore(temp_root / "artifacts", "portable-command")
+            store.ensure_new()
+            runner = LeanRunner(template_dir=template_dir, lake_path=str(fake_lake))
+            draft = LeanDraft(
+                theorem_name="portable_command",
+                module_name="FormalizationEngineWorkspace.Generated",
+                imports=["FormalizationEngineWorkspace.Basic"],
+                content="import FormalizationEngineWorkspace.Basic\n",
+                rationale="test portable logging",
+            )
+            result = runner.compile_draft(store, draft, 1)
+            result_text = "\n".join([*result.command, result.stdout, result.stderr])
+
+            self.assertEqual(result.command, ["lake build FormalizationEngineWorkspace"])
+            self.assertIn("$ lake build FormalizationEngineWorkspace", result.stdout)
+            self.assertIn("$ lake build FormalizationEngineWorkspace", result.stderr)
+            self.assertNotIn(str(fake_lake), result_text)
+            self.assertNotIn(str(temp_root), result_text)
+
     def test_manual_review_path_is_explicit(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         template_dir = project_root / "lean_workspace_template"

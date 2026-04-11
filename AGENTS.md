@@ -1,13 +1,13 @@
 # Project: Agent-Assisted Lean Formalization Engine
 
 Scaffold for an agentic workflow that turns theorem sources into compiling Lean 4 code.
-Current focus: keep the scaffold surface stable while making the bounded post-plan
-compile-repair loop and model-call surface explicit.
+Current focus: close PR `#2`'s missing-`codex` and backend-persistence blockers, then
+push from the first manual Codex theorem path toward harder repair-heavy runs.
 
 ## Key Docs
 
-- `roadmap.md` — milestones, gates, activity log
-- `backlog.md` — open tasks and follow-ups
+- `docs/roadmap.md` — milestones, gates, activity log
+- `docs/backlog.md` — open tasks and follow-ups
 - `docs/README.md` — index into architecture and landscape notes
 
 ## Sub-Session Instructions
@@ -20,6 +20,7 @@ compile-repair loop and model-call surface explicit.
 
 ## Context Loading
 
-- New to this project? Read `roadmap.md` then `docs/README.md`
+- New to this project? Read `docs/roadmap.md` then `docs/README.md`
 - Changing engine contracts? Read `docs/architecture.md`
 - Comparing against existing systems? Read `docs/landscape.md`
+- A reproducible example running the engine e2e for debugging purposes? Read `docs/manual-review-walkthrough.md`

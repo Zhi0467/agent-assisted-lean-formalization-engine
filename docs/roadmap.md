@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-04-04 03:15 UTC
+Last updated: 2026-04-04 06:58 UTC
 
 ## Current Status
 
@@ -12,11 +12,17 @@ The repo now has a concrete v0 scaffold:
 - and a minimal Lean workspace template for compile checks.
 
 The repo's core agentic object is now pinned more sharply than the first scaffold note
-made it sound: spec, plan, then a bounded compile-repair loop. The next gate is keeping
-the current artifact and approval surface while swapping the internal demo-only turn
-implementation for something that actually crosses an external provider boundary. The repo
-now has that boundary via a subprocess-backed agent plus explicit repair context; the next
-step is replacing the shipped scripted provider with a live API-backed one.
+made it sound: spec, plan, then a bounded compile-repair loop. The generic external turn
+boundary is still there via a subprocess-backed agent, and the live Codex path now has
+two checked-in surfaces: an auto-approved zero-add run and a manual-review run on the
+non-demo theorem `n + 0 = n`. That means the repo now proves both halves of the intended
+workflow object: live model turns plus explicit human checkpoints on a real theorem path.
+Codex is now the default CLI backend for real runs, and the repo also has an explicit
+CLI walkthrough for the manual-review path so the human surface is visible without reading
+Python demo code. But the next gate is not yet a harder theorem: open `PR #2` still has
+two concrete workflow blockers on its current head. Missing `codex` binaries still crash
+with a raw traceback, and multi-command runs can silently switch providers on `resume`
+because backend choice is not yet persisted with the run.
 
 ## Milestone 1 — Lock the Engine Skeleton
 
@@ -33,6 +39,8 @@ Gate:
 
 ### Activity Log
 
+- [2026-04-04 06:20 UTC] Switched the CLI default backend for real runs from the deterministic demo agent to Codex, while keeping `--agent-backend demo` explicit for examples/tests and preserving `--agent-command` as the subprocess override.
+- [2026-04-04 06:20 UTC] Added `docs/manual-review-walkthrough.md` so the human-reviewed theorem path is visible as direct CLI commands instead of only through the Python demo script.
 - [2026-04-03 10:25 UTC] Initialized the project surface around five durable directories: `src/`, `examples/`, `assets/`, `artifacts/`, and `lean_workspace_template/`.
 - [2026-04-03 10:25 UTC] Chose Python for the v0 engine, using typed dataclasses and protocols instead of an agent framework.
 - [2026-04-03 10:25 UTC] Added an approval-driven workflow scaffold with theorem-spec review, plan review, compile attempts, and final review.
@@ -46,6 +54,10 @@ Gate:
 - [2026-04-04 03:15 UTC] Added a subprocess-backed agent adapter so theorem-spec, plan, and Lean-draft turns can already cross a real external command boundary without changing the run-state machine or artifact schema.
 - [2026-04-04 03:15 UTC] Made repair context explicit in the agent protocol: the repeated draft turn now receives retry-budget state, the previous draft, and the previous compile result, and resumed runs reload both persisted artifacts before re-entering repair.
 - [2026-04-04 03:15 UTC] Added a local command-agent demo plus regression coverage showing a provider can fail once, read the saved compile feedback, and repair the theorem on the next attempt.
+- [2026-04-04 04:40 UTC] Merged PR `#1` on `main`, then tightened the core loop around the review findings: run IDs are now safe and unique, rejected final decisions cannot silently complete a run, stall review can explicitly grant one more repair attempt, and pre-compile provider crashes can resume from the persisted `created` surface instead of stranding the run.
+- [2026-04-04 04:40 UTC] Added `CodexCliFormalizationAgent` as the first built-in live provider path. The CLI can now select `--agent-backend codex`, the repo ships a runnable `examples/run_codex_agent_demo.py`, and the engine still persists the same prompt/request/response artifacts as the demo and subprocess-backed paths.
+- [2026-04-04 04:40 UTC] Ran the new live Codex path end to end on the smallest theorem object (`examples/inputs/zero_add.md`) and checked the resulting canonical artifact into the repo at `artifacts/runs/demo-codex-agent/`. That run compiled on the first attempt and preserved the same stage-by-stage trail as the scripted paths.
+- [2026-04-04 05:03 UTC] Removed the stale wording that framed Codex-as-default as an open product choice. The remaining work is to implement Codex as the default real-run path and push it through a non-demo theorem, not to re-ask for direction that was already given in-thread.
 
 ## Milestone 2 — Add A Real Provider Adapter
 
@@ -59,6 +71,13 @@ Success criteria:
 Gate:
 
 - at least one non-demo theorem runs through a live API-backed path with persisted prompts and diagnostics.
+
+### Activity Log
+
+- [2026-04-04 05:36 UTC] Simulated the full human-in-the-loop Codex path on a first non-demo theorem (`n + 0 = n`) without `--auto-approve`. The run paused at spec review, plan review, and final review in turn, accepted explicit human notes at each gate, and was checked into the repo at `artifacts/runs/demo-codex-manual-right-add/`.
+- [2026-04-04 05:49 UTC] Normalized persisted Lean command and compiler-trace paths so checked-in compile artifacts stop leaking machine-local absolute paths. Added a regression test for this at the runner level and regenerated the manual-review artifact with the sanitized trace surface.
+- [2026-04-04 06:12 UTC] Re-ran the same manual-review theorem end to end against the live Codex backend and confirmed the checked-in `n + 0 = n` path still pauses cleanly at spec, plan, and final review before completing after explicit human approvals.
+- [2026-04-04 06:58 UTC] Rechecked `PR #2` on its current head after another local review attempt. The branch still passes the local unit-test gate, but it is not merge-ready yet: missing `codex` still crashes with raw `FileNotFoundError`, and a run started with a non-default backend can still resume through Codex because backend choice is not persisted with the run manifest.
 
 ## Milestone 3 — Improve Lean Context And Repair
 

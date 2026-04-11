@@ -1,0 +1,31 @@
+{
+  "context_pack": {
+    "local_examples": [
+      "examples/inputs/zero_add.md"
+    ],
+    "notes": [
+      "Title: Zero-add on natural numbers",
+      "Start from repo-local examples before adding retrieval or external corpora."
+    ],
+    "recommended_imports": [
+      "FormalizationEngineWorkspace.Basic"
+    ]
+  },
+  "model": null,
+  "stage": "draft_formalization_plan",
+  "theorem_spec": {
+    "ambiguities": [],
+    "assumptions": [
+      "n : Nat"
+    ],
+    "conclusion": "0 + n = n",
+    "informal_statement": "For every natural number `n`, adding zero on the left gives back `n`.\n\nTarget statement: `0 + n = n`.",
+    "paraphrase": "For every natural number n, adding zero on the left returns n.",
+    "symbols": [
+      "0",
+      "+",
+      "Nat"
+    ],
+    "title": "Zero-add on natural numbers"
+  }
+}

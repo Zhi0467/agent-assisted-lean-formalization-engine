@@ -1,0 +1,3 @@
+{
+  "raw_response": "{\"helper_definitions\":[],\"imports\":[\"FormalizationEngineWorkspace.Basic\"],\"proof_sketch\":[\"Import the local basic workspace module.\",\"State `theorem right_add_zero_nat (n : Nat) : n + 0 = n`.\",\"Close the goal directly with `exact Nat.add_zero n`.\"],\"target_statement\":\"theorem right_add_zero_nat (n : Nat) : n + 0 = n\",\"theorem_name\":\"right_add_zero_nat\"}"
+}

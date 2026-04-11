@@ -2,7 +2,9 @@
 
 ## Immediate Follow-Ups
 
-- Replace the scripted subprocess provider demo with a live API-backed provider for theorem-spec, plan, and Lean-draft turns.
+- Catch missing-`codex` launch failures as structured run errors instead of letting the default CLI path die with a raw traceback.
+- Persist and enforce the selected backend across `run`, `resume`, and `approve-*` so a non-default run cannot silently switch providers mid-artifact.
+- Run a second non-demo theorem that forces at least one genuine Codex repair attempt, then check in that artifact alongside the first-pass right-add example.
 - Add an explicit retry/escalation policy so repeated compile failures cleanly route to plan revision, spec revision, or human intervention.
 - Add a `ProofSession` interface for stepwise Lean interaction once the file-level compile-repair loop is stable.
 - Add richer theorem examples beyond the deterministic `0 + n = n` demo.

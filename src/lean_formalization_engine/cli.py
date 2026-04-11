@@ -6,6 +6,7 @@ import shlex
 from dataclasses import asdict
 from pathlib import Path
 
+from .codex_agent import CodexCliFormalizationAgent
 from .demo_agent import DemoFormalizationAgent
 from .lean_runner import LeanRunner
 from .subprocess_agent import SubprocessFormalizationAgent
@@ -24,8 +25,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--agent-command",
         help=(
             "Optional command that implements theorem-spec, plan, and Lean-draft turns "
-            "over stdin/stdout. If omitted, the deterministic demo agent is used."
+            "over stdin/stdout. If omitted, the CLI uses the default built-in backend."
         ),
+    )
+    parser.add_argument(
+        "--agent-backend",
+        choices=["demo", "command", "codex"],
+        help=(
+            "Choose the agent backend explicitly. Defaults to `command` when "
+            "`--agent-command` is set and `codex` otherwise. Use `demo` explicitly "
+            "for deterministic example runs."
+        ),
+    )
+    parser.add_argument(
+        "--codex-model",
+        help="Optional Codex model override when `--agent-backend codex` is used.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -67,9 +81,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def build_agent(args: argparse.Namespace, repo_root: Path):
-    if not args.agent_command:
+    backend = getattr(args, "agent_backend", None)
+    agent_command = getattr(args, "agent_command", None)
+    codex_model = getattr(args, "codex_model", None)
+    if backend is None:
+        if agent_command:
+            backend = "command"
+        else:
+            backend = "codex"
+
+    if backend == "demo":
         return DemoFormalizationAgent()
-    command = _resolve_agent_command(shlex.split(args.agent_command), repo_root)
+    if backend == "codex":
+        return CodexCliFormalizationAgent(repo_root=repo_root, model=codex_model)
+    if not agent_command:
+        raise ValueError("`--agent-command` is required when `--agent-backend command` is used.")
+    command = _resolve_agent_command(shlex.split(agent_command), repo_root)
     return SubprocessFormalizationAgent(command, working_directory=repo_root)
 
 
