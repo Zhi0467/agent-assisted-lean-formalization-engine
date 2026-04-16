@@ -6,42 +6,29 @@ review coverage. Even the items that are already implemented locally remain on t
 
 ## Pending Review Gate
 
-- [ ] Run `scripts/review_project.sh agent-assisted-lean-formalization-engine --base main` on the Terry rewrite and address any real findings.
-- [ ] Publish the Terry rewrite on a fresh PR and request `@codex` review.
+- [x] Run direct local `codex review` on the Terry rewrite and address the real findings it surfaced.
+- [x] Publish the Terry rewrite on a fresh PR and request `@codex` review.
 - [ ] Clear or explicitly disposition the review findings before removing any rewrite items from this backlog.
 
 Current note:
-The local review gate kept surfacing compatibility regressions on the active Terry branch,
-and each one is now fixed on `murphy/terry-three-stage`: legacy paused runs migrate into
-the Terry checkpoint surface honestly, command-backed resumes preserve their
-`--agent-command` instructions, successful proof retries clear stale `latest_error`,
-legacy status views point at the real review directories, and the old subprocess-provider
-`theorem_spec` alias now carries honest assumptions / conclusion / symbols. The latest
-local review also caught one remaining CLI-compatibility regression: Terry left the old
-`lean-formalize` entrypoint installed while dropping the legacy `run`, `resume --run-id`,
-`status --run-id`, and `approve-*` surface. The first shim landed, and the follow-up
-rerun exposed two smaller compatibility gaps inside it: legacy global option ordering
-like `--agent-backend demo run ...` was still getting shadowed by subparser defaults, and
-`terry resume --agent-command ...` still left the stale command in the manifest after the
-current turn. The next rerun then found one more old-provider parsing bug: if the source
-statement also included a `Target statement:` line, the synthesized fallback
-`theorem_spec` conclusion swallowed the full prose block instead of the explicit target.
-The next pass then exposed two final backward-compatibility gaps: the restored legacy
-commands were still printing Terry prose summaries instead of the old JSON manifest
-payloads, and the fallback theorem-spec parser only kept the last quantified binder in
-multi-variable statements. All five follow-ups are now fixed without changing the
-documented Terry contract, the branch-local suite is currently `64/64`, and one more
-direct `codex review --base main` rerun is the remaining local gate before the PR step.
+The wide local-review loop flushed out a long tail of migration and old-provider
+compatibility bugs on `murphy/terry-three-stage`, and they are now fixed on the published
+branch. The last parser cleanup covered qualified binders, mixed descriptor+explicit type
+forms, comma-separated binders, and repeated typed binders for the synthesized legacy
+`theorem_spec` fallback. The branch-local suite is now `71/71`, the focused direct local
+review on the final delta (`codex review ... --base 9bf0e54`) came back clean, and draft
+PR `#3` is now open with `@codex` requested. The remaining open gate is the live PR
+review surface, not another local compatibility rerun.
 
 ## Terry Rewrite Surface
 
-- [ ] Land the `terry` CLI as the primary human interface, with `prove`, `resume`, and `status`.
-- [ ] Keep only three human approval checkpoints: enrichment, merged plan, and final.
-- [ ] Drive checkpoint handoff through review files plus `terry resume`, not hidden `approve-*` commands.
-- [ ] Keep a readable workflow logger (`logs/timeline.md`) plus machine-readable log (`logs/workflow.jsonl`) at each significant event.
-- [ ] Auto-discover `lean_workspace_template` at depth 1 and initialize one with `lake new ... math` if absent.
-- [ ] Persist backend choice in the run manifest so resumed runs cannot silently switch backends.
-- [ ] Refresh the docs so a fresh install can follow the Terry path directly.
+- [x] Land the `terry` CLI as the primary human interface, with `prove`, `resume`, and `status`.
+- [x] Keep only three human approval checkpoints: enrichment, merged plan, and final.
+- [x] Drive checkpoint handoff through review files plus `terry resume`, not hidden `approve-*` commands.
+- [x] Keep a readable workflow logger (`logs/timeline.md`) plus machine-readable log (`logs/workflow.jsonl`) at each significant event.
+- [x] Auto-discover `lean_workspace_template` at depth 1 and initialize one with `lake new ... math` if absent.
+- [x] Persist backend choice in the run manifest so resumed runs cannot silently switch backends.
+- [x] Refresh the docs so a fresh install can follow the Terry path directly.
 
 ## Follow-Ups After The Rewrite Lands
 

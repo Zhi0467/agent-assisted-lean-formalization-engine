@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-04-16 14:26 UTC
+Last updated: 2026-04-16 14:56 UTC
 
 ## Current Status
 
@@ -19,9 +19,11 @@ current rewrite changes that contract:
 - backend choice is persisted in the manifest, so resumed runs cannot silently swap providers
 - template discovery is now part of the CLI contract rather than an implicit repo assumption
 
-Local unit coverage for the rewritten surface is green at `64/64`, but the branch has not
-yet cleared a fresh clean-shell local review rerun or moved onto a live Codex-reviewed PR.
-Until that review gate is clear, the rewrite items stay open in `docs/backlog.md`.
+Local unit coverage for the rewritten surface is now green at `71/71`. The local review
+gate is also clear again: the focused direct Codex pass on the final legacy-binder delta
+came back clean, and the Terry rewrite is now published as draft PR `#3` with `@codex`
+requested. The remaining open gate is the live PR review thread before the rewrite can
+come off the backlog.
 
 ## Milestone 1 — Terry CLI Contract
 
@@ -54,6 +56,9 @@ Gate:
 - [2026-04-16 14:16 UTC] Re-ran the targeted legacy-`theorem_spec` regression plus the full branch-local suite after that parser fix: `PYTHONPATH=src python3 -m unittest discover -s tests` (`63` tests, all passing). One more direct `codex review --base main` pass is now the remaining local gate before opening the PR.
 - [2026-04-16 14:26 UTC] The next review finally moved from parsing single-target statements to full legacy-consumer compatibility: the hidden legacy commands were still printing Terry prose summaries instead of the old JSON manifest contract, and the fallback theorem-spec binder inference was still dropping earlier variables in multi-binder statements like `m and n`.
 - [2026-04-16 14:26 UTC] Restored JSON stdout on the legacy command surface, taught the fallback theorem-spec parser to emit every quantified binder, and reran the affected compatibility regressions plus the full branch-local suite: `PYTHONPATH=src python3 -m unittest discover -s tests` (`64` tests, all passing). One more direct `codex review --base main` pass is now the remaining local gate before opening the PR.
+- [2026-04-16 14:56 UTC] The remaining local loop stayed in the legacy theorem-spec fallback rather than the Terry-facing workflow. The later direct reviews surfaced four more real binder spellings that older subprocess providers can send through that compatibility path: qualified binders (`positive integers m and n`), mixed descriptor+explicit type binders (`positive integers m and n : Int`), comma-separated binders (`m, n`), and repeated typed binders (`m : Nat, n : Nat` / `(m : Nat), (n : Nat)`).
+- [2026-04-16 14:56 UTC] Tightened the fallback parser across those cases, added dedicated regressions for each, and reran the full branch-local suite after every step. The branch-local verification now sits at `71/71` via `PYTHONPATH=src python3 -m unittest discover -s tests`.
+- [2026-04-16 14:56 UTC] The focused direct local Codex review on the final parser delta (`codex review -c 'mcp_servers.consult.command=\"\"' -c 'mcp_servers.slack.command=\"\"' --base 9bf0e54`) came back clean. The branch is now published as draft PR `#3` with `@codex` requested, so the remaining gate is the live PR review surface rather than another local rerun.
 
 ## Milestone 2 — Real Proof Stress
 
