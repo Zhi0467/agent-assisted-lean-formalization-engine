@@ -839,6 +839,98 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertEqual(manifest.final_output_path, "04_final/final.lean")
             self.assertTrue((run_root / "04_final" / "final.lean").exists())
 
+    def test_resume_legacy_rejected_final_review_stays_paused(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            run_root = temp_root / "artifacts" / "runs" / "legacy-final-reject"
+            run_root.mkdir(parents=True)
+            (run_root / "manifest.json").write_text(
+                """{
+  "run_id": "legacy-final-reject",
+  "source": {"path": "input.md", "kind": "markdown"},
+  "agent_name": "repair_resume_agent",
+  "created_at": "2026-04-16T00:00:00Z",
+  "updated_at": "2026-04-16T00:00:00Z",
+  "current_stage": "awaiting_final_review",
+  "attempt_count": 1
+}
+""",
+                encoding="utf-8",
+            )
+            store = RunStore(temp_root / "artifacts", "legacy-final-reject")
+            store.write_text(
+                "10_final/final_candidate.lean",
+                "import FormalizationEngineWorkspace.Basic\n",
+            )
+            store.write_json(
+                "10_final/decision.json",
+                {
+                    "approved": False,
+                    "updated_at": "2026-04-16T00:01:00Z",
+                    "notes": "Needs changes.",
+                },
+            )
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=SequencedLeanRunner(["passed"]),
+            )
+            manifest = workflow.resume("legacy-final-reject", auto_approve=False)
+
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_FINAL_APPROVAL)
+            self.assertIsNone(manifest.final_output_path)
+            self.assertFalse((run_root / "04_final" / "final.lean").exists())
+            self.assertEqual(
+                store.read_json("04_final/decision.json")["decision"],
+                "reject",
+            )
+
+    def test_resume_legacy_rejected_stall_review_stays_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            run_root = temp_root / "artifacts" / "runs" / "legacy-stall-reject"
+            run_root.mkdir(parents=True)
+            (run_root / "manifest.json").write_text(
+                """{
+  "run_id": "legacy-stall-reject",
+  "source": {"path": "input.md", "kind": "markdown"},
+  "agent_name": "repair_resume_agent",
+  "created_at": "2026-04-16T00:00:00Z",
+  "updated_at": "2026-04-16T00:00:00Z",
+  "current_stage": "awaiting_stall_review",
+  "attempt_count": 1
+}
+""",
+                encoding="utf-8",
+            )
+            store = RunStore(temp_root / "artifacts", "legacy-stall-reject")
+            store.write_text("09_review/stall_report.md", "Still blocked.\n")
+            store.write_json(
+                "09_review/decision.json",
+                {
+                    "approved": False,
+                    "updated_at": "2026-04-16T00:01:00Z",
+                    "notes": "Do not retry yet.",
+                },
+            )
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=SequencedLeanRunner(["passed"]),
+            )
+            manifest = workflow.resume("legacy-stall-reject", auto_approve=False)
+
+            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
+            self.assertEqual(manifest.attempt_count, 1)
+            self.assertEqual(
+                store.read_json("03_proof/decision.json")["decision"],
+                "reject",
+            )
+
     def test_logs_capture_checkpoints_and_proof_events(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         template_dir = project_root / "lean_workspace_template"

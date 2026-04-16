@@ -25,7 +25,7 @@ from .models import (
     utc_now,
 )
 from .storage import RunStore
-from .template_manager import discover_workspace_template
+from .template_manager import discover_workspace_template, resolve_workspace_template
 
 ENRICHMENT_DIR = "01_enrichment"
 PLAN_DIR = "02_plan"
@@ -116,6 +116,15 @@ class FormalizationWorkflow:
     def resume(self, run_id: str, auto_approve: bool = False) -> RunManifest:
         store = RunStore(self.artifacts_root, run_id)
         manifest = self._load_manifest(store)
+        if (
+            manifest.agent_config.backend == "command"
+            and manifest.agent_config.command is None
+            and self.agent_config.backend == "command"
+            and self.agent_config.command
+        ):
+            manifest.agent_config = self.agent_config
+            manifest.agent_name = self.agent.name
+            self._save_manifest(store, manifest)
         if self.lean_runner.lake_path is None and manifest.lake_path is not None:
             self.lean_runner.lake_path = manifest.lake_path
         persisted_lake_path = self._persisted_lake_path()
@@ -422,6 +431,7 @@ class FormalizationWorkflow:
         human_feedback: str | None = None,
     ) -> RunManifest:
         manifest = self._load_manifest(store)
+        manifest = self._ensure_workspace_template(store, manifest)
         manifest.current_stage = RunStage.PROVING
         self._save_manifest(store, manifest)
         store.append_log(
@@ -660,11 +670,13 @@ class FormalizationWorkflow:
         checkpoint_path = f"{stage_dir}/checkpoint.md"
         resume_command = self._resume_command(manifest.run_id)
 
-        self._write_decision(
-            store,
-            stage_dir,
-            ReviewDecision("pending", utc_now(), ""),
-        )
+        existing_decision = self._load_decision(store, f"{stage_dir}/decision.json")
+        if existing_decision is None or existing_decision.decision == "pending":
+            self._write_decision(
+                store,
+                stage_dir,
+                ReviewDecision("pending", utc_now(), ""),
+            )
         store.write_text(
             review_path,
             self._review_template(title, continue_decision),
@@ -964,12 +976,18 @@ class FormalizationWorkflow:
         auto_approve: bool,
     ) -> ReviewDecision | None:
         existing = self._load_decision(store, f"{stage_dir}/decision.json")
-        if existing is not None and existing.decision == continue_decision:
-            return existing
+        if existing is not None:
+            if existing.decision == continue_decision:
+                return existing
+            if existing.decision != "pending":
+                return None
 
         legacy = self._load_legacy_checkpoint_decision(store, stage_dir, continue_decision)
         if legacy is not None:
-            return legacy
+            self._write_decision(store, stage_dir, legacy)
+            if legacy.decision == continue_decision:
+                return legacy
+            return None
 
         if auto_approve:
             decision = ReviewDecision(continue_decision, utc_now(), "Auto-approved.")
@@ -1193,6 +1211,8 @@ class FormalizationWorkflow:
             return ReviewDecision(**payload)
         if payload.get("approved"):
             return ReviewDecision("approve", payload.get("updated_at", utc_now()), payload.get("notes", ""))
+        if "approved" in payload:
+            return ReviewDecision("reject", payload.get("updated_at", utc_now()), payload.get("notes", ""))
         return None
 
     def _existing_path(self, store: RunStore, *candidates: str) -> str | None:
@@ -1342,9 +1362,34 @@ class FormalizationWorkflow:
         decision = self._load_decision(store, relative_path)
         if decision is None:
             return ReviewDecision(continue_decision, utc_now(), "Imported from legacy workflow.")
-        if decision.decision not in {"approve", continue_decision}:
-            return None
-        return ReviewDecision(continue_decision, decision.updated_at, decision.notes)
+        if decision.decision in {"approve", continue_decision}:
+            return ReviewDecision(continue_decision, decision.updated_at, decision.notes)
+        return ReviewDecision("reject", decision.updated_at, decision.notes)
+
+    def _ensure_workspace_template(self, store: RunStore, manifest: RunManifest) -> RunManifest:
+        if not isinstance(self.lean_runner, LeanRunner):
+            return manifest
+
+        template_path = Path(manifest.template_dir)
+        if template_path.exists():
+            self.lean_runner.template_dir = template_path
+            return manifest
+
+        resolution = resolve_workspace_template(
+            self.repo_root,
+            Path(__file__).resolve().parent / "workspace_template",
+            lake_path=self.lean_runner.lake_path,
+        )
+        self.lean_runner.template_dir = resolution.template_dir
+        manifest.template_dir = str(resolution.template_dir.resolve())
+        self._save_manifest(store, manifest)
+        store.append_log(
+            "template_selected",
+            f"Using workspace template from `{resolution.template_dir}` via {resolution.origin}.",
+            stage="proof",
+            details={"command": resolution.command or []},
+        )
+        return manifest
 
     def _persisted_lake_path(self) -> str | None:
         if not self.lean_runner.lake_path:

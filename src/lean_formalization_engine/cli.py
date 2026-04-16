@@ -47,6 +47,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     resume_parser.add_argument("run_id")
     resume_parser.add_argument("--auto-approve", action="store_true")
+    resume_parser.add_argument(
+        "--agent-command",
+        help=(
+            "Provider command for legacy command-backed runs that predate Terry's "
+            "persisted backend config."
+        ),
+    )
 
     status_parser = subparsers.add_parser("status", help="Show the current Terry run summary.")
     status_parser.add_argument("run_id")
@@ -111,7 +118,7 @@ def build_agent(agent_config: AgentConfig, repo_root: Path):
     if not agent_config.command:
         raise ValueError(
             "This command-backed run predates Terry's persisted backend config, "
-            "so it cannot be resumed automatically."
+            "so resume it with `--agent-command \"python3 path/to/provider.py\"`."
         )
     return SubprocessFormalizationAgent(agent_config.command, working_directory=repo_root)
 
@@ -184,6 +191,27 @@ def _default_template_dir(repo_root: Path) -> str:
     if repo_template.exists():
         return str(repo_template.resolve())
     return str((Path(__file__).resolve().parent / "workspace_template").resolve())
+
+
+def _resume_agent_config(
+    manifest: RunManifest,
+    args: argparse.Namespace,
+    repo_root: Path,
+) -> AgentConfig:
+    agent_command = getattr(args, "agent_command", None)
+    if not agent_command:
+        return manifest.agent_config
+
+    if manifest.agent_config.backend != "command":
+        raise ValueError("`--agent-command` is only valid for command-backed Terry runs.")
+    if manifest.agent_config.command is not None:
+        raise ValueError("This Terry run already has a persisted provider command. Resume without `--agent-command`.")
+
+    return AgentConfig(
+        backend="command",
+        command=_resolve_agent_command(shlex.split(agent_command), repo_root),
+        codex_model=None,
+    )
 
 
 def render_resume_command(run_id: str, repo_root: Path, lake_path: str | None) -> str:
@@ -273,18 +301,12 @@ def main() -> None:
         elif args.command == "resume":
             manifest = _load_manifest(repo_root, args.run_id)
             lake_path = args.lake_path or manifest.lake_path
-            template_path = Path(manifest.template_dir)
-            if not template_path.exists():
-                template_path = resolve_workspace_template(
-                    repo_root,
-                    package_template_dir,
-                    lake_path=lake_path,
-                ).template_dir
+            agent_config = _resume_agent_config(manifest, args, repo_root)
             workflow = FormalizationWorkflow(
                 repo_root=repo_root,
-                agent=build_agent(manifest.agent_config, repo_root),
-                agent_config=manifest.agent_config,
-                lean_runner=LeanRunner(template_dir=template_path, lake_path=lake_path),
+                agent=build_agent(agent_config, repo_root),
+                agent_config=agent_config,
+                lean_runner=LeanRunner(template_dir=Path(manifest.template_dir), lake_path=lake_path),
             )
             manifest = workflow.resume(args.run_id, auto_approve=args.auto_approve)
 

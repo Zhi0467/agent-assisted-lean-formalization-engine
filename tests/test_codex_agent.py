@@ -73,6 +73,63 @@ class CodexAgentTest(unittest.TestCase):
         self.assertIsInstance(agent, SubprocessFormalizationAgent)
         self.assertEqual(agent.command, config.command)
 
+    def test_resume_cli_accepts_agent_command_for_legacy_command_runs(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        provider_script = project_root / "examples" / "providers" / "scripted_repair_provider.py"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            run_root = repo_root / "artifacts" / "runs" / "legacy-command"
+            (run_root / "00_input").mkdir(parents=True)
+            (run_root / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "legacy-command",
+                        "source": {"path": "input.md", "kind": "markdown"},
+                        "agent_name": "subprocess:scripted_repair_provider.py",
+                        "created_at": "2026-04-16T00:00:00Z",
+                        "updated_at": "2026-04-16T00:00:00Z",
+                        "current_stage": "created",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_root / "00_input" / "source.txt").write_text(
+                "For every natural number n, adding zero on the left gives back n.\n",
+                encoding="utf-8",
+            )
+            (run_root / "00_input" / "normalized.md").write_text(
+                "For every natural number n, adding zero on the left gives back n.\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "lean_formalization_engine.cli",
+                    "--repo-root",
+                    str(repo_root),
+                    "resume",
+                    "legacy-command",
+                    "--agent-command",
+                    f"python3 {provider_script}",
+                ],
+                cwd=project_root,
+                env={**os.environ, "PYTHONPATH": "src"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("awaiting_enrichment_approval", result.stdout)
+            manifest_payload = json.loads((run_root / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest_payload["agent_config"]["backend"], "command")
+            self.assertEqual(
+                manifest_payload["agent_config"]["command"],
+                ["python3", str(provider_script)],
+            )
+
     def test_codex_agent_invokes_read_only_exec_and_parses_output(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         agent = CodexCliFormalizationAgent(
@@ -257,6 +314,54 @@ class CodexAgentTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertTrue((target_dir / "stale.txt").exists())
             self.assertFalse((target_dir / "FormalizationEngineWorkspace" / "Basic.lean").exists())
+
+    def test_resume_does_not_require_template_while_checkpoint_is_still_pending(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            run_root = repo_root / "artifacts" / "runs" / "awaiting-enrichment"
+            (run_root / "01_enrichment").mkdir(parents=True)
+            (run_root / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "awaiting-enrichment",
+                        "source": {"path": "input.md", "kind": "markdown"},
+                        "agent_name": "demo_zero_add_agent",
+                        "agent_config": {"backend": "demo", "command": None, "codex_model": None},
+                        "template_dir": str(repo_root / "missing-template"),
+                        "lake_path": "/definitely/missing/lake",
+                        "created_at": "2026-04-16T00:00:00Z",
+                        "updated_at": "2026-04-16T00:00:00Z",
+                        "current_stage": "awaiting_enrichment_approval",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_root / "01_enrichment" / "checkpoint.md").write_text("# checkpoint\n", encoding="utf-8")
+            (run_root / "01_enrichment" / "review.md").write_text(
+                "# review\n\ndecision: pending\n\nNotes:\n\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "lean_formalization_engine.cli",
+                    "--repo-root",
+                    str(repo_root),
+                    "resume",
+                    "awaiting-enrichment",
+                ],
+                cwd=project_root,
+                env={**os.environ, "PYTHONPATH": "src"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("awaiting_enrichment_approval", result.stdout)
 
     def test_load_manifest_falls_back_for_legacy_runs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
