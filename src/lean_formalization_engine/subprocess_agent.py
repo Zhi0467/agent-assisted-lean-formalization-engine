@@ -265,25 +265,22 @@ def _subject_to_assumptions(subject: str) -> list[str] | None:
     cleaned = subject.replace("`", "").strip()
     if not cleaned:
         return None
-    typed_match = re.fullmatch(
-        r"\(?\s*([A-Za-z_]\w*(?:\s*(?:,|\band\b)\s*[A-Za-z_]\w*|\s+[A-Za-z_]\w*)*)\s*:\s*([A-Za-z_][\w.]*)\s*\)?",
-        cleaned,
-    )
+
+    typed_match = re.fullmatch(r"\(?\s*(.+?)\s*:\s*([A-Za-z_][\w.]*)\s*\)?", cleaned)
     if typed_match is not None:
         variables_raw, type_name = typed_match.groups()
+        assumptions = _descriptor_subject_to_assumptions(variables_raw, explicit_type=type_name)
+        if assumptions is not None:
+            return assumptions
+        if _contains_descriptor_prefix(variables_raw):
+            return None
         variables = _split_variable_names(variables_raw)
         if variables:
             return [f"{variable} : {type_name}" for variable in variables]
 
-    tokens = cleaned.split()
-    for split_index in range(1, len(tokens)):
-        descriptor = " ".join(tokens[:split_index]).lower().strip()
-        type_name = _descriptor_type(descriptor)
-        if type_name is None:
-            continue
-        variables = _split_variable_names(" ".join(tokens[split_index:]))
-        if variables:
-            return [f"{variable} : {type_name}" for variable in variables]
+    assumptions = _descriptor_subject_to_assumptions(cleaned)
+    if assumptions is not None:
+        return assumptions
     return None
 
 
@@ -296,6 +293,30 @@ def _split_variable_names(raw_variables: str) -> list[str]:
     if not variables or any(re.fullmatch(r"[A-Za-z_]\w*", variable) is None for variable in variables):
         return []
     return variables
+
+
+def _contains_descriptor_prefix(raw_subject: str) -> bool:
+    tokens = raw_subject.split()
+    return any(_descriptor_type(" ".join(tokens[:split_index]).lower().strip()) is not None for split_index in range(1, len(tokens)))
+
+
+def _descriptor_subject_to_assumptions(
+    raw_subject: str,
+    *,
+    explicit_type: str | None = None,
+) -> list[str] | None:
+    tokens = raw_subject.split()
+    for split_index in range(1, len(tokens)):
+        descriptor = " ".join(tokens[:split_index]).lower().strip()
+        descriptor_type = _descriptor_type(descriptor)
+        if descriptor_type is None:
+            continue
+        if explicit_type is not None and explicit_type != descriptor_type:
+            return None
+        variables = _split_variable_names(" ".join(tokens[split_index:]))
+        if variables:
+            return [f"{variable} : {explicit_type or descriptor_type}" for variable in variables]
+    return None
 
 
 def _descriptor_type(descriptor: str) -> str | None:
@@ -318,7 +339,7 @@ def _split_subject_and_conclusion(remainder: str) -> tuple[str | None, str | Non
         return subject, conclusion
 
     typed_separator = re.fullmatch(
-        r"(\(?\s*[A-Za-z_]\w*\s*:\s*[A-Za-z_][\w.]*\s*\)?)\s*:\s*(.+)",
+        r"(\(?\s*.+?\s*:\s*[A-Za-z_][\w.]*\s*\)?)\s*:\s*(.+)",
         remainder,
     )
     if typed_separator is not None:
