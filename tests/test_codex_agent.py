@@ -13,6 +13,7 @@ from unittest.mock import patch
 from lean_formalization_engine.cli import (
     _load_manifest,
     _resolve_agent_command,
+    _resume_agent_config,
     build_agent,
     build_agent_config,
     render_manifest_summary,
@@ -129,6 +130,36 @@ class CodexAgentTest(unittest.TestCase):
                 manifest_payload["agent_config"]["command"],
                 ["python3", str(provider_script)],
             )
+
+    def test_load_manifest_infers_unknown_legacy_agent_name_as_command_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            run_root = repo_root / "artifacts" / "runs" / "legacy-custom"
+            run_root.mkdir(parents=True)
+            (run_root / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "legacy-custom",
+                        "source": {"path": "input.md", "kind": "markdown"},
+                        "agent_name": "my-custom-provider",
+                        "created_at": "2026-04-16T00:00:00Z",
+                        "updated_at": "2026-04-16T00:00:00Z",
+                        "current_stage": "created",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            manifest = _load_manifest(repo_root, "legacy-custom")
+            self.assertEqual(manifest.agent_config.backend, "command")
+
+            resumed_config = _resume_agent_config(
+                manifest,
+                Namespace(agent_command="python3 provider.py"),
+                repo_root,
+            )
+            self.assertEqual(resumed_config.backend, "command")
+            self.assertEqual(resumed_config.command, ["python3", "provider.py"])
 
     def test_codex_agent_invokes_read_only_exec_and_parses_output(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
@@ -295,6 +326,38 @@ class CodexAgentTest(unittest.TestCase):
             f"Resume with: terry --repo-root {repo_root.resolve()} resume zero-add",
             summary,
         )
+
+    def test_render_manifest_summary_prefers_existing_legacy_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            run_root = repo_root / "artifacts" / "runs" / "legacy-final"
+            (run_root / "10_final").mkdir(parents=True)
+            (run_root / "10_final" / "final_report.md").write_text("# Final report\n", encoding="utf-8")
+            (run_root / "10_final" / "decision.json").write_text(
+                '{"approved": false}\n',
+                encoding="utf-8",
+            )
+            (run_root / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "legacy-final",
+                        "source": {"path": "input.md", "kind": "markdown"},
+                        "agent_name": "repair_resume_agent",
+                        "created_at": "2026-04-16T00:00:00Z",
+                        "updated_at": "2026-04-16T00:00:00Z",
+                        "current_stage": "awaiting_final_review",
+                        "attempt_count": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            manifest = _load_manifest(repo_root, "legacy-final")
+            summary = render_manifest_summary(manifest, repo_root)
+
+            self.assertIn("Stage: awaiting_final_approval", summary)
+            self.assertIn("Checkpoint: artifacts/runs/legacy-final/10_final/final_report.md", summary)
+            self.assertIn("Review file: artifacts/runs/legacy-final/10_final/decision.json", summary)
 
     def test_prove_validation_happens_before_template_resolution(self) -> None:
         project_root = Path(__file__).resolve().parents[1]

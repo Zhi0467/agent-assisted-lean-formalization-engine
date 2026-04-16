@@ -54,6 +54,10 @@ LEGACY_STALL_DECISION = "09_review/decision.json"
 LEGACY_FINAL_CANDIDATE = "10_final/final_candidate.lean"
 LEGACY_FINAL_REPORT = "10_final/final_report.md"
 LEGACY_FINAL_DECISION = "10_final/decision.json"
+LEGACY_DEMO_AGENT_NAMES = {
+    "demo_zero_add_agent",
+    "repair_resume_agent",
+}
 
 
 class FormalizationWorkflow:
@@ -1077,13 +1081,17 @@ class FormalizationWorkflow:
             agent_config = AgentConfig(**agent_config_payload)
         else:
             agent_name = payload.get("agent_name", "")
-            if str(agent_name).startswith("codex_cli:"):
-                model = str(agent_name).split(":", 1)[1]
+            agent_name_value = str(agent_name)
+            if agent_name_value.startswith("codex_cli:"):
+                model = agent_name_value.split(":", 1)[1]
                 agent_config = AgentConfig(
                     backend="codex",
                     codex_model=None if model == "default" else model,
                 )
-            elif str(agent_name).startswith("subprocess:"):
+            elif (
+                agent_name_value.startswith("subprocess:")
+                or (agent_name_value and agent_name_value not in LEGACY_DEMO_AGENT_NAMES)
+            ):
                 agent_config = AgentConfig(backend="command")
             else:
                 agent_config = AgentConfig(backend="demo")

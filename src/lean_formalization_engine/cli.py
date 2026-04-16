@@ -14,6 +14,25 @@ from .subprocess_agent import SubprocessFormalizationAgent
 from .template_manager import discover_workspace_template
 from .workflow import FormalizationWorkflow
 
+_STATUS_SURFACE_CANDIDATES = {
+    RunStage.AWAITING_ENRICHMENT_APPROVAL: [
+        ("01_enrichment/checkpoint.md", "01_enrichment/review.md"),
+        ("03_enrichment/handoff.md", "03_enrichment/decision.json"),
+    ],
+    RunStage.AWAITING_PLAN_APPROVAL: [
+        ("02_plan/checkpoint.md", "02_plan/review.md"),
+        ("06_plan/formalization_plan.json", "06_plan/decision.json"),
+    ],
+    RunStage.PROOF_BLOCKED: [
+        ("03_proof/checkpoint.md", "03_proof/review.md"),
+        ("09_review/stall_report.md", "09_review/decision.json"),
+    ],
+    RunStage.AWAITING_FINAL_APPROVAL: [
+        ("04_final/checkpoint.md", "04_final/review.md"),
+        ("10_final/final_report.md", "10_final/decision.json"),
+    ],
+}
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -233,6 +252,18 @@ def render_resume_command(run_id: str, repo_root: Path, lake_path: str | None) -
     return " ".join(shlex.quote(part) for part in command)
 
 
+def _resolve_status_surface(manifest: RunManifest, repo_root: Path) -> tuple[str, str] | None:
+    candidates = _STATUS_SURFACE_CANDIDATES.get(manifest.current_stage)
+    if candidates is None:
+        return None
+
+    run_root = repo_root / "artifacts" / "runs" / manifest.run_id
+    for checkpoint_relative, review_relative in candidates:
+        if (run_root / checkpoint_relative).exists() or (run_root / review_relative).exists():
+            return checkpoint_relative, review_relative
+    return candidates[0]
+
+
 def render_manifest_summary(manifest: RunManifest, repo_root: Path) -> str:
     lines = [
         f"Run: {manifest.run_id}",
@@ -243,21 +274,11 @@ def render_manifest_summary(manifest: RunManifest, repo_root: Path) -> str:
     if manifest.latest_error:
         lines.append(f"Latest error: {manifest.latest_error}")
 
-    review_map = {
-        RunStage.AWAITING_ENRICHMENT_APPROVAL: "01_enrichment/review.md",
-        RunStage.AWAITING_PLAN_APPROVAL: "02_plan/review.md",
-        RunStage.PROOF_BLOCKED: "03_proof/review.md",
-        RunStage.AWAITING_FINAL_APPROVAL: "04_final/review.md",
-    }
-    checkpoint_map = {
-        RunStage.AWAITING_ENRICHMENT_APPROVAL: "01_enrichment/checkpoint.md",
-        RunStage.AWAITING_PLAN_APPROVAL: "02_plan/checkpoint.md",
-        RunStage.PROOF_BLOCKED: "03_proof/checkpoint.md",
-        RunStage.AWAITING_FINAL_APPROVAL: "04_final/checkpoint.md",
-    }
-    if manifest.current_stage in review_map:
-        review_path = repo_root / "artifacts" / "runs" / manifest.run_id / review_map[manifest.current_stage]
-        checkpoint_path = repo_root / "artifacts" / "runs" / manifest.run_id / checkpoint_map[manifest.current_stage]
+    status_surface = _resolve_status_surface(manifest, repo_root)
+    if status_surface is not None:
+        checkpoint_relative, review_relative = status_surface
+        review_path = repo_root / "artifacts" / "runs" / manifest.run_id / review_relative
+        checkpoint_path = repo_root / "artifacts" / "runs" / manifest.run_id / checkpoint_relative
         lines.append(f"Checkpoint: {checkpoint_path.relative_to(repo_root)}")
         lines.append(f"Review file: {review_path.relative_to(repo_root)}")
         lines.append(
