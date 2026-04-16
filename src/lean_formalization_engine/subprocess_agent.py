@@ -235,9 +235,9 @@ def _infer_assumptions_and_conclusion(statement: str) -> tuple[list[str], str]:
         subject, conclusion = _split_subject_and_conclusion(remainder)
         if subject is None or conclusion is None:
             break
-        assumption = _subject_to_assumption(subject.strip())
-        if assumption is not None:
-            return [assumption], target_statement or conclusion.strip()
+        assumptions = _subject_to_assumptions(subject.strip())
+        if assumptions is not None:
+            return assumptions, target_statement or conclusion.strip()
         break
     return [], target_statement or stripped
 
@@ -261,22 +261,54 @@ def _strip_target_statement_lines(statement: str) -> str:
     return cleaned or statement
 
 
-def _subject_to_assumption(subject: str) -> str | None:
+def _subject_to_assumptions(subject: str) -> list[str] | None:
     cleaned = subject.replace("`", "").strip()
     if not cleaned:
         return None
-    typed_match = re.fullmatch(r"\(?\s*([A-Za-z_]\w*)\s*:\s*([A-Za-z_][\w.]*)\s*\)?", cleaned)
+    typed_match = re.fullmatch(
+        r"\(?\s*([A-Za-z_]\w*(?:\s*(?:,|\band\b)\s*[A-Za-z_]\w*|\s+[A-Za-z_]\w*)*)\s*:\s*([A-Za-z_][\w.]*)\s*\)?",
+        cleaned,
+    )
     if typed_match is not None:
-        variable, type_name = typed_match.groups()
-        return f"{variable} : {type_name}"
-    tokens = cleaned.split()
-    variable = tokens[-1]
-    if not re.fullmatch(r"[A-Za-z_]\w*", variable):
+        variables_raw, type_name = typed_match.groups()
+        variables = _split_variable_names(variables_raw)
+        if variables:
+            return [f"{variable} : {type_name}" for variable in variables]
+
+    lowered = cleaned.lower()
+    for descriptor, type_name in _DESCRIPTOR_PREFIXES:
+        if not lowered.startswith(f"{descriptor} "):
+            continue
+        variables = _split_variable_names(cleaned[len(descriptor) :].strip())
+        if variables:
+            return [f"{variable} : {type_name}" for variable in variables]
         return None
-    type_name = _descriptor_type(" ".join(tokens[:-1]).lower().strip())
-    if type_name is None:
-        return None
-    return f"{variable} : {type_name}"
+    return None
+
+
+def _split_variable_names(raw_variables: str) -> list[str]:
+    variables = [
+        variable
+        for variable in re.split(r"\s*(?:,|\band\b)\s*|\s+", raw_variables.strip())
+        if variable
+    ]
+    if not variables or any(re.fullmatch(r"[A-Za-z_]\w*", variable) is None for variable in variables):
+        return []
+    return variables
+
+
+_DESCRIPTOR_PREFIXES = [
+    ("natural numbers", "Nat"),
+    ("natural number", "Nat"),
+    ("integers", "Int"),
+    ("integer", "Int"),
+    ("real numbers", "Real"),
+    ("real number", "Real"),
+    ("booleans", "Bool"),
+    ("boolean", "Bool"),
+    ("propositions", "Prop"),
+    ("proposition", "Prop"),
+]
 
 
 def _descriptor_type(descriptor: str) -> str | None:

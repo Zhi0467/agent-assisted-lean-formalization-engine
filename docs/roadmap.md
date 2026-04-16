@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-04-16 14:16 UTC
+Last updated: 2026-04-16 14:26 UTC
 
 ## Current Status
 
@@ -19,7 +19,7 @@ current rewrite changes that contract:
 - backend choice is persisted in the manifest, so resumed runs cannot silently swap providers
 - template discovery is now part of the CLI contract rather than an implicit repo assumption
 
-Local unit coverage for the rewritten surface is green at `63/63`, but the branch has not
+Local unit coverage for the rewritten surface is green at `64/64`, but the branch has not
 yet cleared a fresh clean-shell local review rerun or moved onto a live Codex-reviewed PR.
 Until that review gate is clear, the rewrite items stay open in `docs/backlog.md`.
 
@@ -52,6 +52,8 @@ Gate:
 - [2026-04-16 14:09 UTC] Fixed both shim follow-ups and reran the branch-local suite: `PYTHONPATH=src python3 -m unittest discover -s tests` (`63` tests, all passing). Another direct `codex review --base main` pass is now the remaining local gate before opening the PR.
 - [2026-04-16 14:16 UTC] The next direct local review found one more old-provider compatibility edge: when the informal theorem text also carried an explicit `Target statement:` line, the synthesized fallback `theorem_spec` conclusion could absorb the whole prose block instead of the target formula. The fallback parser now strips that line out of the prose read, uses it as the conclusion when present, and keeps the quantified sentence only for assumption inference.
 - [2026-04-16 14:16 UTC] Re-ran the targeted legacy-`theorem_spec` regression plus the full branch-local suite after that parser fix: `PYTHONPATH=src python3 -m unittest discover -s tests` (`63` tests, all passing). One more direct `codex review --base main` pass is now the remaining local gate before opening the PR.
+- [2026-04-16 14:26 UTC] The next review finally moved from parsing single-target statements to full legacy-consumer compatibility: the hidden legacy commands were still printing Terry prose summaries instead of the old JSON manifest contract, and the fallback theorem-spec binder inference was still dropping earlier variables in multi-binder statements like `m and n`.
+- [2026-04-16 14:26 UTC] Restored JSON stdout on the legacy command surface, taught the fallback theorem-spec parser to emit every quantified binder, and reran the affected compatibility regressions plus the full branch-local suite: `PYTHONPATH=src python3 -m unittest discover -s tests` (`64` tests, all passing). One more direct `codex review --base main` pass is now the remaining local gate before opening the PR.
 
 ## Milestone 2 — Real Proof Stress
 

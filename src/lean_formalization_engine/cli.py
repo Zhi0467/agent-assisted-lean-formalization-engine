@@ -443,6 +443,19 @@ def _write_compatibility_approval(
     return manifest
 
 
+def _legacy_json_output(args: argparse.Namespace) -> bool:
+    if args.command in {
+        "run",
+        "approve-enrichment",
+        "approve-spec",
+        "approve-plan",
+        "approve-final",
+        "approve-stall",
+    }:
+        return True
+    return args.command in {"resume", "status"} and getattr(args, "legacy_run_id", None) is not None
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -485,11 +498,14 @@ def main() -> None:
         else:
             run_id = _resolve_run_id_argument(args)
             manifest = _load_manifest(repo_root, run_id)
-            if args.json:
+            if getattr(args, "json", False):
                 print(json.dumps(to_jsonable(manifest), indent=2))
                 return
 
-        print(render_manifest_summary(manifest, repo_root))
+        if _legacy_json_output(args):
+            print(json.dumps(to_jsonable(manifest), indent=2))
+        else:
+            print(render_manifest_summary(manifest, repo_root))
     except (RuntimeError, ValueError, FileExistsError, FileNotFoundError) as exc:
         raise SystemExit(str(exc))
 

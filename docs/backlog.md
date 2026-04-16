@@ -26,9 +26,12 @@ like `--agent-backend demo run ...` was still getting shadowed by subparser defa
 current turn. The next rerun then found one more old-provider parsing bug: if the source
 statement also included a `Target statement:` line, the synthesized fallback
 `theorem_spec` conclusion swallowed the full prose block instead of the explicit target.
-All three follow-ups are now fixed without changing the documented Terry contract, the
-branch-local suite is currently `63/63`, and one more direct `codex review --base main`
-rerun is the remaining local gate before the PR step.
+The next pass then exposed two final backward-compatibility gaps: the restored legacy
+commands were still printing Terry prose summaries instead of the old JSON manifest
+payloads, and the fallback theorem-spec parser only kept the last quantified binder in
+multi-variable statements. All five follow-ups are now fixed without changing the
+documented Terry contract, the branch-local suite is currently `64/64`, and one more
+direct `codex review --base main` rerun is the remaining local gate before the PR step.
 
 ## Terry Rewrite Surface
 

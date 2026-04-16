@@ -31,7 +31,10 @@ from lean_formalization_engine.models import (
     SourceRef,
     TheoremExtraction,
 )
-from lean_formalization_engine.subprocess_agent import SubprocessFormalizationAgent
+from lean_formalization_engine.subprocess_agent import (
+    SubprocessFormalizationAgent,
+    _legacy_theorem_spec_payload,
+)
 from lean_formalization_engine.template_manager import resolve_workspace_template
 from lean_formalization_engine.workflow import FormalizationWorkflow
 
@@ -844,8 +847,9 @@ class CodexAgentTest(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("Run: legacy-run", result.stdout)
-            self.assertIn("Stage: proof_blocked", result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["run_id"], "legacy-run")
+            self.assertEqual(payload["current_stage"], "proof_blocked")
 
     def test_legacy_resume_and_status_flags_remain_supported(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
@@ -893,7 +897,7 @@ class CodexAgentTest(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(status_result.returncode, 0, status_result.stderr)
-            self.assertIn("Stage: awaiting_enrichment_approval", status_result.stdout)
+            self.assertEqual(json.loads(status_result.stdout)["current_stage"], "awaiting_enrichment_approval")
 
             resume_result = subprocess.run(
                 [
@@ -913,7 +917,7 @@ class CodexAgentTest(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(resume_result.returncode, 0, resume_result.stderr)
-            self.assertIn("Stage: awaiting_enrichment_approval", resume_result.stdout)
+            self.assertEqual(json.loads(resume_result.stdout)["current_stage"], "awaiting_enrichment_approval")
 
     def test_legacy_approve_enrichment_command_advances_terry_run(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
@@ -964,6 +968,7 @@ class CodexAgentTest(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(approve_result.returncode, 0, approve_result.stderr)
+            self.assertEqual(json.loads(approve_result.stdout)["current_stage"], "awaiting_enrichment_approval")
             self.assertEqual(
                 json.loads((repo_root / "artifacts" / "runs" / "legacy-approve" / "01_enrichment" / "decision.json").read_text(encoding="utf-8"))[
                     "decision"
@@ -989,7 +994,23 @@ class CodexAgentTest(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(resume_result.returncode, 0, resume_result.stderr)
-            self.assertIn("Stage: awaiting_plan_approval", resume_result.stdout)
+            self.assertEqual(json.loads(resume_result.stdout)["current_stage"], "awaiting_plan_approval")
+
+    def test_legacy_theorem_spec_payload_keeps_all_quantified_binders(self) -> None:
+        payload = _legacy_theorem_spec_payload(
+            TheoremExtraction(
+                title="Commute add",
+                informal_statement="For every natural numbers m and n, m + n = n + m.",
+                definitions=["Nat"],
+                lemmas=["Nat.add_comm"],
+                propositions=[],
+                dependencies=["Nat.add_comm"],
+                notes=[],
+            )
+        )
+
+        self.assertEqual(payload["assumptions"], ["m : Nat", "n : Nat"])
+        self.assertEqual(payload["conclusion"], "m + n = n + m")
 
     def test_resume_override_persists_new_command_in_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
