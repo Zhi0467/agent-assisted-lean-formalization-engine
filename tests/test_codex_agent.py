@@ -491,6 +491,40 @@ class CodexAgentTest(unittest.TestCase):
             self.assertIn("Checkpoint: artifacts/runs/legacy-spec/04_spec/theorem_spec.json", summary)
             self.assertIn("Review file: artifacts/runs/legacy-spec/04_spec/theorem_spec.json", summary)
 
+    def test_render_manifest_summary_prefers_legacy_plan_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            run_root = repo_root / "artifacts" / "runs" / "legacy-plan"
+            (run_root / "04_spec").mkdir(parents=True)
+            (run_root / "06_plan").mkdir(parents=True)
+            (run_root / "04_spec" / "theorem_spec.json").write_text(
+                '{"title": "Zero add"}\n',
+                encoding="utf-8",
+            )
+            (run_root / "06_plan" / "formalization_plan.json").write_text(
+                '{"theorem_name": "zero_add_legacy"}\n',
+                encoding="utf-8",
+            )
+            (run_root / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "legacy-plan",
+                        "source": {"path": "input.md", "kind": "markdown"},
+                        "agent_name": "repair_resume_agent",
+                        "created_at": "2026-04-16T00:00:00Z",
+                        "updated_at": "2026-04-16T00:00:00Z",
+                        "current_stage": "awaiting_plan_review",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            manifest = _load_manifest(repo_root, "legacy-plan")
+            summary = render_manifest_summary(manifest, repo_root)
+
+            self.assertIn("Checkpoint: artifacts/runs/legacy-plan/06_plan/formalization_plan.json", summary)
+            self.assertIn("Review file: artifacts/runs/legacy-plan/06_plan/decision.json", summary)
+
     def test_prove_validation_happens_before_template_resolution(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as temp_dir:

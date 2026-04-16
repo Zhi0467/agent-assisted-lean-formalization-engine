@@ -21,8 +21,8 @@ _STATUS_SURFACE_CANDIDATES = {
     ],
     RunStage.AWAITING_PLAN_APPROVAL: [
         ("02_plan/checkpoint.md", "02_plan/review.md"),
-        ("04_spec/theorem_spec.json", "04_spec/theorem_spec.json"),
         ("06_plan/formalization_plan.json", "06_plan/decision.json"),
+        ("04_spec/theorem_spec.json", "04_spec/theorem_spec.json"),
     ],
     RunStage.PROOF_BLOCKED: [
         ("03_proof/checkpoint.md", "03_proof/review.md"),

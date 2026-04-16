@@ -43,6 +43,7 @@ LEGACY_ENRICHMENT_HANDOFF = "03_enrichment/handoff.md"
 LEGACY_ENRICHMENT_DECISION = "03_enrichment/decision.json"
 LEGACY_SPEC_JSON = "04_spec/theorem_spec.json"
 LEGACY_SPEC_APPROVED_JSON = "04_spec/theorem_spec.approved.json"
+LEGACY_SPEC_DECISION = "04_spec/decision.json"
 LEGACY_CONTEXT_PACK_JSON = "05_context/context_pack.json"
 LEGACY_PLAN_JSON = "06_plan/formalization_plan.json"
 LEGACY_PLAN_APPROVED_JSON = "06_plan/formalization_plan.approved.json"
@@ -189,17 +190,20 @@ class FormalizationWorkflow:
                             LEGACY_PLAN_JSON,
                         )
                         is None
-                        and self._existing_path(store, LEGACY_SPEC_APPROVED_JSON, LEGACY_SPEC_JSON) is not None
                     ):
-                        plan = self._draft_plan(
-                            store,
-                            manifest.source,
-                            store.read_text("00_input/source.txt"),
-                            auto_approve,
-                        )
-                        if isinstance(plan, RunManifest):
-                            return plan
-                        return self._prove_loop(store, plan, auto_approve=auto_approve)
+                        if self._legacy_spec_is_approved(store):
+                            plan = self._draft_plan(
+                                store,
+                                manifest.source,
+                                store.read_text("00_input/source.txt"),
+                                auto_approve,
+                            )
+                            if isinstance(plan, RunManifest):
+                                return plan
+                            return self._prove_loop(store, plan, auto_approve=auto_approve)
+                        if store.exists(LEGACY_SPEC_JSON):
+                            return manifest
+                        return self._pause_for_plan(store, manifest)
                     return self._pause_for_plan(store, manifest)
                 return manifest
             store.append_log(
@@ -1247,6 +1251,12 @@ class FormalizationWorkflow:
         if "approved" in payload:
             return ReviewDecision("reject", payload.get("updated_at", utc_now()), payload.get("notes", ""))
         return None
+
+    def _legacy_spec_is_approved(self, store: RunStore) -> bool:
+        if store.exists(LEGACY_SPEC_APPROVED_JSON):
+            return True
+        decision = self._load_decision(store, LEGACY_SPEC_DECISION)
+        return decision is not None and decision.decision == "approve" and store.exists(LEGACY_SPEC_JSON)
 
     def _existing_path(self, store: RunStore, *candidates: str) -> str | None:
         for candidate in candidates:
