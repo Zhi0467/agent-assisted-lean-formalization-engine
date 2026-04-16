@@ -34,7 +34,8 @@ problem. `models.py` / `agents.py` still define Terry-owned stage payloads,
 `parsed_output` and synthesizes fallback theorem logic, and `workflow.py` still renders
 Terry-authored extraction/enrichment/plan summaries from those parsed objects. Merge is
 paused until that content contract is replaced with backend-owned files plus Terry's
-checkpoint / logging / compile-retry orchestration.
+checkpoint / logging / compile-retry orchestration. The concrete target is now written in
+`docs/orchestrator-contract.md`.
 
 ## Terry Rewrite Surface
 

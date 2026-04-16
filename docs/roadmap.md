@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-04-16 22:12 UTC
+Last updated: 2026-04-16 22:22 UTC
 
 ## Current Status
 
@@ -35,7 +35,8 @@ current code that hardcoding lives in `models.py` / `agents.py`, `codex_agent.py
 `subprocess_agent.py`, and the Terry-authored summaries in `workflow.py`. The next
 honest cut is therefore not Milestone 2 proof stress yet; it is to replace those typed
 stage payloads with backend-written stage files while leaving Terry responsible only for
-checkpointing, logging, and compile / retry control.
+checkpointing, logging, and compile / retry control. That target contract is now pinned
+in `docs/orchestrator-contract.md`.
 
 ## Milestone 1 — Terry CLI Contract
 
@@ -82,6 +83,7 @@ Gate:
 - [2026-04-16 22:12 UTC] Re-ran the full branch-local suite after those last compatibility fixes: `PYTHONPATH=src python3 -m unittest discover -s tests` (`92` tests, all passing). The docs/backlog now treat the Terry rewrite gate as closed, so the next work starts at Milestone 2 rather than another review-only loop.
 - [2026-04-16 22:16 UTC] During the final doc+merge pass, Wangzhi rejected the remaining Terry stage-schema design itself: each stage should be owned end to end by the chosen backend, with files as the interface, not Terry-authored parsing or theorem-spec synthesis.
 - [2026-04-16 22:16 UTC] Paused the merge and mapped the current hardcoded surfaces that violate that rule: `models.py` / `agents.py` stage dataclasses, `codex_agent.py` JSON-schema output, `subprocess_agent.py` `parsed_output` plus fallback theorem parsing, and the Terry-authored extraction/enrichment/plan summaries in `workflow.py`. The next cut is to move actual formalization content fully behind the backend/file boundary.
+- [2026-04-16 22:22 UTC] Wrote `docs/orchestrator-contract.md` to turn that merge blocker into a concrete target. The doc fixes the allowed Terry surface to run directories, review files, logs, template/bootstrap handling, and compile / retry control, while moving theorem understanding, enrichment, planning, and proof content fully into backend-owned stage files.
 
 ## Milestone 2 — Real Proof Stress
 

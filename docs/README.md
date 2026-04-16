@@ -1,6 +1,7 @@
 # Docs Index
 
 - `architecture.md` — module layout, three-checkpoint workflow, run directory shape, logger, and template discovery
+- `orchestrator-contract.md` — intended backend/file boundary after Wangzhi's merge-blocking architecture correction
 - `manual-review-walkthrough.md` — literal `terry prove` / `terry resume` path with review files
 - `backlog.md` — open work items and review-gated follow-ups
 - `roadmap.md` — milestone state and dated activity log

@@ -10,6 +10,7 @@ stress that surface on a non-demo theorem with a real repair turn.
 - `docs/roadmap.md` — current milestone state and activity log
 - `docs/backlog.md` — open tasks and review-gated follow-ups
 - `docs/architecture.md` — workflow shape, run layout, logger, and template rules
+- `docs/orchestrator-contract.md` — target workflow/backend boundary after the merge pause
 - `docs/manual-review-walkthrough.md` — literal `terry prove` / `terry resume` path
 
 ## Sub-Session Instructions
@@ -24,6 +25,6 @@ stress that surface on a non-demo theorem with a real repair turn.
 ## Context Loading
 
 - New to this project? Read `docs/roadmap.md` then `docs/README.md`
-- Changing workflow or persistence? Read `docs/architecture.md`
+- Changing workflow or persistence? Read `docs/architecture.md` then `docs/orchestrator-contract.md`
 - Updating the user-facing CLI path? Read `docs/manual-review-walkthrough.md`
 - Need adjacent-system context? Read `docs/landscape.md`
