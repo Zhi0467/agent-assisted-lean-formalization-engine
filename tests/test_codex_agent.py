@@ -13,6 +13,7 @@ from unittest.mock import patch
 from lean_formalization_engine.cli import (
     _load_manifest,
     _resolve_agent_command,
+    _resolve_lake_path,
     _resume_agent_config,
     build_agent,
     build_agent_config,
@@ -76,6 +77,11 @@ class CodexAgentTest(unittest.TestCase):
         project_root = Path(__file__).resolve().parents[1]
         resolved = _resolve_agent_command(["python3", "-m", "examples"], project_root)
         self.assertEqual(resolved, ["python3", "-m", "examples"])
+
+    def test_resolve_lake_path_anchors_repo_relative_executable(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        resolved = _resolve_lake_path("tools/lake", project_root)
+        self.assertEqual(resolved, str((project_root / "tools" / "lake").resolve()))
 
     def test_build_agent_uses_stored_command_backend(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
@@ -272,6 +278,79 @@ class CodexAgentTest(unittest.TestCase):
             self.assertEqual(plan.conclusion, "0 + n = n")
             self.assertEqual(plan.symbols, ["Nat", "0", "+", "="])
 
+    def test_subprocess_plan_payload_accepts_legacy_plan_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            provider_script = repo_root / "old_provider.py"
+            provider_script.write_text(
+                "\n".join(
+                    [
+                        "from __future__ import annotations",
+                        "import json",
+                        "import sys",
+                        "",
+                        "def main() -> int:",
+                        "    request = json.load(sys.stdin)",
+                        "    if request['stage'] == 'draft_theorem_spec':",
+                        "        print('Unknown stage draft_theorem_spec', file=sys.stderr)",
+                        "        raise SystemExit(1)",
+                        "    parsed_output = {",
+                        "        'theorem_name': 'legacy_zero_add',",
+                        "        'imports': ['FormalizationEngineWorkspace.Basic'],",
+                        "        'prerequisites_to_formalize': request['enrichment']['required_plan_additions'],",
+                        "        'helper_definitions': [],",
+                        "        'target_statement': 'theorem legacy_zero_add (n : Nat) : 0 + n = n',",
+                        "        'proof_sketch': ['Use Nat.zero_add.'],",
+                        "    }",
+                        "    json.dump({'prompt': 'legacy-plan', 'raw_response': 'legacy-plan', 'parsed_output': parsed_output}, sys.stdout)",
+                        "    return 0",
+                        "",
+                        "if __name__ == '__main__':",
+                        "    raise SystemExit(main())",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            provider_script.chmod(0o755)
+
+            agent = SubprocessFormalizationAgent(["python3", str(provider_script)])
+            plan, _ = agent.draft_formalization_plan(
+                SourceRef(path="input.md", kind=SourceKind.MARKDOWN),
+                "For all n : Nat, 0 + n = n.\n",
+                TheoremExtraction(
+                    title="Zero add",
+                    informal_statement="For all n : Nat, 0 + n = n.",
+                    definitions=["Nat"],
+                    lemmas=["Nat.zero_add"],
+                    propositions=[],
+                    dependencies=["Nat.zero_add"],
+                    notes=[],
+                ),
+                EnrichmentReport(
+                    self_contained=True,
+                    satisfied_prerequisites=["Nat.zero_add exists."],
+                    missing_prerequisites=[],
+                    required_plan_additions=[],
+                    recommended_scope="Keep the theorem over Nat.",
+                    difficulty_assessment="easy",
+                    open_questions=[],
+                    next_steps=["Approve the merged plan."],
+                    human_handoff="Everything needed is already present.",
+                ),
+                ContextPack(
+                    recommended_imports=["FormalizationEngineWorkspace.Basic"],
+                    local_examples=["examples/inputs/zero_add.md"],
+                    notes=["Use Nat.zero_add."],
+                ),
+            )
+
+            self.assertEqual(plan.title, "Zero add")
+            self.assertEqual(plan.assumptions, ["n : Nat"])
+            self.assertEqual(plan.conclusion, "0 + n = n")
+            self.assertEqual(plan.target_statement, "theorem legacy_zero_add (n : Nat) : 0 + n = n")
+            self.assertIn("legacy_zero_add", plan.human_summary)
+
     def test_subprocess_plan_payload_tolerates_unknown_legacy_spec_stage_error(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
@@ -350,6 +429,223 @@ class CodexAgentTest(unittest.TestCase):
 
             self.assertEqual(plan.assumptions, ["n : Nat"])
             self.assertEqual(plan.conclusion, "0 + n = n")
+
+    def test_subprocess_plan_payload_tolerates_missing_legacy_spec_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            provider_script = repo_root / "new_provider.py"
+            provider_script.write_text(
+                "\n".join(
+                    [
+                        "from __future__ import annotations",
+                        "import json",
+                        "import sys",
+                        "",
+                        "def main() -> int:",
+                        "    request = json.load(sys.stdin)",
+                        "    if request['stage'] == 'draft_theorem_spec':",
+                        "        json.dump({'raw_response': 'Unknown stage draft_theorem_spec', 'parsed_output': {'error': 'Unknown stage draft_theorem_spec'}}, sys.stdout)",
+                        "        return 0",
+                        "    theorem_spec = request['theorem_spec']",
+                        "    parsed_output = {",
+                        "        'title': theorem_spec['title'],",
+                        "        'informal_statement': theorem_spec['informal_statement'],",
+                        "        'assumptions': theorem_spec['assumptions'],",
+                        "        'conclusion': theorem_spec['conclusion'],",
+                        "        'symbols': theorem_spec['symbols'],",
+                        "        'ambiguities': theorem_spec['ambiguities'],",
+                        "        'paraphrase': theorem_spec['paraphrase'],",
+                        "        'theorem_name': 'legacy_zero_add',",
+                        "        'imports': ['FormalizationEngineWorkspace.Basic'],",
+                        "        'prerequisites_to_formalize': request['enrichment']['required_plan_additions'],",
+                        "        'helper_definitions': [],",
+                        "        'target_statement': 'theorem legacy_zero_add (n : Nat) : 0 + n = n',",
+                        "        'proof_sketch': ['Use Nat.zero_add.'],",
+                        "        'human_summary': 'Legacy provider compatibility.',",
+                        "    }",
+                        "    json.dump({'prompt': 'legacy-plan', 'raw_response': 'legacy-plan', 'parsed_output': parsed_output}, sys.stdout)",
+                        "    return 0",
+                        "",
+                        "if __name__ == '__main__':",
+                        "    raise SystemExit(main())",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            provider_script.chmod(0o755)
+
+            agent = SubprocessFormalizationAgent(["python3", str(provider_script)])
+            plan, _ = agent.draft_formalization_plan(
+                SourceRef(path="input.md", kind=SourceKind.MARKDOWN),
+                "For all n : Nat, 0 + n = n.\n",
+                TheoremExtraction(
+                    title="Zero add",
+                    informal_statement="For all n : Nat, 0 + n = n.",
+                    definitions=["Nat"],
+                    lemmas=["Nat.zero_add"],
+                    propositions=[],
+                    dependencies=["Nat.zero_add"],
+                    notes=[],
+                ),
+                EnrichmentReport(
+                    self_contained=True,
+                    satisfied_prerequisites=["Nat.zero_add exists."],
+                    missing_prerequisites=[],
+                    required_plan_additions=[],
+                    recommended_scope="Keep the theorem over Nat.",
+                    difficulty_assessment="easy",
+                    open_questions=[],
+                    next_steps=["Approve the merged plan."],
+                    human_handoff="Everything needed is already present.",
+                ),
+                ContextPack(
+                    recommended_imports=["FormalizationEngineWorkspace.Basic"],
+                    local_examples=["examples/inputs/zero_add.md"],
+                    notes=["Use Nat.zero_add."],
+                ),
+            )
+
+            self.assertEqual(plan.assumptions, ["n : Nat"])
+            self.assertEqual(plan.conclusion, "0 + n = n")
+
+    def test_subprocess_plan_payload_tolerates_malformed_legacy_spec_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            provider_script = repo_root / "new_provider.py"
+            provider_script.write_text(
+                "\n".join(
+                    [
+                        "from __future__ import annotations",
+                        "import json",
+                        "import sys",
+                        "",
+                        "def main() -> int:",
+                        "    request = json.load(sys.stdin)",
+                        "    if request['stage'] == 'draft_theorem_spec':",
+                        "        json.dump({'prompt': 'Unknown stage draft_theorem_spec', 'raw_response': 'Unknown stage draft_theorem_spec', 'parsed_output': {'error': 'Unknown stage draft_theorem_spec'}}, sys.stdout)",
+                        "        return 0",
+                        "    theorem_spec = request['theorem_spec']",
+                        "    parsed_output = {",
+                        "        'title': theorem_spec['title'],",
+                        "        'informal_statement': theorem_spec['informal_statement'],",
+                        "        'assumptions': theorem_spec['assumptions'],",
+                        "        'conclusion': theorem_spec['conclusion'],",
+                        "        'symbols': theorem_spec['symbols'],",
+                        "        'ambiguities': theorem_spec['ambiguities'],",
+                        "        'paraphrase': theorem_spec['paraphrase'],",
+                        "        'theorem_name': 'legacy_zero_add',",
+                        "        'imports': ['FormalizationEngineWorkspace.Basic'],",
+                        "        'prerequisites_to_formalize': request['enrichment']['required_plan_additions'],",
+                        "        'helper_definitions': [],",
+                        "        'target_statement': 'theorem legacy_zero_add (n : Nat) : 0 + n = n',",
+                        "        'proof_sketch': ['Use Nat.zero_add.'],",
+                        "        'human_summary': 'Legacy provider compatibility.',",
+                        "    }",
+                        "    json.dump({'prompt': 'legacy-plan', 'raw_response': 'legacy-plan', 'parsed_output': parsed_output}, sys.stdout)",
+                        "    return 0",
+                        "",
+                        "if __name__ == '__main__':",
+                        "    raise SystemExit(main())",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            provider_script.chmod(0o755)
+
+            agent = SubprocessFormalizationAgent(["python3", str(provider_script)])
+            plan, _ = agent.draft_formalization_plan(
+                SourceRef(path="input.md", kind=SourceKind.MARKDOWN),
+                "Given n : Nat, 0 + n = n.\n",
+                TheoremExtraction(
+                    title="Zero add",
+                    informal_statement="Given n : Nat, 0 + n = n.",
+                    definitions=["Nat"],
+                    lemmas=["Nat.zero_add"],
+                    propositions=[],
+                    dependencies=["Nat.zero_add"],
+                    notes=[],
+                ),
+                EnrichmentReport(
+                    self_contained=True,
+                    satisfied_prerequisites=["Nat.zero_add exists."],
+                    missing_prerequisites=[],
+                    required_plan_additions=[],
+                    recommended_scope="Keep the theorem over Nat.",
+                    difficulty_assessment="easy",
+                    open_questions=[],
+                    next_steps=["Approve the merged plan."],
+                    human_handoff="Everything needed is already present.",
+                ),
+                ContextPack(
+                    recommended_imports=["FormalizationEngineWorkspace.Basic"],
+                    local_examples=["examples/inputs/zero_add.md"],
+                    notes=["Use Nat.zero_add."],
+                ),
+            )
+
+            self.assertEqual(plan.assumptions, ["n : Nat"])
+            self.assertEqual(plan.conclusion, "0 + n = n")
+
+    def test_subprocess_plan_payload_propagates_real_legacy_spec_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            provider_script = repo_root / "new_provider.py"
+            provider_script.write_text(
+                "\n".join(
+                    [
+                        "from __future__ import annotations",
+                        "import json",
+                        "import sys",
+                        "",
+                        "def main() -> int:",
+                        "    request = json.load(sys.stdin)",
+                        "    if request['stage'] == 'draft_theorem_spec':",
+                        "        print('theorem-specific validation failed', file=sys.stderr)",
+                        "        raise SystemExit(1)",
+                        "    raise SystemExit(0)",
+                        "",
+                        "if __name__ == '__main__':",
+                        "    raise SystemExit(main())",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            provider_script.chmod(0o755)
+
+            agent = SubprocessFormalizationAgent(["python3", str(provider_script)])
+            with self.assertRaisesRegex(RuntimeError, "validation failed"):
+                agent.draft_formalization_plan(
+                    SourceRef(path="input.md", kind=SourceKind.MARKDOWN),
+                    "Given n : Nat, 0 + n = n.\n",
+                    TheoremExtraction(
+                        title="Zero add",
+                        informal_statement="Given n : Nat, 0 + n = n.",
+                        definitions=["Nat"],
+                        lemmas=["Nat.zero_add"],
+                        propositions=[],
+                        dependencies=["Nat.zero_add"],
+                        notes=[],
+                    ),
+                    EnrichmentReport(
+                        self_contained=True,
+                        satisfied_prerequisites=["Nat.zero_add exists."],
+                        missing_prerequisites=[],
+                        required_plan_additions=[],
+                        recommended_scope="Keep the theorem over Nat.",
+                        difficulty_assessment="easy",
+                        open_questions=[],
+                        next_steps=["Approve the merged plan."],
+                        human_handoff="Everything needed is already present.",
+                    ),
+                    ContextPack(
+                        recommended_imports=["FormalizationEngineWorkspace.Basic"],
+                        local_examples=["examples/inputs/zero_add.md"],
+                        notes=["Use Nat.zero_add."],
+                    ),
+                )
 
     def test_resume_cli_accepts_agent_command_for_legacy_command_runs(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
@@ -468,6 +764,49 @@ class CodexAgentTest(unittest.TestCase):
                 resumed_config.command,
                 ["python3", str(new_provider)],
             )
+
+    def test_resume_agent_config_allows_backend_override(self) -> None:
+        repo_root = Path("/tmp/terry")
+        manifest = RunManifest(
+            run_id="codex-run",
+            source=SourceRef(path="input.md", kind=SourceKind.MARKDOWN),
+            agent_name="codex",
+            agent_config=AgentConfig(backend="codex", codex_model="gpt-old"),
+            template_dir=str(repo_root / "lean_workspace_template"),
+            created_at="2026-04-16T00:00:00Z",
+            updated_at="2026-04-16T00:01:00Z",
+            current_stage=RunStage.AWAITING_ENRICHMENT_APPROVAL,
+        )
+
+        resumed_config = _resume_agent_config(
+            manifest,
+            Namespace(legacy_agent_backend="demo", legacy_codex_model=None, agent_command=None),
+            repo_root,
+        )
+
+        self.assertEqual(resumed_config.backend, "demo")
+
+    def test_resume_agent_config_allows_codex_model_override(self) -> None:
+        repo_root = Path("/tmp/terry")
+        manifest = RunManifest(
+            run_id="codex-run",
+            source=SourceRef(path="input.md", kind=SourceKind.MARKDOWN),
+            agent_name="codex",
+            agent_config=AgentConfig(backend="codex", codex_model="gpt-old"),
+            template_dir=str(repo_root / "lean_workspace_template"),
+            created_at="2026-04-16T00:00:00Z",
+            updated_at="2026-04-16T00:01:00Z",
+            current_stage=RunStage.AWAITING_ENRICHMENT_APPROVAL,
+        )
+
+        resumed_config = _resume_agent_config(
+            manifest,
+            Namespace(legacy_agent_backend=None, legacy_codex_model="gpt-new", agent_command=None),
+            repo_root,
+        )
+
+        self.assertEqual(resumed_config.backend, "codex")
+        self.assertEqual(resumed_config.codex_model, "gpt-new")
 
     def test_resume_cli_final_approval_does_not_require_legacy_command(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
@@ -996,6 +1335,135 @@ class CodexAgentTest(unittest.TestCase):
             self.assertEqual(resume_result.returncode, 0, resume_result.stderr)
             self.assertEqual(json.loads(resume_result.stdout)["current_stage"], "awaiting_plan_approval")
 
+    def test_legacy_approve_spec_targets_merged_plan_checkpoint(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            source_path = project_root / "examples" / "inputs" / "zero_add.md"
+
+            prove_result = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "lean_formalization_engine.cli",
+                    "--repo-root",
+                    str(repo_root),
+                    "--lake-path",
+                    "/definitely/missing/lake",
+                    "prove",
+                    str(source_path),
+                    "--run-id",
+                    "compat-spec",
+                    "--agent-backend",
+                    "demo",
+                ],
+                cwd=project_root,
+                env={**os.environ, "PYTHONPATH": "src"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(prove_result.returncode, 0, prove_result.stderr)
+
+            approve_enrichment = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "lean_formalization_engine.cli",
+                    "--repo-root",
+                    str(repo_root),
+                    "approve-enrichment",
+                    "--run-id",
+                    "compat-spec",
+                    "--notes",
+                    "Looks good.",
+                ],
+                cwd=project_root,
+                env={**os.environ, "PYTHONPATH": "src"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(approve_enrichment.returncode, 0, approve_enrichment.stderr)
+
+            to_plan = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "lean_formalization_engine.cli",
+                    "--repo-root",
+                    str(repo_root),
+                    "--lake-path",
+                    "/definitely/missing/lake",
+                    "resume",
+                    "--run-id",
+                    "compat-spec",
+                ],
+                cwd=project_root,
+                env={**os.environ, "PYTHONPATH": "src"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(to_plan.returncode, 0, to_plan.stderr)
+            self.assertEqual(json.loads(to_plan.stdout)["current_stage"], "awaiting_plan_approval")
+
+            approve_spec = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "lean_formalization_engine.cli",
+                    "--repo-root",
+                    str(repo_root),
+                    "approve-spec",
+                    "--run-id",
+                    "compat-spec",
+                    "--notes",
+                    "Legacy spec approval should unlock the merged plan checkpoint.",
+                ],
+                cwd=project_root,
+                env={**os.environ, "PYTHONPATH": "src"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(approve_spec.returncode, 0, approve_spec.stderr)
+            self.assertEqual(
+                json.loads(
+                    (
+                        repo_root
+                        / "artifacts"
+                        / "runs"
+                        / "compat-spec"
+                        / "02_plan"
+                        / "decision.json"
+                    ).read_text(encoding="utf-8")
+                )["decision"],
+                "approve",
+            )
+
+            resume_result = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "lean_formalization_engine.cli",
+                    "--repo-root",
+                    str(repo_root),
+                    "--lake-path",
+                    "/definitely/missing/lake",
+                    "resume",
+                    "--run-id",
+                    "compat-spec",
+                ],
+                cwd=project_root,
+                env={**os.environ, "PYTHONPATH": "src"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(resume_result.returncode, 0, resume_result.stderr)
+            self.assertEqual(json.loads(resume_result.stdout)["current_stage"], "proof_blocked")
+
     def test_legacy_theorem_spec_payload_keeps_all_quantified_binders(self) -> None:
         payload = _legacy_theorem_spec_payload(
             TheoremExtraction(
@@ -1011,6 +1479,38 @@ class CodexAgentTest(unittest.TestCase):
 
         self.assertEqual(payload["assumptions"], ["m : Nat", "n : Nat"])
         self.assertEqual(payload["conclusion"], "m + n = n + m")
+
+    def test_legacy_theorem_spec_payload_accepts_prime_suffixed_binders(self) -> None:
+        payload = _legacy_theorem_spec_payload(
+            TheoremExtraction(
+                title="Zero add prime",
+                informal_statement="For every n' : Nat, n' + 0 = n'.",
+                definitions=["Nat"],
+                lemmas=["Nat.add_zero"],
+                propositions=[],
+                dependencies=["Nat.add_zero"],
+                notes=[],
+            )
+        )
+
+        self.assertEqual(payload["assumptions"], ["n' : Nat"])
+        self.assertEqual(payload["conclusion"], "n' + 0 = n'")
+
+    def test_legacy_theorem_spec_payload_accepts_unicode_binders(self) -> None:
+        payload = _legacy_theorem_spec_payload(
+            TheoremExtraction(
+                title="Generic equality",
+                informal_statement="For every α and β : Type, α = β.",
+                definitions=["Type"],
+                lemmas=[],
+                propositions=[],
+                dependencies=[],
+                notes=[],
+            )
+        )
+
+        self.assertEqual(payload["assumptions"], ["α : Type", "β : Type"])
+        self.assertEqual(payload["conclusion"], "α = β")
 
     def test_legacy_theorem_spec_payload_accepts_qualified_binders(self) -> None:
         payload = _legacy_theorem_spec_payload(
@@ -1335,6 +1835,79 @@ class CodexAgentTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("proof_blocked", result.stdout)
 
+    def test_prove_resolves_repo_relative_lake_path_from_outside_repo(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo_root = root / "repo"
+            repo_root.mkdir(parents=True)
+            outside_root = root / "outside"
+            outside_root.mkdir(parents=True)
+            fake_lake = repo_root / "tools" / "lake"
+            fake_lake.parent.mkdir(parents=True)
+            fake_lake.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env python3",
+                        "from __future__ import annotations",
+                        "import pathlib",
+                        "import sys",
+                        "",
+                        "def main() -> int:",
+                        "    args = sys.argv[1:]",
+                        "    if args[:3] == ['new', 'lean_workspace_template', 'math']:",
+                        "        target = pathlib.Path.cwd() / 'lean_workspace_template'",
+                        "        target.mkdir(parents=True, exist_ok=True)",
+                        "        (target / 'lakefile.toml').write_text('name = \"Scratch\"\\n[[require]]\\nname = \"mathlib\"\\n', encoding='utf-8')",
+                        "        return 0",
+                        "    if args[:2] == ['build', 'FormalizationEngineWorkspace']:",
+                        "        return 0",
+                        "    print(args, file=sys.stderr)",
+                        "    return 1",
+                        "",
+                        "if __name__ == '__main__':",
+                        "    raise SystemExit(main())",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_lake.chmod(0o755)
+            source_path = project_root / "examples" / "inputs" / "zero_add.md"
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "lean_formalization_engine.cli",
+                    "--repo-root",
+                    str(repo_root),
+                    "--lake-path",
+                    "tools/lake",
+                    "prove",
+                    str(source_path),
+                    "--run-id",
+                    "relative-lake",
+                    "--agent-backend",
+                    "demo",
+                    "--auto-approve",
+                ],
+                cwd=outside_root,
+                env={**os.environ, "PYTHONPATH": str(project_root / "src")},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Stage: completed", result.stdout)
+            manifest_payload = json.loads(
+                (repo_root / "artifacts" / "runs" / "relative-lake" / "manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(manifest_payload["lake_path"], str(fake_lake.resolve()))
+
     def test_prove_rejects_existing_ineligible_template_cleanly(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1421,6 +1994,56 @@ class CodexAgentTest(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("awaiting_enrichment_approval", result.stdout)
+
+    def test_resume_cli_persists_codex_model_override(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            run_root = repo_root / "artifacts" / "runs" / "codex-pending"
+            (run_root / "01_enrichment").mkdir(parents=True)
+            (run_root / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "codex-pending",
+                        "source": {"path": "input.md", "kind": "markdown"},
+                        "agent_name": "codex",
+                        "agent_config": {"backend": "codex", "command": None, "codex_model": "gpt-old"},
+                        "template_dir": str(repo_root / "lean_workspace_template"),
+                        "created_at": "2026-04-16T00:00:00Z",
+                        "updated_at": "2026-04-16T00:00:00Z",
+                        "current_stage": "awaiting_enrichment_approval",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_root / "01_enrichment" / "checkpoint.md").write_text("# checkpoint\n", encoding="utf-8")
+            (run_root / "01_enrichment" / "review.md").write_text(
+                "# review\n\ndecision: pending\n\nNotes:\n\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "lean_formalization_engine.cli",
+                    "--repo-root",
+                    str(repo_root),
+                    "--codex-model",
+                    "gpt-new",
+                    "resume",
+                    "codex-pending",
+                ],
+                cwd=project_root,
+                env={**os.environ, "PYTHONPATH": "src"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            manifest_payload = json.loads((run_root / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest_payload["agent_config"]["codex_model"], "gpt-new")
 
     def test_load_manifest_falls_back_for_legacy_runs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

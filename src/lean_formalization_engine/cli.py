@@ -236,6 +236,17 @@ def _resolve_source_path(source_path: Path, repo_root: Path) -> Path:
     return repo_root / source_path
 
 
+def _resolve_lake_path(lake_path: str | None, repo_root: Path) -> str | None:
+    if not lake_path:
+        return None
+    configured = Path(lake_path).expanduser()
+    if configured.is_absolute():
+        return str(configured)
+    if "/" in lake_path:
+        return str((repo_root / configured).resolve())
+    return lake_path
+
+
 def _default_run_id(source_path: Path) -> str:
     stem = source_path.stem.lower().replace(" ", "-")
     cleaned = "".join(character if character.isalnum() or character in "-._" else "-" for character in stem)
@@ -270,7 +281,10 @@ def _load_manifest(repo_root: Path, run_id: str) -> RunManifest:
         repo_root=repo_root,
         agent=DemoFormalizationAgent(),
         agent_config=AgentConfig(backend="demo"),
-        lean_runner=LeanRunner(template_dir=template_dir, lake_path=payload.get("lake_path")),
+        lean_runner=LeanRunner(
+            template_dir=template_dir,
+            lake_path=_resolve_lake_path(payload.get("lake_path"), repo_root),
+        ),
     )
     return workflow.status(run_id)
 
@@ -298,16 +312,42 @@ def _resume_agent_config(
     repo_root: Path,
 ) -> AgentConfig:
     agent_command = getattr(args, "agent_command", None) or getattr(args, "legacy_agent_command", None)
-    if not agent_command:
+    requested_backend = getattr(args, "agent_backend", None) or getattr(args, "legacy_agent_backend", None)
+    requested_model = getattr(args, "codex_model", None) or getattr(args, "legacy_codex_model", None)
+    if not agent_command and requested_backend is None and requested_model is None:
         return manifest.agent_config
 
-    if manifest.agent_config.backend != "command":
-        raise ValueError("`--agent-command` is only valid for command-backed Terry runs.")
+    backend = requested_backend or ("command" if agent_command else manifest.agent_config.backend)
+
+    if backend == "command":
+        command = manifest.agent_config.command
+        if agent_command:
+            command = _resolve_agent_command(shlex.split(agent_command), repo_root)
+        if not command:
+            raise ValueError(
+                "Resuming with the command backend requires `--agent-command` or a persisted command."
+            )
+        if requested_model is not None:
+            raise ValueError("`--codex-model` is only valid with the Codex backend.")
+        return AgentConfig(
+            backend="command",
+            command=command,
+            codex_model=None,
+        )
+
+    if agent_command:
+        raise ValueError("`--agent-command` is only valid with the command backend.")
+
+    if backend == "demo":
+        if requested_model is not None:
+            raise ValueError("`--codex-model` is only valid with the Codex backend.")
+        return AgentConfig(backend="demo")
 
     return AgentConfig(
-        backend="command",
-        command=_resolve_agent_command(shlex.split(agent_command), repo_root),
-        codex_model=None,
+        backend="codex",
+        codex_model=requested_model
+        if requested_model is not None
+        else (manifest.agent_config.codex_model if manifest.agent_config.backend == "codex" else None),
     )
 
 
@@ -403,7 +443,7 @@ def _write_compatibility_approval(
 
     terry_targets = {
         "approve-enrichment": "01_enrichment",
-        "approve-spec": "04_spec",
+        "approve-spec": "02_plan" if manifest.current_stage == RunStage.AWAITING_PLAN_APPROVAL else "04_spec",
         "approve-plan": "02_plan",
         "approve-final": "04_final",
         "approve-stall": "03_proof",
@@ -460,6 +500,7 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     repo_root = args.repo_root.resolve()
+    lake_path = _resolve_lake_path(args.lake_path, repo_root)
 
     try:
         if args.command in {"prove", "formalize", "run"}:
@@ -474,7 +515,7 @@ def main() -> None:
                 agent_config=agent_config,
                 lean_runner=LeanRunner(
                     template_dir=_preferred_prove_template_dir(repo_root),
-                    lake_path=args.lake_path,
+                    lake_path=lake_path,
                 ),
             )
             manifest = workflow.prove(source_path, run_id, auto_approve=args.auto_approve)
@@ -482,7 +523,7 @@ def main() -> None:
         elif args.command == "resume":
             run_id = _resolve_run_id_argument(args)
             manifest = _load_manifest(repo_root, run_id)
-            lake_path = args.lake_path or manifest.lake_path
+            lake_path = lake_path or _resolve_lake_path(manifest.lake_path, repo_root)
             agent_config = _resume_agent_config(manifest, args, repo_root)
             workflow = FormalizationWorkflow(
                 repo_root=repo_root,

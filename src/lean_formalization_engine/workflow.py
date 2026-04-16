@@ -122,12 +122,7 @@ class FormalizationWorkflow:
     def resume(self, run_id: str, auto_approve: bool = False) -> RunManifest:
         store = RunStore(self.artifacts_root, run_id)
         manifest = self._load_manifest(store)
-        if (
-            manifest.agent_config.backend == "command"
-            and self.agent_config.backend == "command"
-            and self.agent_config.command
-            and manifest.agent_config.command != self.agent_config.command
-        ):
+        if manifest.agent_config != self.agent_config:
             manifest.agent_config = self.agent_config
             manifest.agent_name = self.agent.name
             self._save_manifest(store, manifest)
@@ -284,6 +279,7 @@ class FormalizationWorkflow:
                             "Review the blocker and loop summary, then set `decision: retry` "
                             "when you want exactly one more attempt."
                         ),
+                        prefer_legacy_report=True,
                     )
                 return manifest
             store.append_log(
@@ -567,7 +563,6 @@ class FormalizationWorkflow:
             self._save_manifest(store, manifest)
             previous_draft = draft
             previous_result = compile_result
-            human_feedback = None
             store.append_log(
                 "prove_attempt_failed",
                 f"Attempt {attempt} failed and Terry is trying the next repair step.",
@@ -699,9 +694,10 @@ class FormalizationWorkflow:
         manifest: RunManifest,
         *,
         reason: str,
+        prefer_legacy_report: bool = False,
     ) -> RunManifest:
         blocker_text = reason
-        if store.exists(LEGACY_STALL_REPORT):
+        if prefer_legacy_report and store.exists(LEGACY_STALL_REPORT):
             blocker_text = store.read_text(LEGACY_STALL_REPORT)
         store.write_text(f"{PROOF_DIR}/blocker.md", self._render_proof_blocker(blocker_text))
         if manifest.attempt_count > 0:
@@ -1450,7 +1446,13 @@ class FormalizationWorkflow:
         if stage_dir == PLAN_DIR and store.exists(LEGACY_PLAN_DECISION):
             return self._map_legacy_decision(store, LEGACY_PLAN_DECISION, continue_decision)
         if stage_dir == PROOF_DIR and store.exists(LEGACY_STALL_DECISION):
-            return self._map_legacy_decision(store, LEGACY_STALL_DECISION, continue_decision)
+            manifest_updated_at = store.read_json("manifest.json").get("updated_at")
+            return self._map_legacy_decision(
+                store,
+                LEGACY_STALL_DECISION,
+                continue_decision,
+                stale_after=manifest_updated_at if isinstance(manifest_updated_at, str) else None,
+            )
         if stage_dir == FINAL_DIR and store.exists(LEGACY_FINAL_DECISION):
             return self._map_legacy_decision(store, LEGACY_FINAL_DECISION, continue_decision)
         return None
@@ -1460,10 +1462,17 @@ class FormalizationWorkflow:
         store: RunStore,
         relative_path: str,
         continue_decision: str,
+        stale_after: str | None = None,
     ) -> ReviewDecision | None:
         decision = self._load_decision(store, relative_path)
         if decision is None:
             return ReviewDecision(continue_decision, utc_now(), "Imported from legacy workflow.")
+        if (
+            stale_after is not None
+            and decision.decision in {"approve", continue_decision}
+            and decision.updated_at < stale_after
+        ):
+            return None
         if decision.decision in {"approve", continue_decision}:
             return ReviewDecision(continue_decision, decision.updated_at, decision.notes)
         return ReviewDecision("reject", decision.updated_at, decision.notes)

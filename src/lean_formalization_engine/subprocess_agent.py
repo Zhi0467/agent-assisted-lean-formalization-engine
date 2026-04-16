@@ -29,6 +29,19 @@ ParsedOutput = TypeVar(
 )
 
 
+class ProviderResponseError(ValueError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        response_text: str = "",
+        provider_payload: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.response_text = response_text
+        self.provider_payload = provider_payload
+
+
 class SubprocessFormalizationAgent:
     """Delegate each Terry turn to an external command over stdin/stdout."""
 
@@ -156,19 +169,38 @@ class SubprocessFormalizationAgent:
         try:
             provider_payload = json.loads(response.stdout)
         except json.JSONDecodeError as exc:
-            raise ValueError(f"Provider returned invalid JSON during {stage}.") from exc
+            raise ProviderResponseError(
+                f"Provider returned invalid JSON during {stage}.",
+                response_text=response.stdout.strip(),
+            ) from exc
 
         parsed_output_payload = provider_payload.get("parsed_output")
         if not isinstance(parsed_output_payload, dict):
-            raise ValueError(f"Provider omitted `parsed_output` for {stage}.")
+            raise ProviderResponseError(
+                f"Provider omitted `parsed_output` for {stage}.",
+                provider_payload=provider_payload,
+            )
 
-        parsed_output = response_type(**parsed_output_payload)
+        try:
+            parsed_output = _parse_provider_output(
+                response_type=response_type,
+                parsed_output_payload=parsed_output_payload,
+                request_payload=request_payload,
+            )
+        except TypeError as exc:
+            raise ProviderResponseError(
+                f"Provider returned invalid `parsed_output` for {stage}.",
+                provider_payload=provider_payload,
+            ) from exc
         raw_response = provider_payload.get("raw_response")
         if not isinstance(raw_response, str):
             raw_response = json.dumps(parsed_output_payload, indent=2, sort_keys=True)
         prompt = provider_payload.get("prompt")
         if not isinstance(prompt, str):
-            raise ValueError(f"Provider omitted `prompt` for {stage}.")
+            raise ProviderResponseError(
+                f"Provider omitted `prompt` for {stage}.",
+                provider_payload=provider_payload,
+            )
 
         return parsed_output, AgentTurn(
             request_payload=request_payload,
@@ -194,8 +226,14 @@ class SubprocessFormalizationAgent:
                 },
                 response_type=TheoremSpec,
             )
-        except RuntimeError:
-            return None
+        except RuntimeError as exc:
+            if _looks_like_unsupported_optional_stage(str(exc)):
+                return None
+            raise
+        except ProviderResponseError as exc:
+            if _looks_like_unsupported_optional_stage(exc.response_text, exc.provider_payload):
+                return None
+            raise
         return theorem_spec
 
 
@@ -208,6 +246,84 @@ def _default_agent_name(command: list[str]) -> str:
             return "subprocess:python-inline"
         return f"subprocess:{Path(command[1]).name}"
     return f"subprocess:{executable_name}"
+
+
+def _parse_provider_output(
+    *,
+    response_type: type[ParsedOutput],
+    parsed_output_payload: dict[str, Any],
+    request_payload: dict[str, Any],
+) -> ParsedOutput:
+    if response_type is not FormalizationPlan:
+        return response_type(**parsed_output_payload)
+
+    try:
+        return response_type(**parsed_output_payload)
+    except TypeError:
+        if "theorem_name" not in parsed_output_payload or "target_statement" not in parsed_output_payload:
+            raise
+        return _legacy_formalization_plan_payload(parsed_output_payload, request_payload)  # type: ignore[return-value]
+
+
+def _legacy_formalization_plan_payload(
+    parsed_output_payload: dict[str, Any],
+    request_payload: dict[str, Any],
+) -> FormalizationPlan:
+    theorem_spec = request_payload.get("theorem_spec")
+    extraction = request_payload.get("extraction")
+    if not isinstance(theorem_spec, dict):
+        theorem_spec = {}
+    if not isinstance(extraction, dict):
+        extraction = {}
+
+    title = theorem_spec.get("title") or extraction.get("title") or parsed_output_payload.get("theorem_name", "Legacy theorem")
+    informal_statement = (
+        theorem_spec.get("informal_statement")
+        or extraction.get("informal_statement")
+        or title
+    )
+    assumptions = theorem_spec.get("assumptions", [])
+    conclusion = theorem_spec.get("conclusion", "")
+    return FormalizationPlan(
+        title=title,
+        informal_statement=informal_statement,
+        assumptions=assumptions if isinstance(assumptions, list) else [],
+        conclusion=conclusion if isinstance(conclusion, str) else "",
+        symbols=theorem_spec.get("symbols", []) if isinstance(theorem_spec.get("symbols", []), list) else [],
+        ambiguities=(
+            theorem_spec.get("ambiguities", [])
+            if isinstance(theorem_spec.get("ambiguities", []), list)
+            else []
+        ),
+        paraphrase=theorem_spec.get("paraphrase") or informal_statement,
+        theorem_name=parsed_output_payload["theorem_name"],
+        imports=parsed_output_payload.get("imports", []),
+        prerequisites_to_formalize=parsed_output_payload.get("prerequisites_to_formalize", []),
+        helper_definitions=parsed_output_payload.get("helper_definitions", []),
+        target_statement=parsed_output_payload.get("target_statement", ""),
+        proof_sketch=parsed_output_payload.get("proof_sketch", []),
+        human_summary=(
+            f"Imported legacy provider plan for `{parsed_output_payload['theorem_name']}`. "
+            f"Assumptions: {', '.join(assumptions) if assumptions else 'none'}. "
+            f"Conclusion: {conclusion or 'unspecified'}."
+        ),
+    )
+
+
+def _looks_like_unsupported_optional_stage(
+    error_text: str,
+    provider_payload: dict[str, Any] | None = None,
+) -> bool:
+    fragments = [error_text]
+    if provider_payload is not None:
+        fragments.append(json.dumps(provider_payload, sort_keys=True))
+    haystack = "\n".join(fragment for fragment in fragments if fragment).lower()
+    if "draft_theorem_spec" not in haystack:
+        return False
+    return any(
+        marker in haystack
+        for marker in ("unsupported stage", "unknown stage", "not implemented")
+    )
 
 
 def _legacy_theorem_spec_payload(extraction: TheoremExtraction) -> dict[str, object]:
@@ -313,7 +429,7 @@ def _split_variable_names(raw_variables: str) -> list[str]:
         for variable in re.split(r"\s*(?:,|\band\b)\s*|\s+", raw_variables.strip())
         if variable
     ]
-    if not variables or any(re.fullmatch(r"[A-Za-z_]\w*", variable) is None for variable in variables):
+    if not variables or any(re.fullmatch(r"(?:[^\W\d]|_)\w*'*", variable) is None for variable in variables):
         return []
     return variables
 

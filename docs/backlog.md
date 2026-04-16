@@ -11,14 +11,21 @@ review coverage. Even the items that are already implemented locally remain on t
 - [ ] Clear or explicitly disposition the review findings before removing any rewrite items from this backlog.
 
 Current note:
-The wide local-review loop flushed out a long tail of migration and old-provider
-compatibility bugs on `murphy/terry-three-stage`, and they are now fixed on the published
-branch. The last parser cleanup covered qualified binders, mixed descriptor+explicit type
-forms, comma-separated binders, and repeated typed binders for the synthesized legacy
-`theorem_spec` fallback. The branch-local suite is now `71/71`, the focused direct local
-review on the final delta (`codex review ... --base 9bf0e54`) came back clean, and draft
-PR `#3` is now open with `@codex` requested. The remaining open gate is the live PR
-review surface, not another local compatibility rerun.
+The first live GitHub Codex pass on draft PR `#3` reviewed older commit `49053f8` and
+surfaced two real compatibility bugs in the legacy subprocess path: optional
+`draft_theorem_spec` probing was still too brittle for soft-fail providers, and
+prime-suffixed binders like `n'` were still rejected by the fallback parser. The later
+direct local review on the actual Terry checkout flushed out a few more honest gaps on
+top of that same stack: legacy plan payloads still needed adaptation, repo-relative
+`--lake-path` overrides needed to anchor against `--repo-root`, Terry was dropping human
+plan-review guidance after the first failed compile, migrated legacy stall approvals were
+not truly one-shot, and resume-time backend/model overrides were still too easy to lose.
+
+Those issues are now fixed on the current branch head, along with Unicode binder support
+for the same legacy fallback. The branch-local suite is `87/87`, and the latest direct
+local review on the real Terry worktree came back clean. This backlog still stays open
+until the refreshed live PR review on the updated head either comes back clean or only
+finds non-fatal follow-ups.
 
 ## Terry Rewrite Surface
 

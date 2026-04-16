@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-04-16 14:56 UTC
+Last updated: 2026-04-16 19:42 UTC
 
 ## Current Status
 
@@ -19,11 +19,11 @@ current rewrite changes that contract:
 - backend choice is persisted in the manifest, so resumed runs cannot silently swap providers
 - template discovery is now part of the CLI contract rather than an implicit repo assumption
 
-Local unit coverage for the rewritten surface is now green at `71/71`. The local review
-gate is also clear again: the focused direct Codex pass on the final legacy-binder delta
-came back clean, and the Terry rewrite is now published as draft PR `#3` with `@codex`
-requested. The remaining open gate is the live PR review thread before the rewrite can
-come off the backlog.
+Local unit coverage for the rewritten surface is now green at `87/87`. The direct local
+review gate on the real Terry worktree is also clear again after the post-PR compatibility
+cleanup. The open gate is now narrower and more honest: refresh the live PR `#3` review
+surface on the updated head, clear or disposition whatever comes back there, and only then
+take the rewrite off the backlog.
 
 ## Milestone 1 — Terry CLI Contract
 
@@ -59,6 +59,9 @@ Gate:
 - [2026-04-16 14:56 UTC] The remaining local loop stayed in the legacy theorem-spec fallback rather than the Terry-facing workflow. The later direct reviews surfaced four more real binder spellings that older subprocess providers can send through that compatibility path: qualified binders (`positive integers m and n`), mixed descriptor+explicit type binders (`positive integers m and n : Int`), comma-separated binders (`m, n`), and repeated typed binders (`m : Nat, n : Nat` / `(m : Nat), (n : Nat)`).
 - [2026-04-16 14:56 UTC] Tightened the fallback parser across those cases, added dedicated regressions for each, and reran the full branch-local suite after every step. The branch-local verification now sits at `71/71` via `PYTHONPATH=src python3 -m unittest discover -s tests`.
 - [2026-04-16 14:56 UTC] The focused direct local Codex review on the final parser delta (`codex review -c 'mcp_servers.consult.command=\"\"' -c 'mcp_servers.slack.command=\"\"' --base 9bf0e54`) came back clean. The branch is now published as draft PR `#3` with `@codex` requested, so the remaining gate is the live PR review surface rather than another local rerun.
+- [2026-04-16 19:42 UTC] The first live GitHub Codex pass on PR `#3` turned out to be reviewing older commit `49053f8`, and it surfaced two real issues in the legacy subprocess compatibility path: optional `draft_theorem_spec` probing still aborted on malformed soft-fail responses, and prime-suffixed binders like `n'` were still rejected by the fallback theorem-spec parser. I fixed both on the current branch.
+- [2026-04-16 19:42 UTC] The direct local review on the actual Terry worktree then pushed further into that same migration stack and flushed out more honest compatibility issues: old plan payloads still needed adaptation into Terry's merged plan object, repo-relative `--lake-path` values needed to resolve against `--repo-root`, proof-loop human guidance was still being dropped after the first failed compile, migrated legacy stall approvals were not truly one-shot, resumed backend/model overrides were not fully persisted, hidden `approve-spec` still targeted the old spec checkpoint for Terry-native runs, and the legacy theorem-spec fallback still rejected Unicode binders like `α` and `β`. Those are now fixed too.
+- [2026-04-16 19:42 UTC] Re-ran the full branch-local suite after the latest compatibility pass: `PYTHONPATH=src python3 -m unittest discover -s tests` (`87` tests, all passing). The latest direct local review on the real Terry worktree also came back clean, so the remaining open gate is the refreshed live PR review on the updated branch head rather than another local bug-hunt.
 
 ## Milestone 2 — Real Proof Stress
 

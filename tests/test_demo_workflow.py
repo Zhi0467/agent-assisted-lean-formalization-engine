@@ -231,12 +231,14 @@ class PlanFeedbackAgent(RepairResumeAgent):
 
     def __init__(self) -> None:
         self.seen_human_feedback: str | None = None
+        self.seen_feedback_by_attempt: list[str | None] = []
 
     def draft_lean_file(
         self,
         plan: FormalizationPlan,
         repair_context: RepairContext,
     ) -> tuple[LeanDraft, AgentTurn]:
+        self.seen_feedback_by_attempt.append(repair_context.human_feedback)
         if repair_context.current_attempt == 1:
             self.seen_human_feedback = repair_context.human_feedback
             draft = LeanDraft(
@@ -251,6 +253,21 @@ class PlanFeedbackAgent(RepairResumeAgent):
                 rationale="guided first attempt",
             )
             return draft, AgentTurn(request_payload={}, prompt="draft", raw_response="draft")
+        return super().draft_lean_file(plan, repair_context)
+
+
+class RepairFeedbackAgent(RepairResumeAgent):
+    name = "repair_feedback_agent"
+
+    def __init__(self) -> None:
+        self.seen_feedback_by_attempt: list[str | None] = []
+
+    def draft_lean_file(
+        self,
+        plan: FormalizationPlan,
+        repair_context: RepairContext,
+    ) -> tuple[LeanDraft, AgentTurn]:
+        self.seen_feedback_by_attempt.append(repair_context.human_feedback)
         return super().draft_lean_file(plan, repair_context)
 
 
@@ -523,6 +540,41 @@ class DemoWorkflowTest(unittest.TestCase):
 
             self.assertEqual(manifest.current_stage, RunStage.AWAITING_FINAL_APPROVAL)
             self.assertEqual(agent.seen_human_feedback, "Use the direct Nat.zero_add route.")
+            self.assertEqual(agent.seen_feedback_by_attempt, ["Use the direct Nat.zero_add route."])
+
+    def test_plan_review_guidance_reaches_every_proof_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            agent = RepairFeedbackAgent()
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=agent,
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=SequencedLeanRunner(["compile_failed", "passed"]),
+                max_attempts=2,
+            )
+            source_path = temp_root / "input.md"
+            source_path.write_text(
+                "For every natural number n, adding zero on the left gives back n.\n",
+                encoding="utf-8",
+            )
+
+            manifest = workflow.prove(source_path=source_path, run_id="plan-feedback-retry", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+            run_root = temp_root / "artifacts" / "runs" / "plan-feedback-retry"
+
+            self._write_review(run_root, "01_enrichment", "approve", "")
+            manifest = workflow.resume("plan-feedback-retry", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
+
+            self._write_review(run_root, "02_plan", "approve", "Use the direct Nat.zero_add route.")
+            manifest = workflow.resume("plan-feedback-retry", auto_approve=False)
+
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_FINAL_APPROVAL)
+            self.assertEqual(
+                agent.seen_feedback_by_attempt,
+                ["Use the direct Nat.zero_add route.", "Use the direct Nat.zero_add route."],
+            )
 
     def test_proof_blocked_requires_retry_decision(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
@@ -918,7 +970,7 @@ class DemoWorkflowTest(unittest.TestCase):
                 repo_root=temp_root,
                 agent=RepairResumeAgent(),
                 agent_config=AgentConfig(backend="demo"),
-                lean_runner=SequencedLeanRunner(["compile_failed"]),
+                lean_runner=SequencedLeanRunner(["compile_failed", "compile_failed"]),
                 max_attempts=1,
             )
             manifest = workflow.resume("legacy-plan", auto_approve=True)
@@ -989,7 +1041,7 @@ class DemoWorkflowTest(unittest.TestCase):
                 repo_root=temp_root,
                 agent=RepairResumeAgent(),
                 agent_config=AgentConfig(backend="demo"),
-                lean_runner=SequencedLeanRunner(["compile_failed"]),
+                lean_runner=SequencedLeanRunner(["compile_failed", "compile_failed"]),
                 max_attempts=1,
             )
             manifest = workflow.resume("legacy-enrichment", auto_approve=False)
@@ -1064,7 +1116,7 @@ class DemoWorkflowTest(unittest.TestCase):
                 repo_root=temp_root,
                 agent=RepairResumeAgent(),
                 agent_config=AgentConfig(backend="demo"),
-                lean_runner=SequencedLeanRunner(["compile_failed"]),
+                lean_runner=SequencedLeanRunner(["compile_failed", "compile_failed", "compile_failed"]),
                 max_attempts=1,
             )
             manifest = workflow.resume("legacy-plan-review", auto_approve=False)
@@ -1427,6 +1479,244 @@ class DemoWorkflowTest(unittest.TestCase):
                 store.read_json("03_proof/decision.json")["decision"],
                 "reject",
             )
+
+    def test_resume_legacy_stall_retry_approval_is_one_shot(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            run_root = temp_root / "artifacts" / "runs" / "legacy-stall-once"
+            run_root.mkdir(parents=True)
+            (run_root / "manifest.json").write_text(
+                """{
+  "run_id": "legacy-stall-once",
+  "source": {"path": "input.md", "kind": "markdown"},
+  "agent_name": "repair_resume_agent",
+  "created_at": "2026-04-16T00:00:00Z",
+  "updated_at": "2026-04-16T00:02:00Z",
+  "current_stage": "awaiting_stall_review",
+  "attempt_count": 1
+}
+""",
+                encoding="utf-8",
+            )
+            store = RunStore(temp_root / "artifacts", "legacy-stall-once")
+            store.write_text("09_review/stall_report.md", "Still blocked.\n")
+            store.write_json(
+                "09_review/decision.json",
+                {
+                    "approved": True,
+                    "updated_at": "2026-04-16T00:01:00Z",
+                    "notes": "Retry now.",
+                },
+            )
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=SequencedLeanRunner(["passed"]),
+            )
+            manifest = workflow.resume("legacy-stall-once", auto_approve=False)
+
+            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
+            self.assertEqual(manifest.attempt_count, 1)
+            self.assertEqual(
+                store.read_text("03_proof/blocker.md"),
+                "# Proof Loop Blocked\n\nStill blocked.\n",
+            )
+
+    def test_resume_legacy_stall_retry_accepts_same_second_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            run_root = temp_root / "artifacts" / "runs" / "legacy-stall-same-second"
+            run_root.mkdir(parents=True)
+            (run_root / "manifest.json").write_text(
+                """{
+  "run_id": "legacy-stall-same-second",
+  "source": {"path": "input.md", "kind": "markdown"},
+  "agent_name": "repair_resume_agent",
+  "created_at": "2026-04-16T00:00:00Z",
+  "updated_at": "2026-04-16T00:01:00Z",
+  "current_stage": "awaiting_stall_review",
+  "attempt_count": 1
+}
+""",
+                encoding="utf-8",
+            )
+            store = RunStore(temp_root / "artifacts", "legacy-stall-same-second")
+            store.write_json(
+                "04_spec/theorem_spec.json",
+                {
+                    "title": "t",
+                    "informal_statement": "True",
+                    "assumptions": [],
+                    "conclusion": "True",
+                    "symbols": [],
+                    "ambiguities": [],
+                    "paraphrase": "True",
+                },
+            )
+            store.write_json(
+                "06_plan/formalization_plan.json",
+                {
+                    "theorem_name": "t",
+                    "imports": ["FormalizationEngineWorkspace.Basic"],
+                    "prerequisites_to_formalize": [],
+                    "helper_definitions": [],
+                    "target_statement": "theorem t : True",
+                    "proof_sketch": ["x"],
+                },
+            )
+            store.write_json(
+                "08_compile/attempt_0001/result.json",
+                {
+                    "attempt": 1,
+                    "command": ["lake build FormalizationEngineWorkspace"],
+                    "stdout": "",
+                    "stderr": "compile failed",
+                    "returncode": 1,
+                    "diagnostics": ["compile failed"],
+                    "fast_check_passed": False,
+                    "build_passed": False,
+                    "contains_sorry": True,
+                    "missing_toolchain": False,
+                    "quality_gate_passed": False,
+                    "passed": False,
+                    "status": "compile_failed",
+                },
+            )
+            store.write_json(
+                "07_draft/attempt_0001/parsed_output.json",
+                {
+                    "theorem_name": "t",
+                    "module_name": "FormalizationEngineWorkspace.Generated",
+                    "imports": ["FormalizationEngineWorkspace.Basic"],
+                    "content": (
+                        "import FormalizationEngineWorkspace.Basic\n\n"
+                        "theorem t : True := by\n"
+                        "  sorry\n"
+                    ),
+                    "rationale": "legacy first attempt",
+                },
+            )
+            store.write_json(
+                "09_review/decision.json",
+                {
+                    "approved": True,
+                    "updated_at": "2026-04-16T00:01:00Z",
+                    "notes": "retry now",
+                },
+            )
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=SequencedLeanRunner(["compile_failed", "compile_failed", "compile_failed"]),
+                max_attempts=1,
+            )
+            manifest = workflow.resume("legacy-stall-same-second", auto_approve=False)
+
+            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
+            self.assertEqual(manifest.attempt_count, 2)
+
+    def test_resume_legacy_stall_retry_keeps_new_blocker_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            run_root = temp_root / "artifacts" / "runs" / "legacy-stall"
+            run_root.mkdir(parents=True)
+            (run_root / "manifest.json").write_text(
+                """{
+  "run_id": "legacy-stall",
+  "source": {"path": "input.md", "kind": "markdown"},
+  "agent_name": "repair_resume_agent",
+  "created_at": "2026-04-16T00:00:00Z",
+  "updated_at": "2026-04-16T00:00:00Z",
+  "current_stage": "awaiting_stall_review",
+  "attempt_count": 1
+}
+""",
+                encoding="utf-8",
+            )
+            store = RunStore(temp_root / "artifacts", "legacy-stall")
+            store.write_json(
+                "04_spec/theorem_spec.json",
+                {
+                    "title": "t",
+                    "informal_statement": "True",
+                    "assumptions": [],
+                    "conclusion": "True",
+                    "symbols": [],
+                    "ambiguities": [],
+                    "paraphrase": "True",
+                },
+            )
+            store.write_json(
+                "06_plan/formalization_plan.json",
+                {
+                    "theorem_name": "t",
+                    "imports": ["FormalizationEngineWorkspace.Basic"],
+                    "prerequisites_to_formalize": [],
+                    "helper_definitions": [],
+                    "target_statement": "theorem t : True",
+                    "proof_sketch": ["x"],
+                },
+            )
+            store.write_json(
+                "08_compile/attempt_0001/result.json",
+                {
+                    "attempt": 1,
+                    "command": ["lake build FormalizationEngineWorkspace"],
+                    "stdout": "",
+                    "stderr": "compile failed",
+                    "returncode": 1,
+                    "diagnostics": ["compile failed"],
+                    "fast_check_passed": False,
+                    "build_passed": False,
+                    "contains_sorry": True,
+                    "missing_toolchain": False,
+                    "quality_gate_passed": False,
+                    "passed": False,
+                    "status": "compile_failed",
+                },
+            )
+            store.write_json(
+                "07_draft/attempt_0001/parsed_output.json",
+                {
+                    "theorem_name": "t",
+                    "module_name": "FormalizationEngineWorkspace.Generated",
+                    "imports": ["FormalizationEngineWorkspace.Basic"],
+                    "content": (
+                        "import FormalizationEngineWorkspace.Basic\n\n"
+                        "theorem t : True := by\n"
+                        "  sorry\n"
+                    ),
+                    "rationale": "legacy first attempt",
+                },
+            )
+            store.write_text("09_review/stall_report.md", "OLD STALL REPORT\n")
+            store.write_json(
+                "09_review/decision.json",
+                {
+                    "approved": True,
+                    "updated_at": "2026-04-16T00:01:00Z",
+                    "notes": "retry now",
+                },
+            )
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=SequencedLeanRunner(["compile_failed", "compile_failed", "compile_failed"]),
+                max_attempts=1,
+            )
+            manifest = workflow.resume("legacy-stall", auto_approve=False)
+
+            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
+            self.assertEqual(manifest.attempt_count, 2)
+            blocker_text = store.read_text("03_proof/blocker.md")
+            self.assertIn("retry cap", blocker_text)
+            self.assertNotIn("OLD STALL REPORT", blocker_text)
 
     def test_logs_capture_checkpoints_and_proof_events(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
