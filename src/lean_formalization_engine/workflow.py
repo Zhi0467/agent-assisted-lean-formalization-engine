@@ -115,6 +115,10 @@ class FormalizationWorkflow:
     def resume(self, run_id: str, auto_approve: bool = False) -> RunManifest:
         store = RunStore(self.artifacts_root, run_id)
         manifest = self._load_manifest(store)
+        persisted_lake_path = self._persisted_lake_path()
+        if persisted_lake_path != manifest.lake_path:
+            manifest.lake_path = persisted_lake_path
+            self._save_manifest(store, manifest)
         store.append_log(
             "resume_requested",
             f"Resume requested while run is in `{manifest.current_stage.value}`.",
@@ -141,7 +145,13 @@ class FormalizationWorkflow:
                 stage="enrichment",
                 details={"notes": decision.notes},
             )
-            plan = self._draft_plan(store, manifest.source, store.read_text("00_input/source.txt"), auto_approve)
+            plan = self._draft_plan(
+                store,
+                manifest.source,
+                store.read_text("00_input/source.txt"),
+                auto_approve,
+                human_feedback=self._decision_guidance(decision),
+            )
             if isinstance(plan, RunManifest):
                 return plan
             return self._prove_loop(store, plan, auto_approve=auto_approve)
@@ -164,7 +174,12 @@ class FormalizationWorkflow:
                 details={"notes": decision.notes},
             )
             plan = self._load_plan(store)
-            return self._prove_loop(store, plan, auto_approve=auto_approve)
+            return self._prove_loop(
+                store,
+                plan,
+                auto_approve=auto_approve,
+                human_feedback=self._decision_guidance(decision),
+            )
 
         if manifest.current_stage == RunStage.PROVING:
             if self._final_candidate_path(store) is not None:
@@ -210,7 +225,7 @@ class FormalizationWorkflow:
                 plan,
                 auto_approve=auto_approve,
                 max_attempts=manifest.attempt_count + 1,
-                human_feedback=decision.notes,
+                human_feedback=self._decision_guidance(decision),
             )
 
         if manifest.current_stage == RunStage.AWAITING_FINAL_APPROVAL:
@@ -261,23 +276,36 @@ class FormalizationWorkflow:
             return self._pause_for_final(store, manifest)
 
         if self._plan_payload_path(store) is not None:
-            if self._resolve_checkpoint_decision(
+            decision = self._resolve_checkpoint_decision(
                 store,
                 PLAN_DIR,
                 continue_decision="approve",
                 auto_approve=auto_approve,
-            ):
-                return self._prove_loop(store, self._load_plan(store), auto_approve=auto_approve)
+            )
+            if decision:
+                return self._prove_loop(
+                    store,
+                    self._load_plan(store),
+                    auto_approve=auto_approve,
+                    human_feedback=self._decision_guidance(decision),
+                )
             return self._pause_for_plan(store, manifest)
 
         if self._enrichment_payload_path(store) is not None:
-            if self._resolve_checkpoint_decision(
+            decision = self._resolve_checkpoint_decision(
                 store,
                 ENRICHMENT_DIR,
                 continue_decision="approve",
                 auto_approve=auto_approve,
-            ):
-                plan = self._draft_plan(store, manifest.source, source_text, auto_approve)
+            )
+            if decision:
+                plan = self._draft_plan(
+                    store,
+                    manifest.source,
+                    source_text,
+                    auto_approve,
+                    human_feedback=self._decision_guidance(decision),
+                )
                 if isinstance(plan, RunManifest):
                     return plan
                 return self._prove_loop(store, plan, auto_approve=auto_approve)
@@ -346,10 +374,11 @@ class FormalizationWorkflow:
         source_ref: SourceRef,
         source_text: str,
         auto_approve: bool,
+        human_feedback: str | None = None,
     ) -> FormalizationPlan | RunManifest:
         extraction = self._load_extraction(store)
         enrichment = self._load_enrichment(store)
-        context_pack = self._build_context_pack(extraction, enrichment)
+        context_pack = self._build_context_pack(extraction, enrichment, human_feedback=human_feedback)
         store.write_json(f"{PLAN_DIR}/context_pack.json", context_pack)
 
         plan, turn = self.agent.draft_formalization_plan(
@@ -664,6 +693,8 @@ class FormalizationWorkflow:
         self,
         extraction: TheoremExtraction,
         enrichment: EnrichmentReport,
+        *,
+        human_feedback: str | None = None,
     ) -> ContextPack:
         notes = [
             f"Title: {extraction.title}",
@@ -675,6 +706,8 @@ class FormalizationWorkflow:
             f"Carry this prerequisite into the plan: {item}"
             for item in enrichment.required_plan_additions
         )
+        if human_feedback:
+            notes.append(f"Reviewer guidance from the enrichment checkpoint: {human_feedback}")
         return ContextPack(
             recommended_imports=["FormalizationEngineWorkspace.Basic"],
             local_examples=["examples/inputs/zero_add.md"],
@@ -1313,3 +1346,11 @@ class FormalizationWorkflow:
         if configured.is_absolute() or "/" in self.lean_runner.lake_path:
             return str(configured.resolve())
         return self.lean_runner.lake_path
+
+    def _decision_guidance(self, decision: ReviewDecision | None) -> str | None:
+        if decision is None:
+            return None
+        notes = decision.notes.strip()
+        if notes in {"", "Auto-approved.", "Imported from legacy workflow."}:
+            return None
+        return notes

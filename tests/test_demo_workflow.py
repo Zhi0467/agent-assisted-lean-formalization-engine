@@ -202,6 +202,58 @@ class SequencedLeanRunner:
         )
 
 
+class EnrichmentFeedbackAgent(RepairResumeAgent):
+    name = "enrichment_feedback_agent"
+
+    def __init__(self) -> None:
+        self.context_notes: list[str] | None = None
+
+    def draft_formalization_plan(
+        self,
+        source_ref: SourceRef,
+        source_text: str,
+        extraction: TheoremExtraction,
+        enrichment: EnrichmentReport,
+        context_pack: ContextPack,
+    ) -> tuple[FormalizationPlan, AgentTurn]:
+        self.context_notes = list(context_pack.notes)
+        return super().draft_formalization_plan(
+            source_ref,
+            source_text,
+            extraction,
+            enrichment,
+            context_pack,
+        )
+
+
+class PlanFeedbackAgent(RepairResumeAgent):
+    name = "plan_feedback_agent"
+
+    def __init__(self) -> None:
+        self.seen_human_feedback: str | None = None
+
+    def draft_lean_file(
+        self,
+        plan: FormalizationPlan,
+        repair_context: RepairContext,
+    ) -> tuple[LeanDraft, AgentTurn]:
+        if repair_context.current_attempt == 1:
+            self.seen_human_feedback = repair_context.human_feedback
+            draft = LeanDraft(
+                theorem_name="zero_add_resume",
+                module_name="FormalizationEngineWorkspace.Generated",
+                imports=["FormalizationEngineWorkspace.Basic"],
+                content=(
+                    "import FormalizationEngineWorkspace.Basic\n\n"
+                    "theorem zero_add_resume (n : Nat) : 0 + n = n := by\n"
+                    "  simpa using Nat.zero_add n\n"
+                ),
+                rationale="guided first attempt",
+            )
+            return draft, AgentTurn(request_payload={}, prompt="draft", raw_response="draft")
+        return super().draft_lean_file(plan, repair_context)
+
+
 class DemoWorkflowTest(unittest.TestCase):
     def _write_fake_lake(self, directory: Path) -> Path:
         fake_lake = directory / "lake"
@@ -406,6 +458,72 @@ class DemoWorkflowTest(unittest.TestCase):
             assert parsed is not None
             self.assertEqual(parsed.notes, "")
 
+    def test_enrichment_review_notes_flow_into_plan_context(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        template_dir = project_root / "lean_workspace_template"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            fake_lake = self._write_fake_lake(temp_root)
+            source_path = temp_root / "input.md"
+            source_path.write_text(
+                "For every natural number n, adding zero on the left gives back n.\n",
+                encoding="utf-8",
+            )
+            agent = EnrichmentFeedbackAgent()
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=agent,
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
+            )
+
+            manifest = workflow.prove(source_path=source_path, run_id="enrichment-feedback", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+
+            run_root = temp_root / "artifacts" / "runs" / "enrichment-feedback"
+            self._write_review(run_root, "01_enrichment", "approve", "Need to keep the scope fully over Nat.")
+            manifest = workflow.resume("enrichment-feedback", auto_approve=False)
+
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
+            assert agent.context_notes is not None
+            self.assertIn(
+                "Reviewer guidance from the enrichment checkpoint: Need to keep the scope fully over Nat.",
+                agent.context_notes,
+            )
+
+    def test_plan_review_notes_flow_into_prove_loop(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        template_dir = project_root / "lean_workspace_template"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            fake_lake = self._write_fake_lake(temp_root)
+            source_path = temp_root / "input.md"
+            source_path.write_text(
+                "For every natural number n, adding zero on the left gives back n.\n",
+                encoding="utf-8",
+            )
+            agent = PlanFeedbackAgent()
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=agent,
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
+            )
+
+            manifest = workflow.prove(source_path=source_path, run_id="plan-feedback", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+            run_root = temp_root / "artifacts" / "runs" / "plan-feedback"
+
+            self._write_review(run_root, "01_enrichment", "approve", "")
+            manifest = workflow.resume("plan-feedback", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
+
+            self._write_review(run_root, "02_plan", "approve", "Use the direct Nat.zero_add route.")
+            manifest = workflow.resume("plan-feedback", auto_approve=False)
+
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_FINAL_APPROVAL)
+            self.assertEqual(agent.seen_human_feedback, "Use the direct Nat.zero_add route.")
+
     def test_proof_blocked_requires_retry_decision(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         template_dir = project_root / "lean_workspace_template"
@@ -475,6 +593,42 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertEqual(manifest.current_stage, RunStage.AWAITING_FINAL_APPROVAL)
             self.assertEqual(manifest.attempt_count, 1)
             self.assertTrue((run_root / "04_final" / "review.md").exists())
+
+    def test_resume_override_updates_manifest_lake_path(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        template_dir = project_root / "lean_workspace_template"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            fake_lake = self._write_fake_lake(temp_root)
+            source_path = temp_root / "input.md"
+            source_path.write_text(
+                "For every natural number n, adding zero on the left gives back n.\n",
+                encoding="utf-8",
+            )
+            blocked_workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=LeanRunner(template_dir=template_dir, lake_path="/definitely/missing/lake"),
+                max_attempts=1,
+            )
+            manifest = blocked_workflow.prove(source_path=source_path, run_id="lake-override", auto_approve=True)
+            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
+
+            run_root = temp_root / "artifacts" / "runs" / "lake-override"
+            self._write_review(run_root, "03_proof", "retry", "")
+
+            resumed_workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
+                max_attempts=1,
+            )
+            resumed_workflow.resume("lake-override", auto_approve=False)
+
+            persisted_manifest = RunStore(temp_root / "artifacts", "lake-override").read_json("manifest.json")
+            self.assertEqual(persisted_manifest["lake_path"], str(fake_lake.resolve()))
 
     def test_retry_decision_allows_exactly_one_more_attempt(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

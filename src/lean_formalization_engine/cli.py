@@ -155,6 +155,14 @@ def _default_run_id(source_path: Path) -> str:
     return validate_run_id(cleaned)
 
 
+def _validate_prove_request(repo_root: Path, source_path: Path, run_id: str) -> None:
+    store = RunStore(repo_root / "artifacts", run_id)
+    if store.run_root.exists():
+        raise FileExistsError(f"Run ID `{run_id}` already exists under artifacts/runs.")
+    if not source_path.exists():
+        raise FileNotFoundError(source_path)
+
+
 def _load_manifest(repo_root: Path, run_id: str) -> RunManifest:
     store = RunStore(repo_root / "artifacts", run_id)
     payload = store.read_json("manifest.json")
@@ -234,6 +242,7 @@ def main() -> None:
         if args.command in {"prove", "formalize"}:
             source_path = _resolve_source_path(args.source, repo_root)
             run_id = args.run_id or _default_run_id(source_path)
+            _validate_prove_request(repo_root, source_path, run_id)
             agent_config = build_agent_config(args, repo_root)
             agent = build_agent(agent_config, repo_root)
             template_resolution = resolve_workspace_template(
@@ -283,7 +292,7 @@ def main() -> None:
                 return
 
         print(render_manifest_summary(manifest, repo_root))
-    except (RuntimeError, ValueError, FileExistsError) as exc:
+    except (RuntimeError, ValueError, FileExistsError, FileNotFoundError) as exc:
         raise SystemExit(str(exc))
 
 

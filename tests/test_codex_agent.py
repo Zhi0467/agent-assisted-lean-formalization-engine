@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -222,6 +223,39 @@ class CodexAgentTest(unittest.TestCase):
             f"Resume with: terry --repo-root {repo_root.resolve()} resume zero-add",
             summary,
         )
+
+    def test_prove_validation_happens_before_template_resolution(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            target_dir = repo_root / "lean_workspace_template"
+            target_dir.mkdir(parents=True)
+            (target_dir / "stale.txt").write_text("stale", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "lean_formalization_engine.cli",
+                    "--repo-root",
+                    str(repo_root),
+                    "prove",
+                    "missing.md",
+                    "--run-id",
+                    "existing-run",
+                    "--agent-backend",
+                    "demo",
+                ],
+                cwd=project_root,
+                env={**os.environ, "PYTHONPATH": "src"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertTrue((target_dir / "stale.txt").exists())
+            self.assertFalse((target_dir / "FormalizationEngineWorkspace" / "Basic.lean").exists())
 
     def test_load_manifest_falls_back_for_legacy_runs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
