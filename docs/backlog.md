@@ -16,9 +16,12 @@ and each one is now fixed on `murphy/terry-three-stage`: legacy paused runs migr
 the Terry checkpoint surface honestly, command-backed resumes preserve their
 `--agent-command` instructions, successful proof retries clear stale `latest_error`,
 legacy status views point at the real review directories, and the old subprocess-provider
-`theorem_spec` alias now carries honest assumptions / conclusion / symbols. The branch-local
-suite is currently `52/52`, and a fresh clean-shell review rerun is still in flight, so
-the rewrite items below remain open.
+`theorem_spec` alias now carries honest assumptions / conclusion / symbols. The latest
+local review also caught one remaining CLI-compatibility regression: Terry left the old
+`lean-formalize` entrypoint installed while dropping the legacy `run`, `resume --run-id`,
+`status --run-id`, and `approve-*` surface. That shim is now restored without changing the
+documented Terry contract, the branch-local suite is currently `62/62`, and one more
+direct `codex review --base main` rerun is the remaining local gate before the PR step.
 
 ## Terry Rewrite Surface
 

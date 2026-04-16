@@ -16,6 +16,7 @@ from lean_formalization_engine.cli import (
     _resume_agent_config,
     build_agent,
     build_agent_config,
+    build_parser,
     render_manifest_summary,
 )
 from lean_formalization_engine.codex_agent import CodexCliFormalizationAgent
@@ -788,6 +789,200 @@ class CodexAgentTest(unittest.TestCase):
 
             self.assertIn("Checkpoint: artifacts/runs/legacy-plan/06_plan/formalization_plan.json", summary)
             self.assertIn("Review file: artifacts/runs/legacy-plan/06_plan/decision.json", summary)
+
+    def test_build_parser_accepts_hidden_legacy_approve_commands(self) -> None:
+        parser = build_parser()
+
+        for command in [
+            "approve-enrichment",
+            "approve-spec",
+            "approve-plan",
+            "approve-final",
+            "approve-stall",
+        ]:
+            with self.subTest(command=command):
+                args = parser.parse_args([command, "--run-id", "legacy-run"])
+                self.assertEqual(args.command, command)
+                self.assertEqual(args.run_id, "legacy-run")
+
+    def test_legacy_run_command_remains_supported(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            source_path = project_root / "examples" / "inputs" / "zero_add.md"
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "lean_formalization_engine.cli",
+                    "--repo-root",
+                    str(repo_root),
+                    "--lake-path",
+                    "/definitely/missing/lake",
+                    "run",
+                    "--source",
+                    str(source_path),
+                    "--run-id",
+                    "legacy-run",
+                    "--agent-backend",
+                    "demo",
+                    "--auto-approve",
+                ],
+                cwd=project_root,
+                env={**os.environ, "PYTHONPATH": "src"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Run: legacy-run", result.stdout)
+            self.assertIn("Stage: proof_blocked", result.stdout)
+
+    def test_legacy_resume_and_status_flags_remain_supported(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            run_root = repo_root / "artifacts" / "runs" / "awaiting-enrichment"
+            (run_root / "01_enrichment").mkdir(parents=True)
+            (run_root / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "awaiting-enrichment",
+                        "source": {"path": "input.md", "kind": "markdown"},
+                        "agent_name": "demo_zero_add_agent",
+                        "agent_config": {"backend": "demo", "command": None, "codex_model": None},
+                        "template_dir": str(repo_root / "missing-template"),
+                        "lake_path": "/definitely/missing/lake",
+                        "created_at": "2026-04-16T00:00:00Z",
+                        "updated_at": "2026-04-16T00:00:00Z",
+                        "current_stage": "awaiting_enrichment_approval",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_root / "01_enrichment" / "checkpoint.md").write_text("# checkpoint\n", encoding="utf-8")
+            (run_root / "01_enrichment" / "review.md").write_text(
+                "# review\n\ndecision: pending\n\nNotes:\n\n",
+                encoding="utf-8",
+            )
+
+            status_result = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "lean_formalization_engine.cli",
+                    "--repo-root",
+                    str(repo_root),
+                    "status",
+                    "--run-id",
+                    "awaiting-enrichment",
+                ],
+                cwd=project_root,
+                env={**os.environ, "PYTHONPATH": "src"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(status_result.returncode, 0, status_result.stderr)
+            self.assertIn("Stage: awaiting_enrichment_approval", status_result.stdout)
+
+            resume_result = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "lean_formalization_engine.cli",
+                    "--repo-root",
+                    str(repo_root),
+                    "resume",
+                    "--run-id",
+                    "awaiting-enrichment",
+                ],
+                cwd=project_root,
+                env={**os.environ, "PYTHONPATH": "src"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(resume_result.returncode, 0, resume_result.stderr)
+            self.assertIn("Stage: awaiting_enrichment_approval", resume_result.stdout)
+
+    def test_legacy_approve_enrichment_command_advances_terry_run(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            source_path = project_root / "examples" / "inputs" / "zero_add.md"
+
+            prove_result = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "lean_formalization_engine.cli",
+                    "--repo-root",
+                    str(repo_root),
+                    "prove",
+                    str(source_path),
+                    "--run-id",
+                    "legacy-approve",
+                    "--agent-backend",
+                    "demo",
+                ],
+                cwd=project_root,
+                env={**os.environ, "PYTHONPATH": "src"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(prove_result.returncode, 0, prove_result.stderr)
+            self.assertIn("Stage: awaiting_enrichment_approval", prove_result.stdout)
+
+            approve_result = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "lean_formalization_engine.cli",
+                    "--repo-root",
+                    str(repo_root),
+                    "approve-enrichment",
+                    "--run-id",
+                    "legacy-approve",
+                    "--notes",
+                    "Looks good.",
+                ],
+                cwd=project_root,
+                env={**os.environ, "PYTHONPATH": "src"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(approve_result.returncode, 0, approve_result.stderr)
+            self.assertEqual(
+                json.loads((repo_root / "artifacts" / "runs" / "legacy-approve" / "01_enrichment" / "decision.json").read_text(encoding="utf-8"))[
+                    "decision"
+                ],
+                "approve",
+            )
+
+            resume_result = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "lean_formalization_engine.cli",
+                    "--repo-root",
+                    str(repo_root),
+                    "resume",
+                    "--run-id",
+                    "legacy-approve",
+                ],
+                cwd=project_root,
+                env={**os.environ, "PYTHONPATH": "src"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(resume_result.returncode, 0, resume_result.stderr)
+            self.assertIn("Stage: awaiting_plan_approval", resume_result.stdout)
 
     def test_prove_validation_happens_before_template_resolution(self) -> None:
         project_root = Path(__file__).resolve().parents[1]

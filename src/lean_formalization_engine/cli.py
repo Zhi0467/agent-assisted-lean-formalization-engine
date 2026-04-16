@@ -3,12 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 import shlex
+import sys
 from pathlib import Path
 
 from .codex_agent import CodexCliFormalizationAgent
 from .demo_agent import DemoFormalizationAgent
 from .lean_runner import LeanRunner
-from .models import AgentConfig, RunManifest, RunStage, to_jsonable
+from .models import AgentConfig, ReviewDecision, RunManifest, RunStage, to_jsonable, utc_now
 from .storage import RunStore, validate_run_id
 from .subprocess_agent import SubprocessFormalizationAgent
 from .template_manager import discover_workspace_template
@@ -60,7 +61,7 @@ class _MissingCommandAgent:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="terry",
+        prog=Path(sys.argv[0]).name or "terry",
         description="Human-reviewed Lean formalization workflow with a bounded prove-and-repair loop.",
     )
     parser.add_argument(
@@ -84,11 +85,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_prove_arguments(formalize_parser)
 
+    run_parser = subparsers.add_parser("run", help=argparse.SUPPRESS)
+    run_parser.add_argument("--source", required=True, type=Path, help=argparse.SUPPRESS)
+    run_parser.add_argument("--run-id", required=True, help=argparse.SUPPRESS)
+    run_parser.add_argument("--auto-approve", action="store_true", help=argparse.SUPPRESS)
+    _add_backend_arguments(run_parser)
+
     resume_parser = subparsers.add_parser(
         "resume",
         help="Resume a paused Terry run after updating its review file.",
     )
-    resume_parser.add_argument("run_id")
+    resume_parser.add_argument("run_id", nargs="?")
+    resume_parser.add_argument("--run-id", dest="legacy_run_id", help=argparse.SUPPRESS)
     resume_parser.add_argument("--auto-approve", action="store_true")
     resume_parser.add_argument(
         "--agent-command",
@@ -99,8 +107,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     status_parser = subparsers.add_parser("status", help="Show the current Terry run summary.")
-    status_parser.add_argument("run_id")
+    status_parser.add_argument("run_id", nargs="?")
+    status_parser.add_argument("--run-id", dest="legacy_run_id", help=argparse.SUPPRESS)
     status_parser.add_argument("--json", action="store_true")
+
+    _add_legacy_approve_parser(subparsers, "approve-enrichment", "Approved by CLI.")
+    _add_legacy_approve_parser(subparsers, "approve-spec", "Approved by CLI.")
+    _add_legacy_approve_parser(subparsers, "approve-plan", "Approved by CLI.")
+    _add_legacy_approve_parser(subparsers, "approve-final", "Approved by CLI.")
+    _add_legacy_approve_parser(subparsers, "approve-stall", "Approved one more repair attempt.")
 
     return parser
 
@@ -109,6 +124,10 @@ def _add_prove_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("source", type=Path)
     parser.add_argument("--run-id")
     parser.add_argument("--auto-approve", action="store_true")
+    _add_backend_arguments(parser)
+
+
+def _add_backend_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--agent-command",
         help=(
@@ -128,6 +147,16 @@ def _add_prove_arguments(parser: argparse.ArgumentParser) -> None:
         "--codex-model",
         help="Optional Codex model override when the Codex backend is used.",
     )
+
+
+def _add_legacy_approve_parser(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+    command: str,
+    default_notes: str,
+) -> None:
+    parser = subparsers.add_parser(command, help=argparse.SUPPRESS)
+    parser.add_argument("--run-id", required=True, help=argparse.SUPPRESS)
+    parser.add_argument("--notes", default=default_notes, help=argparse.SUPPRESS)
 
 
 def build_agent_config(args: argparse.Namespace, repo_root: Path) -> AgentConfig:
@@ -208,6 +237,17 @@ def _validate_prove_request(repo_root: Path, source_path: Path, run_id: str) -> 
         raise FileExistsError(f"Run ID `{run_id}` already exists under artifacts/runs.")
     if not source_path.exists():
         raise FileNotFoundError(source_path)
+
+
+def _resolve_run_id_argument(args: argparse.Namespace) -> str:
+    positional = getattr(args, "run_id", None)
+    legacy = getattr(args, "legacy_run_id", None)
+    if positional and legacy and positional != legacy:
+        raise ValueError("Conflicting run IDs supplied; use either the positional value or `--run-id`.")
+    resolved = positional or legacy
+    if not resolved:
+        raise ValueError("`run_id` is required.")
+    return resolved
 
 
 def _load_manifest(repo_root: Path, run_id: str) -> RunManifest:
@@ -322,13 +362,82 @@ def render_manifest_summary(manifest: RunManifest, repo_root: Path) -> str:
     return "\n".join(lines)
 
 
+def _compatibility_review(title: str, decision: str, notes: str) -> str:
+    lines = [
+        f"# {title}",
+        "",
+        f"decision: {decision}",
+        "",
+        "Notes:",
+    ]
+    note_block = notes.strip()
+    if note_block:
+        lines.extend([note_block, ""])
+    else:
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _write_compatibility_approval(
+    repo_root: Path,
+    run_id: str,
+    command: str,
+    notes: str,
+) -> RunManifest:
+    store = RunStore(repo_root / "artifacts", run_id)
+    manifest = _load_manifest(repo_root, run_id)
+    decision_value = "retry" if command == "approve-stall" else "approve"
+    decision = ReviewDecision(decision=decision_value, updated_at=utc_now(), notes=notes)
+
+    terry_targets = {
+        "approve-enrichment": "01_enrichment",
+        "approve-spec": "04_spec",
+        "approve-plan": "02_plan",
+        "approve-final": "04_final",
+        "approve-stall": "03_proof",
+    }
+    stage_dir = terry_targets[command]
+    review_path = store.path(f"{stage_dir}/review.md")
+    if review_path.exists():
+        review_path.write_text(
+            _compatibility_review(review_path.parent.name.replace("_", " ").title(), decision_value, notes),
+            encoding="utf-8",
+        )
+    if store.path(f"{stage_dir}/decision.json").parent.exists():
+        store.write_json(f"{stage_dir}/decision.json", decision)
+
+    legacy_payload_targets = {
+        "approve-enrichment": ("03_enrichment/enrichment_report.json", "03_enrichment/enrichment_report.approved.json"),
+        "approve-spec": ("04_spec/theorem_spec.json", "04_spec/theorem_spec.approved.json"),
+        "approve-plan": ("06_plan/formalization_plan.json", "06_plan/formalization_plan.approved.json"),
+    }
+    payload_paths = legacy_payload_targets.get(command)
+    if payload_paths is not None:
+        source_path, approved_path = payload_paths
+        if store.exists(source_path):
+            store.write_json(approved_path, store.read_json(source_path))
+
+    legacy_decision_targets = {
+        "approve-enrichment": "03_enrichment/decision.json",
+        "approve-spec": "04_spec/decision.json",
+        "approve-plan": "06_plan/decision.json",
+        "approve-final": "10_final/decision.json",
+        "approve-stall": "09_review/decision.json",
+    }
+    legacy_decision_path = legacy_decision_targets[command]
+    if store.path(legacy_decision_path).parent.exists():
+        store.write_json(legacy_decision_path, decision)
+
+    return manifest
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     repo_root = args.repo_root.resolve()
 
     try:
-        if args.command in {"prove", "formalize"}:
+        if args.command in {"prove", "formalize", "run"}:
             source_path = _resolve_source_path(args.source, repo_root)
             run_id = args.run_id or _default_run_id(source_path)
             _validate_prove_request(repo_root, source_path, run_id)
@@ -346,7 +455,8 @@ def main() -> None:
             manifest = workflow.prove(source_path, run_id, auto_approve=args.auto_approve)
 
         elif args.command == "resume":
-            manifest = _load_manifest(repo_root, args.run_id)
+            run_id = _resolve_run_id_argument(args)
+            manifest = _load_manifest(repo_root, run_id)
             lake_path = args.lake_path or manifest.lake_path
             agent_config = _resume_agent_config(manifest, args, repo_root)
             workflow = FormalizationWorkflow(
@@ -355,10 +465,14 @@ def main() -> None:
                 agent_config=agent_config,
                 lean_runner=LeanRunner(template_dir=Path(manifest.template_dir), lake_path=lake_path),
             )
-            manifest = workflow.resume(args.run_id, auto_approve=args.auto_approve)
+            manifest = workflow.resume(run_id, auto_approve=args.auto_approve)
+
+        elif args.command.startswith("approve-"):
+            manifest = _write_compatibility_approval(repo_root, args.run_id, args.command, args.notes)
 
         else:
-            manifest = _load_manifest(repo_root, args.run_id)
+            run_id = _resolve_run_id_argument(args)
+            manifest = _load_manifest(repo_root, run_id)
             if args.json:
                 print(json.dumps(to_jsonable(manifest), indent=2))
                 return
