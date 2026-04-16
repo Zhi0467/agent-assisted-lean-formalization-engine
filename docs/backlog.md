@@ -22,10 +22,15 @@ plan-review guidance after the first failed compile, migrated legacy stall appro
 not truly one-shot, and resume-time backend/model overrides were still too easy to lose.
 
 Those issues are now fixed on the current branch head, along with Unicode binder support
-for the same legacy fallback. The branch-local suite is `87/87`, and the latest direct
-local review on the real Terry worktree came back clean. This backlog still stays open
-until the refreshed live PR review on the updated head either comes back clean or only
-finds non-fatal follow-ups.
+for the same legacy fallback. One more fresh-root Terry smoke then exposed a real
+bootstrap failure too: on this machine, `lake new lean_workspace_template math` can die
+with `revision not found 'v4.29.1'` before the proof loop ever starts. Terry now treats
+that as a packaged-template fallback instead of a hard stop, logs the failed `lake`
+output into the workflow timeline, and keeps going in the same fresh repo. The
+branch-local suite is `90/90`, and the bootstrap-fallback delta is now covered by a
+fresh real Terry smoke plus dedicated template-resolution / CLI regressions. This backlog
+still stays open until the refreshed live PR review on the updated head either comes back
+clean or only finds non-fatal follow-ups.
 
 ## Terry Rewrite Surface
 

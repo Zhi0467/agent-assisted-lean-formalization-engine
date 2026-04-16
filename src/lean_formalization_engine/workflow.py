@@ -1494,11 +1494,16 @@ class FormalizationWorkflow:
         self.lean_runner.template_dir = resolution.template_dir
         manifest.template_dir = str(resolution.template_dir.resolve())
         self._save_manifest(store, manifest)
+        message = f"Using workspace template from `{resolution.template_dir}` via {resolution.origin}."
+        details: dict[str, object] = {"command": resolution.command or []}
+        if resolution.warning:
+            message = f"{message} {resolution.warning.splitlines()[0]}"
+            details["warning"] = resolution.warning
         store.append_log(
             "template_selected",
-            f"Using workspace template from `{resolution.template_dir}` via {resolution.origin}.",
+            message,
             stage="proof",
-            details={"command": resolution.command or []},
+            details=details,
         )
         return manifest
 

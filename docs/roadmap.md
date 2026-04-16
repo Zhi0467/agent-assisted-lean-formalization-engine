@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-04-16 19:42 UTC
+Last updated: 2026-04-16 20:12 UTC
 
 ## Current Status
 
@@ -19,11 +19,15 @@ current rewrite changes that contract:
 - backend choice is persisted in the manifest, so resumed runs cannot silently swap providers
 - template discovery is now part of the CLI contract rather than an implicit repo assumption
 
-Local unit coverage for the rewritten surface is now green at `87/87`. The direct local
-review gate on the real Terry worktree is also clear again after the post-PR compatibility
-cleanup. The open gate is now narrower and more honest: refresh the live PR `#3` review
-surface on the updated head, clear or disposition whatever comes back there, and only then
-take the rewrite off the backlog.
+Local unit coverage for the rewritten surface is now green at `90/90`. The direct local
+review gate on the real Terry worktree was clear on `1a7761e`, and a fresh-root Terry
+smoke then exposed one smaller follow-up bug in template bootstrap: on this machine,
+`lake new ... math` can fail because mathlib does not have revision `v4.29.1`, so Terry
+now falls back to the packaged workspace template instead of aborting the proof phase.
+That delta is covered by a fresh real Terry smoke plus dedicated template-resolution and
+CLI regressions. The open gate is still the same honest one: refresh the live PR `#3`
+review surface on the updated head, clear or disposition whatever comes back there, and
+only then take the rewrite off the backlog.
 
 ## Milestone 1 — Terry CLI Contract
 
@@ -62,6 +66,8 @@ Gate:
 - [2026-04-16 19:42 UTC] The first live GitHub Codex pass on PR `#3` turned out to be reviewing older commit `49053f8`, and it surfaced two real issues in the legacy subprocess compatibility path: optional `draft_theorem_spec` probing still aborted on malformed soft-fail responses, and prime-suffixed binders like `n'` were still rejected by the fallback theorem-spec parser. I fixed both on the current branch.
 - [2026-04-16 19:42 UTC] The direct local review on the actual Terry worktree then pushed further into that same migration stack and flushed out more honest compatibility issues: old plan payloads still needed adaptation into Terry's merged plan object, repo-relative `--lake-path` values needed to resolve against `--repo-root`, proof-loop human guidance was still being dropped after the first failed compile, migrated legacy stall approvals were not truly one-shot, resumed backend/model overrides were not fully persisted, hidden `approve-spec` still targeted the old spec checkpoint for Terry-native runs, and the legacy theorem-spec fallback still rejected Unicode binders like `α` and `β`. Those are now fixed too.
 - [2026-04-16 19:42 UTC] Re-ran the full branch-local suite after the latest compatibility pass: `PYTHONPATH=src python3 -m unittest discover -s tests` (`87` tests, all passing). The latest direct local review on the real Terry worktree also came back clean, so the remaining open gate is the refreshed live PR review on the updated branch head rather than another local bug-hunt.
+- [2026-04-16 20:12 UTC] A fresh no-template Terry smoke on `examples/inputs/right_add_zero.md` exposed one more real bootstrap failure in the CLI contract: `lake new lean_workspace_template math` can reach the live mathlib clone and then die with `revision not found 'v4.29.1'`, which meant a fresh repo still failed before the proof loop even started. Terry now treats that specific mathlib-revision mismatch as a packaged-template fallback instead of a hard stop, logs the failed `lake` output into structured workflow details, and keeps the run moving in the same repo.
+- [2026-04-16 20:12 UTC] The first focused local review on that bootstrap delta then found two follow-ups and both are fixed now: non-recoverable `lake new` failures still raise immediately instead of limping into the proof loop, and multi-line `lake` diagnostics stay out of the one-line `logs/timeline.md` surface. The fallback path is now covered by a fresh Terry smoke plus dedicated template-resolution / CLI regressions, and the full branch-local suite is `90/90`.
 
 ## Milestone 2 — Real Proof Stress
 

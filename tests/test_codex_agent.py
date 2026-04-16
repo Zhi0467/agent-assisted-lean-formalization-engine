@@ -983,6 +983,54 @@ class CodexAgentTest(unittest.TestCase):
             self.assertEqual(resolution.command, [])
             self.assertEqual(resolution.template_dir, package_template_dir.resolve())
 
+    def test_template_resolution_falls_back_to_packaged_template_when_lake_new_fails(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        package_template_dir = project_root / "lean_workspace_template"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            fake_lake = temp_root / "lake"
+            fake_lake.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env python3",
+                        "from __future__ import annotations",
+                        "import pathlib",
+                        "import sys",
+                        "",
+                        "def main() -> int:",
+                        "    if sys.argv[1:4] != ['new', 'lean_workspace_template', 'math']:",
+                        "        print(sys.argv[1:], file=sys.stderr)",
+                        "        return 1",
+                        "    target = pathlib.Path.cwd() / 'lean_workspace_template'",
+                        "    target.mkdir(parents=True, exist_ok=True)",
+                        "    (target / 'BROKEN.txt').write_text('broken', encoding='utf-8')",
+                        "    print('info: lean_workspace_template: no previous manifest, creating one from scratch')",
+                        "    print(\"error: lean_workspace_template/.lake/packages/mathlib: revision not found 'v4.29.1'\", file=sys.stderr)",
+                        "    return 1",
+                        "",
+                        "if __name__ == '__main__':",
+                        "    raise SystemExit(main())",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_lake.chmod(0o755)
+
+            resolution = resolve_workspace_template(
+                temp_root,
+                package_template_dir,
+                lake_path=str(fake_lake),
+            )
+
+            self.assertEqual(resolution.origin, "packaged-fallback")
+            self.assertEqual(resolution.command, [str(fake_lake), "new", "lean_workspace_template", "math"])
+            self.assertEqual(resolution.template_dir, (temp_root / "lean_workspace_template").resolve())
+            self.assertTrue((resolution.template_dir / "FormalizationEngineWorkspace" / "Basic.lean").exists())
+            self.assertFalse((resolution.template_dir / "BROKEN.txt").exists())
+            self.assertIsNotNone(resolution.warning)
+            self.assertIn("revision not found", resolution.warning or "")
+
     def test_template_resolution_preserves_existing_ineligible_template(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         package_template_dir = project_root / "lean_workspace_template"
@@ -1946,6 +1994,157 @@ class CodexAgentTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("not an eligible Terry template", result.stderr)
             self.assertTrue((target_dir / "local.txt").exists())
+
+    def test_prove_falls_back_when_lake_new_math_fails(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            fake_lake = repo_root / "tools" / "lake"
+            fake_lake.parent.mkdir(parents=True)
+            fake_lake.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env python3",
+                        "from __future__ import annotations",
+                        "import pathlib",
+                        "import sys",
+                        "",
+                        "def main() -> int:",
+                        "    args = sys.argv[1:]",
+                        "    if args[:3] == ['new', 'lean_workspace_template', 'math']:",
+                        "        target = pathlib.Path.cwd() / 'lean_workspace_template'",
+                        "        target.mkdir(parents=True, exist_ok=True)",
+                        "        print('info: lean_workspace_template: no previous manifest, creating one from scratch')",
+                        "        print(\"error: lean_workspace_template/.lake/packages/mathlib: revision not found 'v4.29.1'\", file=sys.stderr)",
+                        "        return 1",
+                        "    if args[:2] == ['build', 'FormalizationEngineWorkspace']:",
+                        "        return 0",
+                        "    print(args, file=sys.stderr)",
+                        "    return 1",
+                        "",
+                        "if __name__ == '__main__':",
+                        "    raise SystemExit(main())",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_lake.chmod(0o755)
+            source_path = project_root / "examples" / "inputs" / "zero_add.md"
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "lean_formalization_engine.cli",
+                    "--repo-root",
+                    str(repo_root),
+                    "--lake-path",
+                    "tools/lake",
+                    "prove",
+                    str(source_path),
+                    "--run-id",
+                    "fallback-template",
+                    "--agent-backend",
+                    "demo",
+                    "--auto-approve",
+                ],
+                cwd=project_root,
+                env={**os.environ, "PYTHONPATH": "src"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Stage: completed", result.stdout)
+            self.assertTrue((repo_root / "lean_workspace_template" / "FormalizationEngineWorkspace" / "Basic.lean").exists())
+            timeline = (
+                repo_root
+                / "artifacts"
+                / "runs"
+                / "fallback-template"
+                / "logs"
+                / "timeline.md"
+            ).read_text(encoding="utf-8")
+            self.assertIn("packaged-fallback", timeline)
+            self.assertNotIn("revision not found", timeline)
+            workflow_events = (
+                repo_root
+                / "artifacts"
+                / "runs"
+                / "fallback-template"
+                / "logs"
+                / "workflow.jsonl"
+            ).read_text(encoding="utf-8").splitlines()
+            template_event = [
+                json.loads(line)
+                for line in workflow_events
+                if json.loads(line)["event_type"] == "template_selected"
+            ][0]
+            self.assertIn("revision not found", template_event["details"]["warning"])
+
+    def test_prove_reports_nonrecoverable_lake_init_failure(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            fake_lake = repo_root / "tools" / "lake"
+            fake_lake.parent.mkdir(parents=True)
+            fake_lake.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env python3",
+                        "from __future__ import annotations",
+                        "import sys",
+                        "",
+                        "def main() -> int:",
+                        "    args = sys.argv[1:]",
+                        "    if args[:3] == ['new', 'lean_workspace_template', 'math']:",
+                        "        print('error: unsupported command', file=sys.stderr)",
+                        "        return 1",
+                        "    if args[:2] == ['build', 'FormalizationEngineWorkspace']:",
+                        "        print('error: build also fails', file=sys.stderr)",
+                        "        return 1",
+                        "    print(args, file=sys.stderr)",
+                        "    return 1",
+                        "",
+                        "if __name__ == '__main__':",
+                        "    raise SystemExit(main())",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_lake.chmod(0o755)
+            source_path = project_root / "examples" / "inputs" / "zero_add.md"
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "lean_formalization_engine.cli",
+                    "--repo-root",
+                    str(repo_root),
+                    "--lake-path",
+                    "tools/lake",
+                    "prove",
+                    str(source_path),
+                    "--run-id",
+                    "broken-template-init",
+                    "--agent-backend",
+                    "demo",
+                    "--auto-approve",
+                ],
+                cwd=project_root,
+                env={**os.environ, "PYTHONPATH": "src"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Failed to initialize `lean_workspace_template`", result.stderr)
+            self.assertIn("unsupported command", result.stderr)
 
     def test_resume_does_not_require_template_while_checkpoint_is_still_pending(self) -> None:
         project_root = Path(__file__).resolve().parents[1]

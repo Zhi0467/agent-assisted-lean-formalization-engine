@@ -12,6 +12,7 @@ class TemplateResolution:
     template_dir: Path
     origin: str
     command: list[str] | None = None
+    warning: str | None = None
 
 
 def resolve_workspace_template(
@@ -28,17 +29,12 @@ def resolve_workspace_template(
     target_dir = search_root / "lean_workspace_template"
     if not target_dir.exists() and _resolve_lake(lake_path) is None:
         return TemplateResolution(template_dir=package_template_dir.resolve(), origin="packaged", command=[])
-    command = _initialize_workspace_template(
+    return _initialize_workspace_template(
         search_root=search_root,
         target_dir=target_dir,
         package_template_dir=package_template_dir,
         lake_path=lake_path,
         timeout_seconds=init_timeout_seconds,
-    )
-    return TemplateResolution(
-        template_dir=target_dir,
-        origin="initialized",
-        command=command,
     )
 
 
@@ -89,12 +85,12 @@ def _initialize_workspace_template(
     package_template_dir: Path,
     lake_path: str | None,
     timeout_seconds: int,
-) -> list[str]:
+) -> TemplateResolution:
     search_root.mkdir(parents=True, exist_ok=True)
     command: list[str] = []
     if target_dir.exists():
         if _is_eligible_template(target_dir):
-            return []
+            return TemplateResolution(template_dir=target_dir.resolve(), origin="discovered", command=[])
         if not target_dir.is_dir():
             raise RuntimeError(f"`{target_dir}` exists but is not a directory.")
         raise RuntimeError(
@@ -124,18 +120,41 @@ def _initialize_workspace_template(
             ) from exc
         except subprocess.CalledProcessError as exc:
             details = "\n".join(part for part in [exc.stdout, exc.stderr] if part).strip()
-            raise RuntimeError(
-                "Failed to initialize `lean_workspace_template` with `lake new ... math`."
-                + (f"\n{details}" if details else "")
-            ) from exc
+            if not _is_packaged_template_fallback_error(details):
+                raise RuntimeError(
+                    "Failed to initialize `lean_workspace_template` with `lake new ... math`."
+                    + (f"\n{details}" if details else "")
+                ) from exc
+            shutil.rmtree(target_dir, ignore_errors=True)
+            _copy_packaged_template(package_template_dir, target_dir)
+            warning = (
+                "`lake new ... math` failed, so Terry copied the packaged workspace template "
+                "into `lean_workspace_template` instead."
+            )
+            if details:
+                warning = f"{warning}\n{details}"
+            return TemplateResolution(
+                template_dir=target_dir.resolve(),
+                origin="packaged-fallback",
+                command=command,
+                warning=warning,
+            )
 
+    _copy_packaged_template(package_template_dir, target_dir)
+    return TemplateResolution(
+        template_dir=target_dir.resolve(),
+        origin="initialized",
+        command=command,
+    )
+
+
+def _copy_packaged_template(package_template_dir: Path, target_dir: Path) -> None:
     shutil.copytree(
         package_template_dir,
         target_dir,
         ignore=shutil.ignore_patterns(".git", ".lake", "build", "lake-manifest.json"),
         dirs_exist_ok=True,
     )
-    return command
 
 
 def _resolve_lake(configured_lake: str | None) -> str | None:
@@ -157,3 +176,8 @@ def _resolve_lake(configured_lake: str | None) -> str | None:
     if elan_candidate.exists() and os.access(elan_candidate, os.X_OK):
         return str(elan_candidate)
     return None
+
+
+def _is_packaged_template_fallback_error(details: str) -> bool:
+    normalized = details.lower()
+    return "mathlib" in normalized and "revision not found" in normalized
