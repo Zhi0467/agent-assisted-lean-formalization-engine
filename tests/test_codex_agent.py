@@ -313,6 +313,72 @@ class CodexAgentTest(unittest.TestCase):
             self.assertTrue((target_dir / "stale.txt").exists())
             self.assertFalse((target_dir / "FormalizationEngineWorkspace" / "Basic.lean").exists())
 
+    def test_prove_does_not_require_template_before_first_checkpoint(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            source_path = project_root / "examples" / "inputs" / "zero_add.md"
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "lean_formalization_engine.cli",
+                    "--repo-root",
+                    str(repo_root),
+                    "--lake-path",
+                    "/definitely/missing/lake",
+                    "prove",
+                    str(source_path),
+                    "--run-id",
+                    "deferred-template",
+                    "--agent-backend",
+                    "demo",
+                ],
+                cwd=project_root,
+                env={**os.environ, "PYTHONPATH": "src"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("awaiting_enrichment_approval", result.stdout)
+            self.assertTrue((repo_root / "artifacts" / "runs" / "deferred-template" / "01_enrichment" / "review.md").exists())
+
+    def test_prove_bootstraps_nonexistent_repo_root(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir) / "new-root"
+            source_path = project_root / "examples" / "inputs" / "zero_add.md"
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "lean_formalization_engine.cli",
+                    "--repo-root",
+                    str(repo_root),
+                    "--lake-path",
+                    "/definitely/missing/lake",
+                    "prove",
+                    str(source_path),
+                    "--run-id",
+                    "fresh-root",
+                    "--agent-backend",
+                    "demo",
+                ],
+                cwd=project_root,
+                env={**os.environ, "PYTHONPATH": "src"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("awaiting_enrichment_approval", result.stdout)
+            self.assertTrue((repo_root / "artifacts" / "runs" / "fresh-root" / "01_enrichment" / "review.md").exists())
+
     def test_resume_does_not_require_template_while_checkpoint_is_still_pending(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -11,7 +11,7 @@ from .lean_runner import LeanRunner
 from .models import AgentConfig, RunManifest, RunStage, to_jsonable
 from .storage import RunStore, validate_run_id
 from .subprocess_agent import SubprocessFormalizationAgent
-from .template_manager import discover_workspace_template, resolve_workspace_template
+from .template_manager import discover_workspace_template
 from .workflow import FormalizationWorkflow
 
 
@@ -193,6 +193,13 @@ def _default_template_dir(repo_root: Path) -> str:
     return str((Path(__file__).resolve().parent / "workspace_template").resolve())
 
 
+def _preferred_prove_template_dir(repo_root: Path) -> Path:
+    discovered = discover_workspace_template(repo_root)
+    if discovered is not None:
+        return discovered
+    return repo_root / "lean_workspace_template"
+
+
 def _resume_agent_config(
     manifest: RunManifest,
     args: argparse.Namespace,
@@ -267,7 +274,6 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     repo_root = args.repo_root.resolve()
-    package_template_dir = Path(__file__).resolve().parent / "workspace_template"
 
     try:
         if args.command in {"prove", "formalize"}:
@@ -276,27 +282,16 @@ def main() -> None:
             _validate_prove_request(repo_root, source_path, run_id)
             agent_config = build_agent_config(args, repo_root)
             agent = build_agent(agent_config, repo_root)
-            template_resolution = resolve_workspace_template(
-                repo_root,
-                package_template_dir,
-                lake_path=args.lake_path,
-            )
             workflow = FormalizationWorkflow(
                 repo_root=repo_root,
                 agent=agent,
                 agent_config=agent_config,
                 lean_runner=LeanRunner(
-                    template_dir=template_resolution.template_dir,
+                    template_dir=_preferred_prove_template_dir(repo_root),
                     lake_path=args.lake_path,
                 ),
             )
             manifest = workflow.prove(source_path, run_id, auto_approve=args.auto_approve)
-            RunStore(repo_root / "artifacts", run_id).append_log(
-                "template_selected",
-                f"Using workspace template from `{template_resolution.template_dir}` via {template_resolution.origin}.",
-                stage="input",
-                details={"command": template_resolution.command or []},
-            )
 
         elif args.command == "resume":
             manifest = _load_manifest(repo_root, args.run_id)

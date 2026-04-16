@@ -45,6 +45,8 @@ def discover_workspace_template(search_root: Path) -> Path | None:
 
 
 def _find_eligible_template(search_root: Path) -> Path | None:
+    if not search_root.exists() or not search_root.is_dir():
+        return None
     candidates: list[Path] = [search_root / "lean_workspace_template"]
     for child in sorted(search_root.iterdir()):
         if not child.is_dir():
