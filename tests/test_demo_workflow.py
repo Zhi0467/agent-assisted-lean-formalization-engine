@@ -9,6 +9,7 @@ from lean_formalization_engine.lean_runner import LeanRunner
 from lean_formalization_engine.models import (
     AgentConfig,
     AgentTurn,
+    CompileAttempt,
     ContextPack,
     EnrichmentReport,
     FormalizationPlan,
@@ -135,6 +136,69 @@ class CrashBeforeRepairAgent(RepairResumeAgent):
         if repair_context.current_attempt == 2:
             raise RuntimeError("simulated crash before second attempt")
         return super().draft_lean_file(plan, repair_context)
+
+
+class SequencedLeanRunner:
+    def __init__(self, outcomes: list[str]):
+        self.outcomes = outcomes
+        self.attempts: list[int] = []
+        self.template_dir = Path("/tmp/legacy-template")
+
+    def compile_draft(self, store: RunStore, draft: LeanDraft, attempt: int) -> CompileAttempt:
+        self.attempts.append(attempt)
+        outcome = self.outcomes[attempt - 1]
+        contains_sorry = "sorry" in draft.content
+        diagnostics = [outcome.replace("_", " ")]
+
+        if outcome == "missing_toolchain":
+            return CompileAttempt(
+                attempt=attempt,
+                command=["lake build FormalizationEngineWorkspace"],
+                stdout="",
+                stderr="lake missing",
+                returncode=127,
+                diagnostics=diagnostics,
+                fast_check_passed=False,
+                build_passed=False,
+                contains_sorry=contains_sorry,
+                missing_toolchain=True,
+                quality_gate_passed=not contains_sorry,
+                passed=False,
+                status="toolchain_missing",
+            )
+
+        if outcome == "passed":
+            return CompileAttempt(
+                attempt=attempt,
+                command=["lake build FormalizationEngineWorkspace"],
+                stdout="ok",
+                stderr="",
+                returncode=0,
+                diagnostics=[],
+                fast_check_passed=True,
+                build_passed=True,
+                contains_sorry=contains_sorry,
+                missing_toolchain=False,
+                quality_gate_passed=not contains_sorry,
+                passed=not contains_sorry,
+                status="passed" if not contains_sorry else "compile_failed",
+            )
+
+        return CompileAttempt(
+            attempt=attempt,
+            command=["lake build FormalizationEngineWorkspace"],
+            stdout="",
+            stderr="compile failed",
+            returncode=1,
+            diagnostics=diagnostics,
+            fast_check_passed=False,
+            build_passed=False,
+            contains_sorry=contains_sorry,
+            missing_toolchain=False,
+            quality_gate_passed=not contains_sorry,
+            passed=False,
+            status="compile_failed",
+        )
 
 
 class DemoWorkflowTest(unittest.TestCase):
@@ -282,6 +346,35 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
             self.assertEqual(manifest.attempt_count, 2)
 
+    def test_retry_decision_allows_exactly_one_more_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text(
+                "For every natural number n, adding zero on the left gives back n.\n",
+                encoding="utf-8",
+            )
+            runner = SequencedLeanRunner(["missing_toolchain", "compile_failed", "compile_failed"])
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=runner,
+                max_attempts=3,
+            )
+
+            manifest = workflow.prove(source_path=source_path, run_id="one-more-attempt", auto_approve=True)
+            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
+            self.assertEqual(manifest.attempt_count, 1)
+
+            run_root = temp_root / "artifacts" / "runs" / "one-more-attempt"
+            self._write_review(run_root, "03_proof", "retry", "Toolchain is back; take one more shot.")
+            manifest = workflow.resume("one-more-attempt", auto_approve=False)
+
+            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
+            self.assertEqual(manifest.attempt_count, 2)
+            self.assertEqual(runner.attempts, [1, 2])
+
     def test_resume_repair_loop_reuses_last_compile_result(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         template_dir = project_root / "lean_workspace_template"
@@ -321,6 +414,114 @@ class DemoWorkflowTest(unittest.TestCase):
 
             self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
             self.assertEqual(manifest.attempt_count, 2)
+
+    def test_resume_legacy_plan_review_imports_old_spec_and_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            run_root = temp_root / "artifacts" / "runs" / "legacy-plan"
+            run_root.mkdir(parents=True)
+            (run_root / "00_input").mkdir(parents=True, exist_ok=True)
+            (run_root / "00_input" / "source.txt").write_text(
+                "For every natural number n, adding zero on the left gives back n.\n",
+                encoding="utf-8",
+            )
+            (run_root / "manifest.json").write_text(
+                """{
+  "run_id": "legacy-plan",
+  "source": {"path": "input.md", "kind": "markdown"},
+  "agent_name": "repair_resume_agent",
+  "created_at": "2026-04-16T00:00:00Z",
+  "updated_at": "2026-04-16T00:00:00Z",
+  "current_stage": "awaiting_plan_review"
+}
+""",
+                encoding="utf-8",
+            )
+            store = RunStore(temp_root / "artifacts", "legacy-plan")
+            store.write_json(
+                "04_spec/theorem_spec.approved.json",
+                {
+                    "title": "Zero add",
+                    "informal_statement": "For every natural number n, 0 + n = n.",
+                    "assumptions": ["n : Nat"],
+                    "conclusion": "0 + n = n",
+                    "symbols": ["0", "+", "Nat"],
+                    "ambiguities": [],
+                    "paraphrase": "Zero on the left does not change a natural number.",
+                },
+            )
+            store.write_json(
+                "05_context/context_pack.json",
+                {
+                    "recommended_imports": ["FormalizationEngineWorkspace.Basic"],
+                    "local_examples": ["examples/inputs/zero_add.md"],
+                    "notes": ["Use Nat.zero_add."],
+                },
+            )
+            store.write_json(
+                "06_plan/formalization_plan.json",
+                {
+                    "theorem_name": "zero_add_legacy",
+                    "imports": ["FormalizationEngineWorkspace.Basic"],
+                    "prerequisites_to_formalize": [],
+                    "helper_definitions": [],
+                    "target_statement": "theorem zero_add_legacy (n : Nat) : 0 + n = n",
+                    "proof_sketch": ["Use the existing `Nat.zero_add` lemma."],
+                },
+            )
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=SequencedLeanRunner(["compile_failed"]),
+                max_attempts=1,
+            )
+            manifest = workflow.resume("legacy-plan", auto_approve=True)
+
+            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
+            self.assertEqual(manifest.attempt_count, 1)
+            self.assertTrue((run_root / "03_proof" / "checkpoint.md").exists())
+
+    def test_resume_legacy_final_review_uses_old_candidate_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            run_root = temp_root / "artifacts" / "runs" / "legacy-final"
+            run_root.mkdir(parents=True)
+            (run_root / "manifest.json").write_text(
+                """{
+  "run_id": "legacy-final",
+  "source": {"path": "input.md", "kind": "markdown"},
+  "agent_name": "repair_resume_agent",
+  "created_at": "2026-04-16T00:00:00Z",
+  "updated_at": "2026-04-16T00:00:00Z",
+  "current_stage": "awaiting_final_review",
+  "attempt_count": 1
+}
+""",
+                encoding="utf-8",
+            )
+            store = RunStore(temp_root / "artifacts", "legacy-final")
+            store.write_text(
+                "10_final/final_candidate.lean",
+                "import FormalizationEngineWorkspace.Basic\n",
+            )
+            store.write_text(
+                "10_final/final_report.md",
+                "Legacy final report.\n",
+            )
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=SequencedLeanRunner(["passed"]),
+            )
+            manifest = workflow.resume("legacy-final", auto_approve=True)
+
+            self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
+            self.assertEqual(manifest.final_output_path, "04_final/final.lean")
+            self.assertTrue((run_root / "04_final" / "final.lean").exists())
 
     def test_logs_capture_checkpoints_and_proof_events(self) -> None:
         project_root = Path(__file__).resolve().parents[1]

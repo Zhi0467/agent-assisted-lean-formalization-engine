@@ -30,6 +30,27 @@ PLAN_DIR = "02_plan"
 PROOF_DIR = "03_proof"
 FINAL_DIR = "04_final"
 
+LEGACY_NORMALIZED_PATH = "01_normalized/normalized.md"
+LEGACY_EXTRACTION_JSON = "02_extraction/theorem_extraction.json"
+LEGACY_EXTRACTION_MARKDOWN = "02_extraction/extracted.md"
+LEGACY_ENRICHMENT_JSON = "03_enrichment/enrichment_report.json"
+LEGACY_ENRICHMENT_APPROVED_JSON = "03_enrichment/enrichment_report.approved.json"
+LEGACY_ENRICHMENT_HANDOFF = "03_enrichment/handoff.md"
+LEGACY_ENRICHMENT_DECISION = "03_enrichment/decision.json"
+LEGACY_SPEC_JSON = "04_spec/theorem_spec.json"
+LEGACY_SPEC_APPROVED_JSON = "04_spec/theorem_spec.approved.json"
+LEGACY_CONTEXT_PACK_JSON = "05_context/context_pack.json"
+LEGACY_PLAN_JSON = "06_plan/formalization_plan.json"
+LEGACY_PLAN_APPROVED_JSON = "06_plan/formalization_plan.approved.json"
+LEGACY_PLAN_DECISION = "06_plan/decision.json"
+LEGACY_DRAFT_TEMPLATE = "07_draft/attempt_{attempt:04d}/parsed_output.json"
+LEGACY_COMPILE_TEMPLATE = "08_compile/attempt_{attempt:04d}/result.json"
+LEGACY_STALL_REPORT = "09_review/stall_report.md"
+LEGACY_STALL_DECISION = "09_review/decision.json"
+LEGACY_FINAL_CANDIDATE = "10_final/final_candidate.lean"
+LEGACY_FINAL_REPORT = "10_final/final_report.md"
+LEGACY_FINAL_DECISION = "10_final/decision.json"
+
 
 class FormalizationWorkflow:
     def __init__(
@@ -107,6 +128,8 @@ class FormalizationWorkflow:
                 auto_approve=auto_approve,
             )
             if decision is None:
+                if self._checkpoint_surface_missing(store, ENRICHMENT_DIR):
+                    return self._pause_for_enrichment(store, manifest)
                 return manifest
             store.append_log(
                 "checkpoint_approved",
@@ -127,6 +150,8 @@ class FormalizationWorkflow:
                 auto_approve=auto_approve,
             )
             if decision is None:
+                if self._checkpoint_surface_missing(store, PLAN_DIR):
+                    return self._pause_for_plan(store, manifest)
                 return manifest
             store.append_log(
                 "checkpoint_approved",
@@ -149,6 +174,16 @@ class FormalizationWorkflow:
                 auto_approve=auto_approve,
             )
             if decision is None:
+                if self._checkpoint_surface_missing(store, PROOF_DIR):
+                    return self._pause_for_proof_blocked(
+                        store,
+                        manifest,
+                        reason=(
+                            "Terry paused in the prove-and-repair loop.\n\n"
+                            "Review the blocker and loop summary, then set `decision: retry` "
+                            "when you want exactly one more attempt."
+                        ),
+                    )
                 return manifest
             store.append_log(
                 "proof_retry_approved",
@@ -161,7 +196,7 @@ class FormalizationWorkflow:
                 store,
                 plan,
                 auto_approve=auto_approve,
-                max_attempts=max(self.max_attempts, manifest.attempt_count + 1),
+                max_attempts=manifest.attempt_count + 1,
                 human_feedback=decision.notes,
             )
 
@@ -173,6 +208,8 @@ class FormalizationWorkflow:
                 auto_approve=auto_approve,
             )
             if decision is None:
+                if self._checkpoint_surface_missing(store, FINAL_DIR):
+                    return self._pause_for_final(store, manifest)
                 return manifest
             store.append_log(
                 "checkpoint_approved",
@@ -196,9 +233,11 @@ class FormalizationWorkflow:
         auto_approve: bool,
     ) -> RunManifest:
         source_text = store.read_text("00_input/source.txt")
-        normalized_text = store.read_text("00_input/normalized.md")
+        normalized_text = store.read_text(
+            self._require_existing_path(store, "00_input/normalized.md", LEGACY_NORMALIZED_PATH)
+        )
 
-        if store.exists(f"{FINAL_DIR}/final_candidate.lean"):
+        if self._final_candidate_path(store) is not None:
             if self._resolve_checkpoint_decision(
                 store,
                 FINAL_DIR,
@@ -208,7 +247,7 @@ class FormalizationWorkflow:
                 return self._complete_from_candidate(store, manifest)
             return self._pause_for_final(store, manifest)
 
-        if store.exists(f"{PLAN_DIR}/formalization_plan.json"):
+        if self._plan_payload_path(store) is not None:
             if self._resolve_checkpoint_decision(
                 store,
                 PLAN_DIR,
@@ -218,7 +257,7 @@ class FormalizationWorkflow:
                 return self._prove_loop(store, self._load_plan(store), auto_approve=auto_approve)
             return self._pause_for_plan(store, manifest)
 
-        if store.exists(f"{ENRICHMENT_DIR}/enrichment_report.json"):
+        if self._enrichment_payload_path(store) is not None:
             if self._resolve_checkpoint_decision(
                 store,
                 ENRICHMENT_DIR,
@@ -231,7 +270,7 @@ class FormalizationWorkflow:
                 return self._prove_loop(store, plan, auto_approve=auto_approve)
             return self._pause_for_enrichment(store, manifest)
 
-        if not store.exists(f"{ENRICHMENT_DIR}/extraction.json"):
+        if self._extraction_payload_path(store) is None:
             extraction = self.agent.draft_theorem_extraction(
                 manifest.source,
                 source_text,
@@ -477,7 +516,11 @@ class FormalizationWorkflow:
         return self._pause_for_final(store, manifest)
 
     def _complete_from_candidate(self, store: RunStore, manifest: RunManifest) -> RunManifest:
-        candidate_relative_path = f"{FINAL_DIR}/final_candidate.lean"
+        candidate_relative_path = self._require_existing_path(
+            store,
+            f"{FINAL_DIR}/final_candidate.lean",
+            LEGACY_FINAL_CANDIDATE,
+        )
         final_relative_path = f"{FINAL_DIR}/final.lean"
         store.write_text(final_relative_path, store.read_text(candidate_relative_path))
         manifest.current_stage = RunStage.COMPLETED
@@ -501,11 +544,7 @@ class FormalizationWorkflow:
             stage_dir=ENRICHMENT_DIR,
             title="Enrichment Approval",
             summary="Terry is waiting for enrichment approval before locking the formalization scope.",
-            artifact_paths=[
-                f"{ENRICHMENT_DIR}/handoff.md",
-                f"{ENRICHMENT_DIR}/enrichment_report.json",
-                f"{ENRICHMENT_DIR}/extraction.md",
-            ],
+            artifact_paths=self._enrichment_artifact_paths(store),
             continue_decision="approve",
         )
 
@@ -517,11 +556,7 @@ class FormalizationWorkflow:
             stage_dir=PLAN_DIR,
             title="Plan Approval",
             summary="Terry is waiting for the merged plan approval before starting the prove-and-repair loop.",
-            artifact_paths=[
-                f"{PLAN_DIR}/formalization_plan.json",
-                f"{PLAN_DIR}/summary.md",
-                f"{PLAN_DIR}/context_pack.json",
-            ],
+            artifact_paths=self._plan_artifact_paths(store),
             continue_decision="approve",
         )
 
@@ -532,7 +567,12 @@ class FormalizationWorkflow:
         *,
         reason: str,
     ) -> RunManifest:
-        store.write_text(f"{PROOF_DIR}/blocker.md", self._render_proof_blocker(reason))
+        blocker_text = reason
+        if store.exists(LEGACY_STALL_REPORT):
+            blocker_text = store.read_text(LEGACY_STALL_REPORT)
+        store.write_text(f"{PROOF_DIR}/blocker.md", self._render_proof_blocker(blocker_text))
+        if manifest.attempt_count > 0:
+            store.write_text(f"{PROOF_DIR}/loop.md", self._render_loop_summary(store, manifest.attempt_count))
         return self._pause_for_checkpoint(
             store,
             manifest,
@@ -540,10 +580,7 @@ class FormalizationWorkflow:
             stage_dir=PROOF_DIR,
             title="Proof Loop Blocked",
             summary="Terry paused inside the prove-and-repair loop and needs explicit permission to retry.",
-            artifact_paths=[
-                f"{PROOF_DIR}/blocker.md",
-                f"{PROOF_DIR}/loop.md",
-            ],
+            artifact_paths=self._proof_artifact_paths(store, manifest),
             continue_decision="retry",
         )
 
@@ -556,11 +593,7 @@ class FormalizationWorkflow:
             stage_dir=FINAL_DIR,
             title="Final Approval",
             summary="Terry is waiting for final approval of the compiling Lean candidate.",
-            artifact_paths=[
-                f"{FINAL_DIR}/final_candidate.lean",
-                f"{FINAL_DIR}/final_report.md",
-                f"{PROOF_DIR}/attempts/attempt_{latest_attempt:04d}/compile_result.json",
-            ],
+            artifact_paths=self._final_artifact_paths(store, latest_attempt),
             continue_decision="approve",
         )
 
@@ -776,10 +809,9 @@ class FormalizationWorkflow:
             "## Attempts",
         ]
         for attempt in range(1, latest_attempt + 1):
-            result_path = f"{PROOF_DIR}/attempts/attempt_{attempt:04d}/compile_result.json"
-            if not store.exists(result_path):
+            payload = self._load_attempt_result_payload(store, attempt)
+            if payload is None:
                 continue
-            payload = store.read_json(result_path)
             status = payload.get("status", "unknown")
             diagnostics = payload.get("diagnostics", [])
             sections.append(f"- attempt {attempt}: {status}")
@@ -875,6 +907,10 @@ class FormalizationWorkflow:
         existing = self._load_decision(store, f"{stage_dir}/decision.json")
         if existing is not None and existing.decision == continue_decision:
             return existing
+
+        legacy = self._load_legacy_checkpoint_decision(store, stage_dir, continue_decision)
+        if legacy is not None:
+            return legacy
 
         if auto_approve:
             decision = ReviewDecision(continue_decision, utc_now(), "Auto-approved.")
@@ -985,13 +1021,71 @@ class FormalizationWorkflow:
         )
 
     def _load_extraction(self, store: RunStore) -> TheoremExtraction:
-        return TheoremExtraction(**store.read_json(f"{ENRICHMENT_DIR}/extraction.json"))
+        return TheoremExtraction(
+            **store.read_json(
+                self._require_existing_path(
+                    store,
+                    f"{ENRICHMENT_DIR}/extraction.json",
+                    LEGACY_EXTRACTION_JSON,
+                )
+            )
+        )
 
     def _load_enrichment(self, store: RunStore) -> EnrichmentReport:
-        return EnrichmentReport(**store.read_json(f"{ENRICHMENT_DIR}/enrichment_report.json"))
+        return EnrichmentReport(
+            **store.read_json(
+                self._require_existing_path(
+                    store,
+                    f"{ENRICHMENT_DIR}/enrichment_report.json",
+                    LEGACY_ENRICHMENT_APPROVED_JSON,
+                    LEGACY_ENRICHMENT_JSON,
+                )
+            )
+        )
 
     def _load_plan(self, store: RunStore) -> FormalizationPlan:
-        return FormalizationPlan(**store.read_json(f"{PLAN_DIR}/formalization_plan.json"))
+        payload = store.read_json(
+            self._require_existing_path(
+                store,
+                f"{PLAN_DIR}/formalization_plan.json",
+                LEGACY_PLAN_APPROVED_JSON,
+                LEGACY_PLAN_JSON,
+            )
+        )
+        if "human_summary" in payload:
+            return FormalizationPlan(**payload)
+
+        theorem_spec = store.read_json(
+            self._require_existing_path(
+                store,
+                LEGACY_SPEC_APPROVED_JSON,
+                LEGACY_SPEC_JSON,
+            )
+        )
+        title = theorem_spec.get("title") or payload.get("theorem_name", "Legacy theorem")
+        paraphrase = theorem_spec.get("paraphrase") or theorem_spec.get("informal_statement") or title
+        conclusion = theorem_spec.get("conclusion", "")
+        assumptions = theorem_spec.get("assumptions", [])
+        return FormalizationPlan(
+            title=title,
+            informal_statement=theorem_spec.get("informal_statement", title),
+            assumptions=assumptions,
+            conclusion=conclusion,
+            symbols=theorem_spec.get("symbols", []),
+            ambiguities=theorem_spec.get("ambiguities", []),
+            paraphrase=paraphrase,
+            theorem_name=payload["theorem_name"],
+            imports=payload.get("imports", []),
+            prerequisites_to_formalize=payload.get("prerequisites_to_formalize", []),
+            helper_definitions=payload.get("helper_definitions", []),
+            target_statement=payload.get("target_statement", ""),
+            proof_sketch=payload.get("proof_sketch", []),
+            human_summary=(
+                f"Imported legacy plan for `{payload['theorem_name']}`. "
+                f"Assumptions: {', '.join(assumptions) if assumptions else 'none'}. "
+                f"Conclusion: {conclusion or 'unspecified'}."
+            ),
+        )
 
     def _load_previous_compile_result(
         self,
@@ -1000,8 +1094,12 @@ class FormalizationWorkflow:
     ) -> CompileAttempt | None:
         if manifest.attempt_count <= 0:
             return None
-        result_path = f"{PROOF_DIR}/attempts/attempt_{manifest.attempt_count:04d}/compile_result.json"
-        if not store.exists(result_path):
+        result_path = self._existing_path(
+            store,
+            f"{PROOF_DIR}/attempts/attempt_{manifest.attempt_count:04d}/compile_result.json",
+            LEGACY_COMPILE_TEMPLATE.format(attempt=manifest.attempt_count),
+        )
+        if result_path is None:
             return None
         return CompileAttempt(**store.read_json(result_path))
 
@@ -1012,7 +1110,13 @@ class FormalizationWorkflow:
     ) -> LeanDraft | None:
         if manifest.attempt_count <= 0:
             return None
-        draft_path = f"{PROOF_DIR}/attempts/attempt_{manifest.attempt_count:04d}/parsed_output.json"
+        draft_path = self._existing_path(
+            store,
+            f"{PROOF_DIR}/attempts/attempt_{manifest.attempt_count:04d}/parsed_output.json",
+            LEGACY_DRAFT_TEMPLATE.format(attempt=manifest.attempt_count),
+        )
+        if draft_path is None:
+            return None
         if not store.exists(draft_path):
             return None
         return LeanDraft(**store.read_json(draft_path))
@@ -1020,4 +1124,160 @@ class FormalizationWorkflow:
     def _load_decision(self, store: RunStore, relative_path: str) -> ReviewDecision | None:
         if not store.exists(relative_path):
             return None
-        return ReviewDecision(**store.read_json(relative_path))
+        payload = store.read_json(relative_path)
+        if "decision" in payload:
+            return ReviewDecision(**payload)
+        if payload.get("approved"):
+            return ReviewDecision("approve", payload.get("updated_at", utc_now()), payload.get("notes", ""))
+        return None
+
+    def _existing_path(self, store: RunStore, *candidates: str) -> str | None:
+        for candidate in candidates:
+            if store.exists(candidate):
+                return candidate
+        return None
+
+    def _require_existing_path(self, store: RunStore, *candidates: str) -> str:
+        resolved = self._existing_path(store, *candidates)
+        if resolved is None:
+            raise FileNotFoundError(f"Missing expected Terry artifact. Tried: {', '.join(candidates)}")
+        return resolved
+
+    def _checkpoint_surface_missing(self, store: RunStore, stage_dir: str) -> bool:
+        return not (
+            store.exists(f"{stage_dir}/checkpoint.md")
+            and store.exists(f"{stage_dir}/review.md")
+        )
+
+    def _extraction_payload_path(self, store: RunStore) -> str | None:
+        return self._existing_path(store, f"{ENRICHMENT_DIR}/extraction.json", LEGACY_EXTRACTION_JSON)
+
+    def _enrichment_payload_path(self, store: RunStore) -> str | None:
+        return self._existing_path(
+            store,
+            f"{ENRICHMENT_DIR}/enrichment_report.json",
+            LEGACY_ENRICHMENT_APPROVED_JSON,
+            LEGACY_ENRICHMENT_JSON,
+        )
+
+    def _plan_payload_path(self, store: RunStore) -> str | None:
+        return self._existing_path(
+            store,
+            f"{PLAN_DIR}/formalization_plan.json",
+            LEGACY_PLAN_APPROVED_JSON,
+            LEGACY_PLAN_JSON,
+        )
+
+    def _final_candidate_path(self, store: RunStore) -> str | None:
+        return self._existing_path(store, f"{FINAL_DIR}/final_candidate.lean", LEGACY_FINAL_CANDIDATE)
+
+    def _attempt_result_path(self, store: RunStore, attempt: int) -> str:
+        return self._require_existing_path(
+            store,
+            f"{PROOF_DIR}/attempts/attempt_{attempt:04d}/compile_result.json",
+            LEGACY_COMPILE_TEMPLATE.format(attempt=attempt),
+        )
+
+    def _load_attempt_result_payload(self, store: RunStore, attempt: int) -> dict[str, object] | None:
+        result_path = self._existing_path(
+            store,
+            f"{PROOF_DIR}/attempts/attempt_{attempt:04d}/compile_result.json",
+            LEGACY_COMPILE_TEMPLATE.format(attempt=attempt),
+        )
+        if result_path is None:
+            return None
+        return store.read_json(result_path)
+
+    def _collect_artifact_paths(self, store: RunStore, *groups: tuple[str, ...]) -> list[str]:
+        paths: list[str] = []
+        for group in groups:
+            resolved = self._existing_path(store, *group)
+            if resolved is not None:
+                paths.append(resolved)
+        return paths
+
+    def _enrichment_artifact_paths(self, store: RunStore) -> list[str]:
+        return self._collect_artifact_paths(
+            store,
+            (f"{ENRICHMENT_DIR}/handoff.md", LEGACY_ENRICHMENT_HANDOFF),
+            (f"{ENRICHMENT_DIR}/enrichment_report.json", LEGACY_ENRICHMENT_JSON),
+            (f"{ENRICHMENT_DIR}/extraction.md", LEGACY_EXTRACTION_MARKDOWN),
+        )
+
+    def _plan_artifact_paths(self, store: RunStore) -> list[str]:
+        if store.exists(f"{PLAN_DIR}/formalization_plan.json"):
+            return self._collect_artifact_paths(
+                store,
+                (f"{PLAN_DIR}/formalization_plan.json",),
+                (f"{PLAN_DIR}/summary.md",),
+                (f"{PLAN_DIR}/context_pack.json",),
+            )
+        return self._collect_artifact_paths(
+            store,
+            (LEGACY_SPEC_APPROVED_JSON, LEGACY_SPEC_JSON),
+            (LEGACY_PLAN_JSON, LEGACY_PLAN_APPROVED_JSON),
+            (LEGACY_CONTEXT_PACK_JSON,),
+        )
+
+    def _proof_artifact_paths(self, store: RunStore, manifest: RunManifest) -> list[str]:
+        compile_path = None
+        if manifest.attempt_count > 0:
+            compile_path = self._existing_path(
+                store,
+                f"{PROOF_DIR}/attempts/attempt_{manifest.attempt_count:04d}/compile_result.json",
+                LEGACY_COMPILE_TEMPLATE.format(attempt=manifest.attempt_count),
+            )
+        groups: list[tuple[str, ...]] = [
+            (f"{PROOF_DIR}/blocker.md", LEGACY_STALL_REPORT),
+            (f"{PROOF_DIR}/loop.md",),
+        ]
+        if compile_path is not None:
+            groups.append((compile_path,))
+        return self._collect_artifact_paths(store, *groups)
+
+    def _final_artifact_paths(self, store: RunStore, latest_attempt: int) -> list[str]:
+        compile_path = self._existing_path(
+            store,
+            f"{PROOF_DIR}/attempts/attempt_{latest_attempt:04d}/compile_result.json",
+            LEGACY_COMPILE_TEMPLATE.format(attempt=latest_attempt),
+        )
+        groups: list[tuple[str, ...]] = [
+            (f"{FINAL_DIR}/final_candidate.lean", LEGACY_FINAL_CANDIDATE),
+            (f"{FINAL_DIR}/final_report.md", LEGACY_FINAL_REPORT),
+        ]
+        if compile_path is not None:
+            groups.append((compile_path,))
+        return self._collect_artifact_paths(store, *groups)
+
+    def _load_legacy_checkpoint_decision(
+        self,
+        store: RunStore,
+        stage_dir: str,
+        continue_decision: str,
+    ) -> ReviewDecision | None:
+        if stage_dir == ENRICHMENT_DIR:
+            if not store.exists(LEGACY_ENRICHMENT_APPROVED_JSON):
+                return None
+            return self._map_legacy_decision(store, LEGACY_ENRICHMENT_DECISION, continue_decision)
+        if stage_dir == PLAN_DIR:
+            if not store.exists(LEGACY_PLAN_APPROVED_JSON):
+                return None
+            return self._map_legacy_decision(store, LEGACY_PLAN_DECISION, continue_decision)
+        if stage_dir == PROOF_DIR and store.exists(LEGACY_STALL_DECISION):
+            return self._map_legacy_decision(store, LEGACY_STALL_DECISION, continue_decision)
+        if stage_dir == FINAL_DIR and store.exists(LEGACY_FINAL_DECISION):
+            return self._map_legacy_decision(store, LEGACY_FINAL_DECISION, continue_decision)
+        return None
+
+    def _map_legacy_decision(
+        self,
+        store: RunStore,
+        relative_path: str,
+        continue_decision: str,
+    ) -> ReviewDecision | None:
+        decision = self._load_decision(store, relative_path)
+        if decision is None:
+            return ReviewDecision(continue_decision, utc_now(), "Imported from legacy workflow.")
+        if decision.decision not in {"approve", continue_decision}:
+            return None
+        return ReviewDecision(continue_decision, decision.updated_at, decision.notes)
