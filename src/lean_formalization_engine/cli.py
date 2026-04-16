@@ -74,6 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--lake-path",
         help="Optional `lake` executable override for template initialization and compile checks.",
     )
+    _add_backend_arguments(parser, suppress_help=True, prefix="legacy_")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     prove_parser = subparsers.add_parser("prove", help="Start a new Terry run.")
@@ -127,25 +128,36 @@ def _add_prove_arguments(parser: argparse.ArgumentParser) -> None:
     _add_backend_arguments(parser)
 
 
-def _add_backend_arguments(parser: argparse.ArgumentParser) -> None:
+def _add_backend_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    suppress_help: bool = False,
+    prefix: str = "",
+) -> None:
+    help_text = argparse.SUPPRESS if suppress_help else None
     parser.add_argument(
         "--agent-command",
-        help=(
+        dest=f"{prefix}agent_command",
+        help=help_text
+        or (
             "Optional command that implements Terry turns over stdin/stdout. "
             "If omitted, Terry uses the default built-in backend."
         ),
     )
     parser.add_argument(
         "--agent-backend",
+        dest=f"{prefix}agent_backend",
         choices=["demo", "command", "codex"],
-        help=(
+        help=help_text
+        or (
             "Choose the backend explicitly. Defaults to `command` when `--agent-command` "
             "is set and `codex` otherwise."
         ),
     )
     parser.add_argument(
         "--codex-model",
-        help="Optional Codex model override when the Codex backend is used.",
+        dest=f"{prefix}codex_model",
+        help=help_text or "Optional Codex model override when the Codex backend is used.",
     )
 
 
@@ -160,9 +172,9 @@ def _add_legacy_approve_parser(
 
 
 def build_agent_config(args: argparse.Namespace, repo_root: Path) -> AgentConfig:
-    backend = getattr(args, "agent_backend", None)
-    agent_command = getattr(args, "agent_command", None)
-    codex_model = getattr(args, "codex_model", None)
+    backend = getattr(args, "agent_backend", None) or getattr(args, "legacy_agent_backend", None)
+    agent_command = getattr(args, "agent_command", None) or getattr(args, "legacy_agent_command", None)
+    codex_model = getattr(args, "codex_model", None) or getattr(args, "legacy_codex_model", None)
 
     if backend is None:
         backend = "command" if agent_command else "codex"
@@ -285,7 +297,7 @@ def _resume_agent_config(
     args: argparse.Namespace,
     repo_root: Path,
 ) -> AgentConfig:
-    agent_command = getattr(args, "agent_command", None)
+    agent_command = getattr(args, "agent_command", None) or getattr(args, "legacy_agent_command", None)
     if not agent_command:
         return manifest.agent_config
 

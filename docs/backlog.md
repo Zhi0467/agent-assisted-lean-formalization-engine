@@ -19,9 +19,13 @@ legacy status views point at the real review directories, and the old subprocess
 `theorem_spec` alias now carries honest assumptions / conclusion / symbols. The latest
 local review also caught one remaining CLI-compatibility regression: Terry left the old
 `lean-formalize` entrypoint installed while dropping the legacy `run`, `resume --run-id`,
-`status --run-id`, and `approve-*` surface. That shim is now restored without changing the
-documented Terry contract, the branch-local suite is currently `62/62`, and one more
-direct `codex review --base main` rerun is the remaining local gate before the PR step.
+`status --run-id`, and `approve-*` surface. The first shim landed, and the follow-up
+rerun exposed two smaller compatibility gaps inside it: legacy global option ordering
+like `--agent-backend demo run ...` was still getting shadowed by subparser defaults, and
+`terry resume --agent-command ...` still left the stale command in the manifest after the
+current turn. Both are now fixed without changing the documented Terry contract, the
+branch-local suite is currently `63/63`, and one more direct `codex review --base main`
+rerun is the remaining local gate before the PR step.
 
 ## Terry Rewrite Surface
 

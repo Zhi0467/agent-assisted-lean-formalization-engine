@@ -20,6 +20,7 @@ from lean_formalization_engine.cli import (
     render_manifest_summary,
 )
 from lean_formalization_engine.codex_agent import CodexCliFormalizationAgent
+from lean_formalization_engine.lean_runner import LeanRunner
 from lean_formalization_engine.models import (
     AgentConfig,
     ContextPack,
@@ -32,6 +33,7 @@ from lean_formalization_engine.models import (
 )
 from lean_formalization_engine.subprocess_agent import SubprocessFormalizationAgent
 from lean_formalization_engine.template_manager import resolve_workspace_template
+from lean_formalization_engine.workflow import FormalizationWorkflow
 
 
 class CodexAgentTest(unittest.TestCase):
@@ -820,13 +822,13 @@ class CodexAgentTest(unittest.TestCase):
                     str(repo_root),
                     "--lake-path",
                     "/definitely/missing/lake",
+                    "--agent-backend",
+                    "demo",
                     "run",
                     "--source",
                     str(source_path),
                     "--run-id",
                     "legacy-run",
-                    "--agent-backend",
-                    "demo",
                     "--auto-approve",
                 ],
                 cwd=project_root,
@@ -983,6 +985,85 @@ class CodexAgentTest(unittest.TestCase):
             )
             self.assertEqual(resume_result.returncode, 0, resume_result.stderr)
             self.assertIn("Stage: awaiting_plan_approval", resume_result.stdout)
+
+    def test_resume_override_persists_new_command_in_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            run_root = repo_root / "artifacts" / "runs" / "persist-command"
+            (run_root / "01_enrichment").mkdir(parents=True)
+            (run_root / "00_input").mkdir(parents=True)
+            (run_root / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "persist-command",
+                        "source": {"path": "input.md", "kind": "markdown"},
+                        "agent_name": "subprocess:old",
+                        "agent_config": {
+                            "backend": "command",
+                            "command": ["python3", "old.py"],
+                            "codex_model": None,
+                        },
+                        "template_dir": str(repo_root / "lean_workspace_template"),
+                        "created_at": "2026-04-16T00:00:00Z",
+                        "updated_at": "2026-04-16T00:00:00Z",
+                        "current_stage": "awaiting_enrichment_approval",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_root / "00_input" / "source.txt").write_text("source\n", encoding="utf-8")
+            (run_root / "00_input" / "normalized.md").write_text("source\n", encoding="utf-8")
+            (run_root / "01_enrichment" / "checkpoint.md").write_text("# checkpoint\n", encoding="utf-8")
+            (run_root / "01_enrichment" / "review.md").write_text(
+                "# review\n\ndecision: approve\n\nNotes:\n\n",
+                encoding="utf-8",
+            )
+            (run_root / "01_enrichment" / "extraction.json").write_text(
+                json.dumps(
+                    {
+                        "title": "Zero add",
+                        "informal_statement": "For every natural number n, 0 + n = n.",
+                        "definitions": ["Nat"],
+                        "lemmas": ["Nat.zero_add"],
+                        "propositions": [],
+                        "dependencies": ["Nat.zero_add"],
+                        "notes": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_root / "01_enrichment" / "enrichment_report.json").write_text(
+                json.dumps(
+                    {
+                        "self_contained": True,
+                        "satisfied_prerequisites": ["Nat.zero_add exists."],
+                        "missing_prerequisites": [],
+                        "required_plan_additions": [],
+                        "recommended_scope": "Keep the theorem over Nat.",
+                        "difficulty_assessment": "easy",
+                        "open_questions": [],
+                        "next_steps": ["Approve the merged plan."],
+                        "human_handoff": "Everything needed is already present.",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            manifest = _load_manifest(repo_root, "persist-command")
+            args = Namespace(agent_command="python3 new.py")
+            agent_config = _resume_agent_config(manifest, args, repo_root)
+            workflow = FormalizationWorkflow(
+                repo_root=repo_root,
+                agent=build_agent(agent_config, repo_root),
+                agent_config=agent_config,
+                lean_runner=LeanRunner(template_dir=Path(manifest.template_dir), lake_path=None),
+            )
+
+            with self.assertRaises(Exception):
+                workflow.resume("persist-command")
+
+            persisted = json.loads((run_root / "manifest.json").read_text(encoding="utf-8"))["agent_config"]
+            self.assertEqual(persisted["command"], ["python3", "new.py"])
 
     def test_prove_validation_happens_before_template_resolution(self) -> None:
         project_root = Path(__file__).resolve().parents[1]

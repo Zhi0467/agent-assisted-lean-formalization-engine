@@ -124,9 +124,9 @@ class FormalizationWorkflow:
         manifest = self._load_manifest(store)
         if (
             manifest.agent_config.backend == "command"
-            and manifest.agent_config.command is None
             and self.agent_config.backend == "command"
             and self.agent_config.command
+            and manifest.agent_config.command != self.agent_config.command
         ):
             manifest.agent_config = self.agent_config
             manifest.agent_name = self.agent.name
