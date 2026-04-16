@@ -275,14 +275,15 @@ def _subject_to_assumptions(subject: str) -> list[str] | None:
         if variables:
             return [f"{variable} : {type_name}" for variable in variables]
 
-    lowered = cleaned.lower()
-    for descriptor, type_name in _DESCRIPTOR_PREFIXES:
-        if not lowered.startswith(f"{descriptor} "):
+    tokens = cleaned.split()
+    for split_index in range(1, len(tokens)):
+        descriptor = " ".join(tokens[:split_index]).lower().strip()
+        type_name = _descriptor_type(descriptor)
+        if type_name is None:
             continue
-        variables = _split_variable_names(cleaned[len(descriptor) :].strip())
+        variables = _split_variable_names(" ".join(tokens[split_index:]))
         if variables:
             return [f"{variable} : {type_name}" for variable in variables]
-        return None
     return None
 
 
@@ -295,20 +296,6 @@ def _split_variable_names(raw_variables: str) -> list[str]:
     if not variables or any(re.fullmatch(r"[A-Za-z_]\w*", variable) is None for variable in variables):
         return []
     return variables
-
-
-_DESCRIPTOR_PREFIXES = [
-    ("natural numbers", "Nat"),
-    ("natural number", "Nat"),
-    ("integers", "Int"),
-    ("integer", "Int"),
-    ("real numbers", "Real"),
-    ("real number", "Real"),
-    ("booleans", "Bool"),
-    ("boolean", "Bool"),
-    ("propositions", "Prop"),
-    ("proposition", "Prop"),
-]
 
 
 def _descriptor_type(descriptor: str) -> str | None:
