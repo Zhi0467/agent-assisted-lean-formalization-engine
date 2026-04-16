@@ -56,11 +56,11 @@ class CodexAgentTest(unittest.TestCase):
                     {
                         "title": "Zero-add on natural numbers",
                         "informal_statement": "0 + n = n",
-                        "assumptions": ["n : Nat"],
-                        "conclusion": "0 + n = n",
-                        "symbols": ["0", "+", "Nat"],
-                        "ambiguities": [],
-                        "paraphrase": "Adding zero on the left returns the same natural number.",
+                        "definitions": ["Nat"],
+                        "lemmas": ["Nat.zero_add"],
+                        "propositions": [],
+                        "dependencies": ["lemma: Nat.zero_add -- proves the statement directly."],
+                        "notes": ["Self-contained in the standard library."],
                     }
                 ),
                 encoding="utf-8",
@@ -71,8 +71,9 @@ class CodexAgentTest(unittest.TestCase):
             "lean_formalization_engine.codex_agent.subprocess.run",
             side_effect=fake_run,
         ):
-            theorem_spec, turn = agent.draft_theorem_spec(
+            extraction, turn = agent.draft_theorem_extraction(
                 SourceRef(path="examples/inputs/zero_add.md", kind=SourceKind.MARKDOWN),
+                "For every natural number n, 0 + n = n.\n",
                 "For every natural number n, 0 + n = n.\n",
             )
 
@@ -85,10 +86,10 @@ class CodexAgentTest(unittest.TestCase):
         self.assertIn("--output-schema", command)
         self.assertIn("-o", command)
         self.assertIn("For every natural number", str(captured["input"]))
-        self.assertEqual(theorem_spec.title, "Zero-add on natural numbers")
-        self.assertEqual(turn.request_payload["stage"], "draft_theorem_spec")
+        self.assertEqual(extraction.title, "Zero-add on natural numbers")
+        self.assertEqual(turn.request_payload["stage"], "draft_theorem_extraction")
         self.assertEqual(turn.request_payload["model"], "gpt-5.4-mini")
-        self.assertIn("Adding zero on the left", turn.raw_response)
+        self.assertIn("Nat.zero_add", turn.raw_response)
 
     def test_codex_agent_surfaces_exec_failures(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
@@ -103,8 +104,9 @@ class CodexAgentTest(unittest.TestCase):
                 "stderr details",
             ),
         ):
-            with self.assertRaisesRegex(RuntimeError, "draft_theorem_spec"):
-                agent.draft_theorem_spec(
+            with self.assertRaisesRegex(RuntimeError, "draft_theorem_extraction"):
+                agent.draft_theorem_extraction(
                     SourceRef(path="x.md", kind=SourceKind.MARKDOWN),
+                    "Theorem text.\n",
                     "Theorem text.\n",
                 )

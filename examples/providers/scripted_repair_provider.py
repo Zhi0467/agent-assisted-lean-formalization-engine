@@ -4,11 +4,68 @@ import json
 import sys
 
 
-def _spec_response(request: dict[str, object]) -> dict[str, object]:
+def _extraction_response(request: dict[str, object]) -> dict[str, object]:
     normalized_text = str(request["normalized_text"]).strip()
     parsed_output = {
         "title": "Zero-add on natural numbers",
         "informal_statement": normalized_text,
+        "definitions": [
+            "Nat: the variable ranges over natural numbers.",
+            "Left addition by zero: the target expression is `0 + n`.",
+        ],
+        "lemmas": [
+            "Nat.zero_add: proves the target theorem directly for natural numbers."
+        ],
+        "propositions": [],
+        "dependencies": [
+            "definition: Nat -- needed to type the quantified variable.",
+            "notation: `0 + n` -- needed to state the theorem.",
+            "lemma: Nat.zero_add -- sufficient to complete the proof.",
+        ],
+        "notes": ["The example already fits standard natural-number infrastructure."],
+    }
+    return {
+        "prompt": "Extract the theorem package and prerequisite dependency chain from the theorem source.",
+        "raw_response": json.dumps(parsed_output, indent=2, sort_keys=True),
+        "parsed_output": parsed_output,
+    }
+
+
+def _enrichment_response(request: dict[str, object]) -> dict[str, object]:
+    parsed_output = {
+        "self_contained": True,
+        "satisfied_prerequisites": [
+            "Natural numbers and addition are already available in Lean/mathlib.",
+            "`Nat.zero_add` is already available for the proof."
+        ],
+        "missing_prerequisites": [],
+        "required_plan_additions": [],
+        "recommended_scope": "Keep the theorem over `Nat` and reuse the existing core lemma.",
+        "difficulty_assessment": "easy",
+        "open_questions": [],
+        "next_steps": [
+            "Approve the enrichment handoff.",
+            "Draft the theorem spec.",
+            "Use `Nat.zero_add` in the Lean plan."
+        ],
+        "human_handoff": (
+            "The extracted theorem is already self-contained for Lean. "
+            "All required prerequisites are present in the standard natural-number API, "
+            "so the formalization plan does not need extra definitions."
+        ),
+    }
+    return {
+        "prompt": "Check whether the extracted theorem package is self-contained and summarize what is missing.",
+        "raw_response": json.dumps(parsed_output, indent=2, sort_keys=True),
+        "parsed_output": parsed_output,
+    }
+
+
+def _spec_response(request: dict[str, object]) -> dict[str, object]:
+    extraction = request["extraction"]
+    parsed_output = {
+        "title": extraction["title"],
+        "informal_statement": extraction["informal_statement"],
         "assumptions": ["n : Nat"],
         "conclusion": "0 + n = n",
         "symbols": ["0", "+", "Nat"],
@@ -24,9 +81,11 @@ def _spec_response(request: dict[str, object]) -> dict[str, object]:
 
 def _plan_response(request: dict[str, object]) -> dict[str, object]:
     theorem_spec = request["theorem_spec"]
+    enrichment = request["enrichment"]
     parsed_output = {
         "theorem_name": "zero_add_provider_demo",
         "imports": ["FormalizationEngineWorkspace.Basic"],
+        "prerequisites_to_formalize": enrichment["required_plan_additions"],
         "helper_definitions": [],
         "target_statement": "theorem zero_add_provider_demo (n : Nat) : 0 + n = n",
         "proof_sketch": [
@@ -100,7 +159,11 @@ def main() -> int:
     request = json.load(sys.stdin)
     stage = request.get("stage")
 
-    if stage == "draft_theorem_spec":
+    if stage == "draft_theorem_extraction":
+        response = _extraction_response(request)
+    elif stage == "draft_theorem_enrichment":
+        response = _enrichment_response(request)
+    elif stage == "draft_theorem_spec":
         response = _spec_response(request)
     elif stage == "draft_formalization_plan":
         response = _plan_response(request)

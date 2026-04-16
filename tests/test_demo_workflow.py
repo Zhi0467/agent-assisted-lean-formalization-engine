@@ -12,12 +12,14 @@ from lean_formalization_engine.lean_runner import LeanRunner
 from lean_formalization_engine.models import (
     AgentTurn,
     ContextPack,
+    EnrichmentReport,
     FormalizationPlan,
     HumanDecision,
     LeanDraft,
     RepairContext,
     RunStage,
     SourceRef,
+    TheoremExtraction,
     TheoremSpec,
     utc_now,
 )
@@ -29,14 +31,57 @@ from lean_formalization_engine.workflow import FormalizationWorkflow
 class RepairResumeAgent:
     name = "repair_resume_agent"
 
+    def draft_theorem_extraction(
+        self,
+        source_ref: SourceRef,
+        source_text: str,
+        normalized_text: str,
+    ) -> tuple[TheoremExtraction, AgentTurn]:
+        extraction = TheoremExtraction(
+            title="Zero add",
+            informal_statement=normalized_text.strip(),
+            definitions=["Nat"],
+            lemmas=["Nat.zero_add"],
+            propositions=[],
+            dependencies=["lemma: Nat.zero_add -- proves the target statement directly."],
+            notes=["Self-contained theorem over natural numbers."],
+        )
+        return extraction, AgentTurn(request_payload={}, prompt="extract", raw_response="extract")
+
+    def draft_theorem_enrichment(
+        self,
+        source_ref: SourceRef,
+        source_text: str,
+        extraction: TheoremExtraction,
+        extraction_markdown: str,
+    ) -> tuple[EnrichmentReport, AgentTurn]:
+        enrichment = EnrichmentReport(
+            self_contained=True,
+            satisfied_prerequisites=["Natural-number addition is already available."],
+            missing_prerequisites=[],
+            required_plan_additions=[],
+            recommended_scope="Keep the theorem over `Nat`.",
+            difficulty_assessment="easy",
+            open_questions=[],
+            next_steps=["Draft the theorem spec.", "Use `Nat.zero_add`."],
+            human_handoff="All required prerequisites are already available in Lean/mathlib.",
+        )
+        return enrichment, AgentTurn(
+            request_payload={},
+            prompt="enrich",
+            raw_response="enrich",
+        )
+
     def draft_theorem_spec(
         self,
         source_ref: SourceRef,
-        normalized_text: str,
+        source_text: str,
+        extraction: TheoremExtraction,
+        enrichment: EnrichmentReport,
     ) -> tuple[TheoremSpec, AgentTurn]:
         spec = TheoremSpec(
             title="Zero add",
-            informal_statement=normalized_text.strip(),
+            informal_statement=extraction.informal_statement,
             assumptions=["n : Nat"],
             conclusion="0 + n = n",
             symbols=["0", "+", "Nat"],
@@ -49,10 +94,12 @@ class RepairResumeAgent:
         self,
         theorem_spec: TheoremSpec,
         context_pack: ContextPack,
+        enrichment: EnrichmentReport,
     ) -> tuple[FormalizationPlan, AgentTurn]:
         plan = FormalizationPlan(
             theorem_name="zero_add_resume",
             imports=["FormalizationEngineWorkspace.Basic"],
+            prerequisites_to_formalize=enrichment.required_plan_additions,
             helper_definitions=[],
             target_statement="theorem zero_add_resume (n : Nat) : 0 + n = n",
             proof_sketch=["Use the existing `Nat.zero_add` lemma."],
@@ -249,6 +296,10 @@ class DemoWorkflowTest(unittest.TestCase):
             )
 
             manifest = workflow.run(source_path=source_path, run_id="manual-review", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_REVIEW)
+
+            workflow.approve_enrichment("manual-review")
+            manifest = workflow.resume("manual-review", auto_approve=False)
             self.assertEqual(manifest.current_stage, RunStage.AWAITING_SPEC_REVIEW)
 
             workflow.approve_spec("manual-review")
@@ -450,6 +501,8 @@ class DemoWorkflowTest(unittest.TestCase):
             )
 
             manifest = workflow.run(source_path=source_path, run_id="reject-final", auto_approve=False)
+            workflow.approve_enrichment("reject-final")
+            manifest = workflow.resume("reject-final", auto_approve=False)
             workflow.approve_spec("reject-final")
             manifest = workflow.resume("reject-final", auto_approve=False)
             workflow.approve_plan("reject-final")
@@ -458,14 +511,14 @@ class DemoWorkflowTest(unittest.TestCase):
 
             store = RunStore(temp_root / "artifacts", "reject-final")
             store.write_json(
-                "08_final/decision.json",
+                "10_final/decision.json",
                 HumanDecision(approved=False, updated_at=utc_now(), notes="Needs changes."),
             )
 
             manifest = workflow.resume("reject-final", auto_approve=False)
             self.assertEqual(manifest.current_stage, RunStage.AWAITING_FINAL_REVIEW)
-            self.assertEqual(manifest.final_output_path, "08_final/final_candidate.lean")
-            self.assertFalse(store.exists("08_final/final.lean"))
+            self.assertEqual(manifest.final_output_path, "10_final/final_candidate.lean")
+            self.assertFalse(store.exists("10_final/final.lean"))
 
     def test_run_ids_must_be_safe_and_unique(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
@@ -529,7 +582,7 @@ class DemoWorkflowTest(unittest.TestCase):
                 / "artifacts"
                 / "runs"
                 / "subprocess-demo"
-                / "05_draft"
+                / "07_draft"
                 / "attempt_0002"
                 / "request.json"
             )

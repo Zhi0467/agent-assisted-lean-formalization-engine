@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -34,6 +34,7 @@ class SourceKind(str, Enum):
 
 class RunStage(str, Enum):
     CREATED = "created"
+    AWAITING_ENRICHMENT_REVIEW = "awaiting_enrichment_review"
     AWAITING_SPEC_REVIEW = "awaiting_spec_review"
     AWAITING_PLAN_REVIEW = "awaiting_plan_review"
     REPAIRING = "repairing"
@@ -41,6 +42,15 @@ class RunStage(str, Enum):
     AWAITING_STALL_REVIEW = "awaiting_stall_review"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+DEFAULT_WORKFLOW_VERSION = "0.2.0"
+DEFAULT_WORKFLOW_TAGS = [
+    "mathlib-template",
+    "pre-spec-extraction",
+    "enrichment-handoff",
+    "bounded-repair-loop",
+]
 
 
 @dataclass
@@ -54,6 +64,30 @@ class IngestedSource:
     raw_text: str
     normalized_text: str
     extraction_method: str
+
+
+@dataclass
+class TheoremExtraction:
+    title: str
+    informal_statement: str
+    definitions: list[str]
+    lemmas: list[str]
+    propositions: list[str]
+    dependencies: list[str]
+    notes: list[str]
+
+
+@dataclass
+class EnrichmentReport:
+    self_contained: bool
+    satisfied_prerequisites: list[str]
+    missing_prerequisites: list[str]
+    required_plan_additions: list[str]
+    recommended_scope: str
+    difficulty_assessment: str
+    open_questions: list[str]
+    next_steps: list[str]
+    human_handoff: str
 
 
 @dataclass
@@ -78,6 +112,7 @@ class ContextPack:
 class FormalizationPlan:
     theorem_name: str
     imports: list[str]
+    prerequisites_to_formalize: list[str]
     helper_definitions: list[str]
     target_statement: str
     proof_sketch: list[str]
@@ -141,6 +176,10 @@ class RunManifest:
     created_at: str
     updated_at: str
     current_stage: RunStage
+    workflow_version: str = DEFAULT_WORKFLOW_VERSION
+    workflow_tags: list[str] = field(
+        default_factory=lambda: list(DEFAULT_WORKFLOW_TAGS)
+    )
     attempt_count: int = 0
     latest_error: str | None = None
     final_output_path: str | None = None

@@ -1,0 +1,8 @@
+{
+  "normalized_text": "For every natural number `n`, adding zero on the left gives back `n`.\n\nTarget statement: `0 + n = n`.\n",
+  "source_ref": {
+    "kind": "markdown",
+    "path": "examples/inputs/zero_add.md"
+  },
+  "stage": "draft_theorem_spec"
+}

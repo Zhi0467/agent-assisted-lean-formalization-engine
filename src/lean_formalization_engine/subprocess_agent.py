@@ -9,14 +9,23 @@ from typing import Any, TypeVar
 from .models import (
     AgentTurn,
     ContextPack,
+    EnrichmentReport,
     FormalizationPlan,
     LeanDraft,
     RepairContext,
     SourceRef,
+    TheoremExtraction,
     TheoremSpec,
 )
 
-ParsedOutput = TypeVar("ParsedOutput", TheoremSpec, FormalizationPlan, LeanDraft)
+ParsedOutput = TypeVar(
+    "ParsedOutput",
+    TheoremExtraction,
+    EnrichmentReport,
+    TheoremSpec,
+    FormalizationPlan,
+    LeanDraft,
+)
 
 
 class SubprocessFormalizationAgent:
@@ -34,16 +43,54 @@ class SubprocessFormalizationAgent:
         self.name = name or _default_agent_name(command)
         self.working_directory = working_directory
 
+    def draft_theorem_extraction(
+        self,
+        source_ref: SourceRef,
+        source_text: str,
+        normalized_text: str,
+    ) -> tuple[TheoremExtraction, AgentTurn]:
+        return self._invoke(
+            stage="draft_theorem_extraction",
+            payload={
+                "source_ref": asdict(source_ref),
+                "source_text": source_text,
+                "normalized_text": normalized_text,
+            },
+            response_type=TheoremExtraction,
+        )
+
+    def draft_theorem_enrichment(
+        self,
+        source_ref: SourceRef,
+        source_text: str,
+        extraction: TheoremExtraction,
+        extraction_markdown: str,
+    ) -> tuple[EnrichmentReport, AgentTurn]:
+        return self._invoke(
+            stage="draft_theorem_enrichment",
+            payload={
+                "source_ref": asdict(source_ref),
+                "source_text": source_text,
+                "extraction": asdict(extraction),
+                "extraction_markdown": extraction_markdown,
+            },
+            response_type=EnrichmentReport,
+        )
+
     def draft_theorem_spec(
         self,
         source_ref: SourceRef,
-        normalized_text: str,
+        source_text: str,
+        extraction: TheoremExtraction,
+        enrichment: EnrichmentReport,
     ) -> tuple[TheoremSpec, AgentTurn]:
         return self._invoke(
             stage="draft_theorem_spec",
             payload={
                 "source_ref": asdict(source_ref),
-                "normalized_text": normalized_text,
+                "source_text": source_text,
+                "extraction": asdict(extraction),
+                "enrichment": asdict(enrichment),
             },
             response_type=TheoremSpec,
         )
@@ -52,12 +99,14 @@ class SubprocessFormalizationAgent:
         self,
         theorem_spec: TheoremSpec,
         context_pack: ContextPack,
+        enrichment: EnrichmentReport,
     ) -> tuple[FormalizationPlan, AgentTurn]:
         return self._invoke(
             stage="draft_formalization_plan",
             payload={
                 "theorem_spec": asdict(theorem_spec),
                 "context_pack": asdict(context_pack),
+                "enrichment": asdict(enrichment),
             },
             response_type=FormalizationPlan,
         )

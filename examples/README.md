@@ -13,5 +13,6 @@ with a live `codex exec` backend. It keeps the same persisted artifact contract,
 requires a working Codex CLI login.
 
 `run_codex_manual_review_demo.py` formalizes a different theorem (`n + 0 = n`) through
-the same live Codex backend without `--auto-approve`. It stops at spec, plan, and final
-review in turn, then records explicit human approval notes before resuming each stage.
+the same live Codex backend without `--auto-approve`. It stops at enrichment, spec,
+plan, and final review in turn, then records explicit human approval notes before
+resuming each stage.

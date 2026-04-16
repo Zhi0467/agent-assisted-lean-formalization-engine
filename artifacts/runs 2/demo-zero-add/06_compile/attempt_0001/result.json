@@ -1,0 +1,21 @@
+{
+  "attempt": 1,
+  "build_passed": false,
+  "command": [
+    "lake",
+    "build",
+    "FormalizationEngineWorkspace"
+  ],
+  "contains_sorry": false,
+  "diagnostics": [
+    "Missing `lake` executable."
+  ],
+  "fast_check_passed": false,
+  "missing_toolchain": true,
+  "passed": false,
+  "quality_gate_passed": false,
+  "returncode": 127,
+  "status": "toolchain_missing",
+  "stderr": "Lean toolchain is not available on PATH and ~/.elan/bin/lake was not found.",
+  "stdout": ""
+}

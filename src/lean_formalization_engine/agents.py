@@ -5,10 +5,12 @@ from typing import Protocol, Tuple
 from .models import (
     AgentTurn,
     ContextPack,
+    EnrichmentReport,
     FormalizationPlan,
     LeanDraft,
     RepairContext,
     SourceRef,
+    TheoremExtraction,
     TheoremSpec,
 )
 
@@ -16,10 +18,29 @@ from .models import (
 class FormalizationAgent(Protocol):
     name: str
 
+    def draft_theorem_extraction(
+        self,
+        source_ref: SourceRef,
+        source_text: str,
+        normalized_text: str,
+    ) -> Tuple[TheoremExtraction, AgentTurn]:
+        ...
+
+    def draft_theorem_enrichment(
+        self,
+        source_ref: SourceRef,
+        source_text: str,
+        extraction: TheoremExtraction,
+        extraction_markdown: str,
+    ) -> Tuple[EnrichmentReport, AgentTurn]:
+        ...
+
     def draft_theorem_spec(
         self,
         source_ref: SourceRef,
-        normalized_text: str,
+        source_text: str,
+        extraction: TheoremExtraction,
+        enrichment: EnrichmentReport,
     ) -> Tuple[TheoremSpec, AgentTurn]:
         ...
 
@@ -27,6 +48,7 @@ class FormalizationAgent(Protocol):
         self,
         theorem_spec: TheoremSpec,
         context_pack: ContextPack,
+        enrichment: EnrichmentReport,
     ) -> Tuple[FormalizationPlan, AgentTurn]:
         ...
 

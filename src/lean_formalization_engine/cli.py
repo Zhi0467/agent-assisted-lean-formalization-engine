@@ -24,8 +24,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--agent-command",
         help=(
-            "Optional command that implements theorem-spec, plan, and Lean-draft turns "
-            "over stdin/stdout. If omitted, the CLI uses the default built-in backend."
+            "Optional command that implements extraction, enrichment, theorem-spec, plan, "
+            "and Lean-draft turns over stdin/stdout. If omitted, the CLI uses the default "
+            "built-in backend."
         ),
     )
     parser.add_argument(
@@ -51,6 +52,13 @@ def build_parser() -> argparse.ArgumentParser:
     resume_parser = subparsers.add_parser("resume", help="Resume an existing run.")
     resume_parser.add_argument("--run-id", required=True)
     resume_parser.add_argument("--auto-approve", action="store_true")
+
+    approve_enrichment_parser = subparsers.add_parser(
+        "approve-enrichment",
+        help="Approve the saved enrichment handoff.",
+    )
+    approve_enrichment_parser.add_argument("--run-id", required=True)
+    approve_enrichment_parser.add_argument("--notes", default="Approved by CLI.")
 
     approve_spec_parser = subparsers.add_parser("approve-spec", help="Approve the saved theorem spec.")
     approve_spec_parser.add_argument("--run-id", required=True)
@@ -154,6 +162,9 @@ def main() -> None:
         )
     elif args.command == "resume":
         manifest = workflow.resume(args.run_id, auto_approve=args.auto_approve)
+    elif args.command == "approve-enrichment":
+        workflow.approve_enrichment(args.run_id, notes=args.notes)
+        manifest = workflow.status(args.run_id)
     elif args.command == "approve-spec":
         workflow.approve_spec(args.run_id, notes=args.notes)
         manifest = workflow.status(args.run_id)

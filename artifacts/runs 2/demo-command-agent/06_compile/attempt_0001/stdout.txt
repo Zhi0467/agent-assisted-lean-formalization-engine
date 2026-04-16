@@ -1,0 +1,6 @@
+$ /Users/murphy/.elan/bin/lake build FormalizationEngineWorkspace
+✔ [2/5] Built FormalizationEngineWorkspace.Basic (1.5s)
+⚠ [3/5] Built FormalizationEngineWorkspace.Generated (152ms)
+warning: FormalizationEngineWorkspace/Generated.lean:3:8: declaration uses `sorry`
+✔ [4/5] Built FormalizationEngineWorkspace (131ms)
+Build completed successfully (5 jobs).

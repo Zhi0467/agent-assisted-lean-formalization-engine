@@ -45,6 +45,15 @@ def validate_theorem_spec(theorem_spec: dict[str, object]) -> None:
         raise RuntimeError("Spec review failed: live Codex surfaced ambiguities.")
 
 
+def validate_enrichment_report(enrichment_report: dict[str, object]) -> None:
+    if not enrichment_report.get("self_contained"):
+        raise RuntimeError("Enrichment review failed: theorem should be self-contained.")
+
+    missing = [str(item) for item in enrichment_report.get("missing_prerequisites", [])]
+    if missing:
+        raise RuntimeError("Enrichment review failed: unexpected missing prerequisites.")
+
+
 def validate_formalization_plan(plan: dict[str, object]) -> None:
     if plan.get("theorem_name") != "right_add_zero_nat":
         raise RuntimeError("Plan review failed: unexpected theorem name.")
@@ -89,8 +98,18 @@ def main() -> None:
         run_id=run_id,
         auto_approve=False,
     )
+    _expect_stage(manifest, RunStage.AWAITING_ENRICHMENT_REVIEW, "enrichment review")
+    enrichment_report = _read_json(run_root / "03_enrichment" / "enrichment_report.json")
+    validate_enrichment_report(enrichment_report)
+    print(f"Enrichment review: self_contained={enrichment_report['self_contained']}")
+    workflow.approve_enrichment(
+        run_id,
+        notes="Enrichment confirms the theorem is self-contained over Nat.",
+    )
+
+    manifest = workflow.resume(run_id, auto_approve=False)
     _expect_stage(manifest, RunStage.AWAITING_SPEC_REVIEW, "spec review")
-    theorem_spec = _read_json(run_root / "02_spec" / "theorem_spec.json")
+    theorem_spec = _read_json(run_root / "04_spec" / "theorem_spec.json")
     validate_theorem_spec(theorem_spec)
     print(f"Spec review: {theorem_spec['title']}")
     print(f"Conclusion: {theorem_spec['conclusion']}")
@@ -101,7 +120,7 @@ def main() -> None:
 
     manifest = workflow.resume(run_id, auto_approve=False)
     _expect_stage(manifest, RunStage.AWAITING_PLAN_REVIEW, "plan review")
-    plan = _read_json(run_root / "04_plan" / "formalization_plan.json")
+    plan = _read_json(run_root / "06_plan" / "formalization_plan.json")
     validate_formalization_plan(plan)
     print(f"Plan review: {plan['theorem_name']}")
     print(f"Target: {plan['target_statement']}")
@@ -113,7 +132,7 @@ def main() -> None:
     manifest = workflow.resume(run_id, auto_approve=False)
     _expect_stage(manifest, RunStage.AWAITING_FINAL_REVIEW, "final review")
     print(f"Compile attempts before final review: {manifest.attempt_count}")
-    candidate_path = run_root / "08_final" / "final_candidate.lean"
+    candidate_path = run_root / "10_final" / "final_candidate.lean"
     validate_final_candidate(candidate_path.read_text(encoding="utf-8"))
     print(f"Final review candidate: {candidate_path.relative_to(repo_root)}")
     workflow.approve_final(

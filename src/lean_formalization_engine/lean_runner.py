@@ -87,7 +87,11 @@ class LeanRunner:
         workspace = store.path("workspace")
         if workspace.exists():
             shutil.rmtree(workspace)
-        shutil.copytree(self.template_dir, workspace)
+        shutil.copytree(
+            self.template_dir,
+            workspace,
+            ignore=shutil.ignore_patterns(".git", ".lake", "build", "lake-manifest.json"),
+        )
         return workspace
 
     def _cleanup_workspace(self, workspace: Path) -> None:

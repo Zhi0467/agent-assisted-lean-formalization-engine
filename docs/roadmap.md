@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-04-04 06:58 UTC
+Last updated: 2026-04-15 20:45 UTC
 
 ## Current Status
 
@@ -24,6 +24,13 @@ two concrete workflow blockers on its current head. Missing `codex` binaries sti
 with a raw traceback, and multi-command runs can silently switch providers on `resume`
 because backend choice is not yet persisted with the run.
 
+The workflow now also has an explicit pre-spec understanding layer. Source ingestion no
+longer jumps straight from normalized text to theorem spec. It first emits an extraction
+artifact with the theorem's dependency chain, then an enrichment handoff that says what
+is already in Lean/mathlib, what is missing, what should be added to the formalization
+plan, and what the human reviewer should approve before the theorem-spec stage continues.
+The Lean template is now mathlib-backed rather than Lean-only.
+
 ## Milestone 1 — Lock the Engine Skeleton
 
 Success criteria:
@@ -39,6 +46,7 @@ Gate:
 
 ### Activity Log
 
+- [2026-04-15 20:45 UTC] Split the old pre-spec surface into `02_extraction` and `03_enrichment`, added an explicit enrichment review gate and handoff artifact, threaded missing prerequisites into the formalization plan, versioned/tagged the workflow in the manifest and architecture doc, and upgraded the Lean workspace template to a neutral mathlib-backed scaffold.
 - [2026-04-04 06:20 UTC] Switched the CLI default backend for real runs from the deterministic demo agent to Codex, while keeping `--agent-backend demo` explicit for examples/tests and preserving `--agent-command` as the subprocess override.
 - [2026-04-04 06:20 UTC] Added `docs/manual-review-walkthrough.md` so the human-reviewed theorem path is visible as direct CLI commands instead of only through the Python demo script.
 - [2026-04-03 10:25 UTC] Initialized the project surface around five durable directories: `src/`, `examples/`, `assets/`, `artifacts/`, and `lean_workspace_template/`.

@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from examples.run_codex_manual_review_demo import (
+    validate_enrichment_report,
     validate_final_candidate,
     validate_formalization_plan,
     validate_theorem_spec,
@@ -10,6 +11,14 @@ from examples.run_codex_manual_review_demo import (
 
 
 class ManualReviewDemoValidationTest(unittest.TestCase):
+    def test_validate_enrichment_accepts_self_contained_right_add_zero(self) -> None:
+        validate_enrichment_report(
+            {
+                "self_contained": True,
+                "missing_prerequisites": [],
+            }
+        )
+
     def test_validate_theorem_spec_accepts_right_add_zero(self) -> None:
         validate_theorem_spec(
             {
