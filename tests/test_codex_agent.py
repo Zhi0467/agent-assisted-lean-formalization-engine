@@ -158,6 +158,9 @@ class CodexAgentTest(unittest.TestCase):
 
             self.assertEqual(plan.theorem_name, "legacy_zero_add")
             self.assertEqual(plan.title, "Zero add")
+            self.assertEqual(plan.assumptions, ["n : Nat"])
+            self.assertEqual(plan.conclusion, "0 + n = n")
+            self.assertEqual(plan.symbols, ["Nat", "0", "+", "="])
 
     def test_resume_cli_accepts_agent_command_for_legacy_command_runs(self) -> None:
         project_root = Path(__file__).resolve().parents[1]

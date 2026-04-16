@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from dataclasses import asdict
 from pathlib import Path
@@ -89,15 +90,7 @@ class SubprocessFormalizationAgent:
                 "source_ref": asdict(source_ref),
                 "source_text": source_text,
                 "extraction": asdict(extraction),
-                "theorem_spec": {
-                    "title": extraction.title,
-                    "informal_statement": extraction.informal_statement,
-                    "assumptions": [],
-                    "conclusion": extraction.informal_statement,
-                    "symbols": [],
-                    "ambiguities": [],
-                    "paraphrase": extraction.informal_statement,
-                },
+                "theorem_spec": _legacy_theorem_spec_payload(extraction),
                 "enrichment": asdict(enrichment),
                 "context_pack": asdict(context_pack),
             },
@@ -181,3 +174,83 @@ def _default_agent_name(command: list[str]) -> str:
             return "subprocess:python-inline"
         return f"subprocess:{Path(command[1]).name}"
     return f"subprocess:{executable_name}"
+
+
+def _legacy_theorem_spec_payload(extraction: TheoremExtraction) -> dict[str, object]:
+    assumptions, conclusion = _infer_assumptions_and_conclusion(extraction.informal_statement)
+    return {
+        "title": extraction.title,
+        "informal_statement": extraction.informal_statement,
+        "assumptions": assumptions,
+        "conclusion": conclusion,
+        "symbols": _infer_symbols(extraction, assumptions, conclusion),
+        "ambiguities": [],
+        "paraphrase": extraction.informal_statement,
+    }
+
+
+def _infer_assumptions_and_conclusion(statement: str) -> tuple[list[str], str]:
+    stripped = statement.strip().rstrip(".")
+    lowered = stripped.lower()
+    for prefix in ("for every ", "for each ", "for any "):
+        if not lowered.startswith(prefix):
+            continue
+        remainder = stripped[len(prefix) :]
+        if "," not in remainder:
+            break
+        subject, conclusion = remainder.split(",", 1)
+        assumption = _subject_to_assumption(subject.strip())
+        return ([assumption] if assumption else []), conclusion.strip()
+    return [], stripped
+
+
+def _subject_to_assumption(subject: str) -> str | None:
+    cleaned = subject.replace("`", "").strip()
+    if not cleaned:
+        return None
+    tokens = cleaned.split()
+    variable = tokens[-1]
+    if not re.fullmatch(r"[A-Za-z_]\w*", variable):
+        return None
+    type_name = _descriptor_type(" ".join(tokens[:-1]).lower().strip())
+    if type_name is None:
+        return None
+    return f"{variable} : {type_name}"
+
+
+def _descriptor_type(descriptor: str) -> str | None:
+    if descriptor.endswith("natural number") or descriptor.endswith("natural numbers"):
+        return "Nat"
+    if descriptor.endswith("integer") or descriptor.endswith("integers"):
+        return "Int"
+    if descriptor.endswith("real number") or descriptor.endswith("real numbers"):
+        return "Real"
+    if descriptor.endswith("boolean") or descriptor.endswith("booleans"):
+        return "Bool"
+    if descriptor.endswith("proposition") or descriptor.endswith("propositions"):
+        return "Prop"
+    return None
+
+
+def _infer_symbols(
+    extraction: TheoremExtraction,
+    assumptions: list[str],
+    conclusion: str,
+) -> list[str]:
+    symbols: list[str] = []
+    supporting_text = " ".join(
+        [
+            extraction.informal_statement,
+            conclusion,
+            *assumptions,
+            *extraction.definitions,
+            *extraction.lemmas,
+            *extraction.dependencies,
+        ]
+    )
+    if "Nat" in supporting_text or "natural number" in extraction.informal_statement.lower():
+        symbols.append("Nat")
+    for token in ("0", "1", "+", "-", "*", "/", "="):
+        if token in supporting_text and token not in symbols:
+            symbols.append(token)
+    return symbols
