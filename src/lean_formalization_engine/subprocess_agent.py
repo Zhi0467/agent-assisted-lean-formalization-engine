@@ -194,10 +194,8 @@ class SubprocessFormalizationAgent:
                 },
                 response_type=TheoremSpec,
             )
-        except RuntimeError as exc:
-            if "unsupported stage" in str(exc).lower():
-                return None
-            raise
+        except RuntimeError:
+            return None
         return theorem_spec
 
 

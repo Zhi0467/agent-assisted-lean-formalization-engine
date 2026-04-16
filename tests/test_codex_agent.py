@@ -168,8 +168,8 @@ class CodexAgentTest(unittest.TestCase):
                     self.assertEqual(plan.theorem_name, "legacy_zero_add")
                     self.assertEqual(plan.title, "Zero add")
                     self.assertEqual(plan.assumptions, ["n : Nat"])
-            self.assertEqual(plan.conclusion, "0 + n = n")
-            self.assertEqual(plan.symbols, ["Nat", "0", "+", "="])
+                    self.assertEqual(plan.conclusion, "0 + n = n")
+                    self.assertEqual(plan.symbols, ["Nat", "0", "+", "="])
 
     def test_subprocess_plan_payload_prefers_real_legacy_theorem_spec(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -260,6 +260,85 @@ class CodexAgentTest(unittest.TestCase):
             self.assertEqual(plan.assumptions, ["n : Nat"])
             self.assertEqual(plan.conclusion, "0 + n = n")
             self.assertEqual(plan.symbols, ["Nat", "0", "+", "="])
+
+    def test_subprocess_plan_payload_tolerates_unknown_legacy_spec_stage_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            provider_script = repo_root / "new_provider.py"
+            provider_script.write_text(
+                "\n".join(
+                    [
+                        "from __future__ import annotations",
+                        "import json",
+                        "import sys",
+                        "",
+                        "def main() -> int:",
+                        "    request = json.load(sys.stdin)",
+                        "    if request['stage'] == 'draft_theorem_spec':",
+                        "        print('Unknown stage draft_theorem_spec', file=sys.stderr)",
+                        "        raise SystemExit(1)",
+                        "    theorem_spec = request['theorem_spec']",
+                        "    parsed_output = {",
+                        "        'title': theorem_spec['title'],",
+                        "        'informal_statement': theorem_spec['informal_statement'],",
+                        "        'assumptions': theorem_spec['assumptions'],",
+                        "        'conclusion': theorem_spec['conclusion'],",
+                        "        'symbols': theorem_spec['symbols'],",
+                        "        'ambiguities': theorem_spec['ambiguities'],",
+                        "        'paraphrase': theorem_spec['paraphrase'],",
+                        "        'theorem_name': 'legacy_zero_add',",
+                        "        'imports': ['FormalizationEngineWorkspace.Basic'],",
+                        "        'prerequisites_to_formalize': request['enrichment']['required_plan_additions'],",
+                        "        'helper_definitions': [],",
+                        "        'target_statement': 'theorem legacy_zero_add (n : Nat) : 0 + n = n',",
+                        "        'proof_sketch': ['Use Nat.zero_add.'],",
+                        "        'human_summary': 'Legacy provider compatibility.',",
+                        "    }",
+                        "    json.dump({'prompt': 'legacy-plan', 'raw_response': 'legacy-plan', 'parsed_output': parsed_output}, sys.stdout)",
+                        "    return 0",
+                        "",
+                        "if __name__ == '__main__':",
+                        "    raise SystemExit(main())",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            provider_script.chmod(0o755)
+
+            agent = SubprocessFormalizationAgent(["python3", str(provider_script)])
+            plan, _ = agent.draft_formalization_plan(
+                SourceRef(path="input.md", kind=SourceKind.MARKDOWN),
+                "For all n : Nat, 0 + n = n.\n",
+                TheoremExtraction(
+                    title="Zero add",
+                    informal_statement="For all n : Nat, 0 + n = n.",
+                    definitions=["Nat"],
+                    lemmas=["Nat.zero_add"],
+                    propositions=[],
+                    dependencies=["Nat.zero_add"],
+                    notes=[],
+                ),
+                EnrichmentReport(
+                    self_contained=True,
+                    satisfied_prerequisites=["Nat.zero_add exists."],
+                    missing_prerequisites=[],
+                    required_plan_additions=[],
+                    recommended_scope="Keep the theorem over Nat.",
+                    difficulty_assessment="easy",
+                    open_questions=[],
+                    next_steps=["Approve the merged plan."],
+                    human_handoff="Everything needed is already present.",
+                ),
+                ContextPack(
+                    recommended_imports=["FormalizationEngineWorkspace.Basic"],
+                    local_examples=["examples/inputs/zero_add.md"],
+                    notes=["Use Nat.zero_add."],
+                ),
+            )
+
+            self.assertEqual(plan.assumptions, ["n : Nat"])
+            self.assertEqual(plan.conclusion, "0 + n = n")
 
     def test_resume_cli_accepts_agent_command_for_legacy_command_runs(self) -> None:
         project_root = Path(__file__).resolve().parents[1]

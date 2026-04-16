@@ -1094,6 +1094,7 @@ class FormalizationWorkflow:
         store.write_json(f"{stage_dir}/decision.json", decision)
 
     def _parse_review_file(self, content: str) -> ReviewDecision | None:
+        valid_decisions = {"approve", "retry", "reject"}
         lines = content.splitlines()
         decision_value: str | None = None
         notes_lines: list[str] = []
@@ -1112,6 +1113,11 @@ class FormalizationWorkflow:
 
         if decision_value is None or decision_value in {"", "pending"}:
             return None
+        if decision_value not in valid_decisions:
+            raise ValueError(
+                "Unsupported review decision "
+                f"`{decision_value}`. Use one of: {', '.join(sorted(valid_decisions))}."
+            )
         notes = "\n".join(notes_lines).strip()
         return ReviewDecision(decision=decision_value, updated_at=utc_now(), notes=notes)
 

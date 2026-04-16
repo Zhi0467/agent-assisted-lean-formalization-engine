@@ -622,6 +622,32 @@ class DemoWorkflowTest(unittest.TestCase):
                 "reject",
             )
 
+    def test_invalid_review_file_decision_raises(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        template_dir = project_root / "lean_workspace_template"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text(
+                "For every natural number n, adding zero on the left gives back n.\n",
+                encoding="utf-8",
+            )
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=LeanRunner(template_dir=template_dir, lake_path="/definitely/missing/lake"),
+            )
+
+            manifest = workflow.prove(source_path=source_path, run_id="invalid-review", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+
+            run_root = temp_root / "artifacts" / "runs" / "invalid-review"
+            self._write_review(run_root, "01_enrichment", "approved", "Typo.")
+
+            with self.assertRaisesRegex(ValueError, "Unsupported review decision"):
+                workflow.resume("invalid-review", auto_approve=False)
+
     def test_successful_retry_clears_latest_error_before_final_review(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         template_dir = project_root / "lean_workspace_template"
