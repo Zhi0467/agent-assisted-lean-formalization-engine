@@ -1060,6 +1060,38 @@ class CodexAgentTest(unittest.TestCase):
         self.assertEqual(payload["assumptions"], ["m : Nat", "n : Nat"])
         self.assertEqual(payload["conclusion"], "m + n = n + m")
 
+    def test_legacy_theorem_spec_payload_accepts_comma_separated_binders(self) -> None:
+        payload = _legacy_theorem_spec_payload(
+            TheoremExtraction(
+                title="Commute add",
+                informal_statement="For every natural numbers m, n, m + n = n + m.",
+                definitions=["Nat"],
+                lemmas=[],
+                propositions=[],
+                dependencies=[],
+                notes=[],
+            )
+        )
+
+        self.assertEqual(payload["assumptions"], ["m : Nat", "n : Nat"])
+        self.assertEqual(payload["conclusion"], "m + n = n + m")
+
+    def test_legacy_theorem_spec_payload_accepts_comma_separated_typed_binders(self) -> None:
+        payload = _legacy_theorem_spec_payload(
+            TheoremExtraction(
+                title="Commute add",
+                informal_statement="For every natural numbers m, n : Nat, m + n = n + m.",
+                definitions=["Nat"],
+                lemmas=[],
+                propositions=[],
+                dependencies=[],
+                notes=[],
+            )
+        )
+
+        self.assertEqual(payload["assumptions"], ["m : Nat", "n : Nat"])
+        self.assertEqual(payload["conclusion"], "m + n = n + m")
+
     def test_resume_override_persists_new_command_in_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)

@@ -334,9 +334,9 @@ def _descriptor_type(descriptor: str) -> str | None:
 
 
 def _split_subject_and_conclusion(remainder: str) -> tuple[str | None, str | None]:
-    if "," in remainder:
-        subject, conclusion = remainder.split(",", 1)
-        return subject, conclusion
+    comma_split = _split_comma_subject_and_conclusion(remainder)
+    if comma_split is not None:
+        return comma_split
 
     typed_separator = re.fullmatch(
         r"(\(?\s*.+?\s*:\s*[A-Za-z_][\w.]*\s*\)?)\s*:\s*(.+)",
@@ -350,6 +350,17 @@ def _split_subject_and_conclusion(remainder: str) -> tuple[str | None, str | Non
         return subject, conclusion
 
     return None, None
+
+
+def _split_comma_subject_and_conclusion(remainder: str) -> tuple[str, str] | None:
+    best_split: tuple[str, str] | None = None
+    for match in re.finditer(",", remainder):
+        subject = remainder[: match.start()]
+        conclusion = remainder[match.end() :]
+        if _subject_to_assumptions(subject.strip()) is None:
+            continue
+        best_split = (subject, conclusion)
+    return best_split
 
 
 def _infer_symbols(
