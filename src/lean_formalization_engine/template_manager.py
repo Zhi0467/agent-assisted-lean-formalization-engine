@@ -40,6 +40,10 @@ def resolve_workspace_template(
     )
 
 
+def discover_workspace_template(search_root: Path) -> Path | None:
+    return _find_eligible_template(search_root)
+
+
 def _find_eligible_template(search_root: Path) -> Path | None:
     candidates: list[Path] = [search_root / "lean_workspace_template"]
     for child in sorted(search_root.iterdir()):

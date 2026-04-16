@@ -25,6 +25,7 @@ from .models import (
     utc_now,
 )
 from .storage import RunStore
+from .template_manager import discover_workspace_template
 
 ENRICHMENT_DIR = "01_enrichment"
 PLAN_DIR = "02_plan"
@@ -115,8 +116,10 @@ class FormalizationWorkflow:
     def resume(self, run_id: str, auto_approve: bool = False) -> RunManifest:
         store = RunStore(self.artifacts_root, run_id)
         manifest = self._load_manifest(store)
+        if self.lean_runner.lake_path is None and manifest.lake_path is not None:
+            self.lean_runner.lake_path = manifest.lake_path
         persisted_lake_path = self._persisted_lake_path()
-        if persisted_lake_path != manifest.lake_path:
+        if persisted_lake_path is not None and persisted_lake_path != manifest.lake_path:
             manifest.lake_path = persisted_lake_path
             self._save_manifest(store, manifest)
         store.append_log(
@@ -1052,11 +1055,15 @@ class FormalizationWorkflow:
 
         template_dir = payload.get("template_dir")
         if not template_dir:
-            repo_template = self.repo_root / "lean_workspace_template"
-            if repo_template.exists():
-                template_dir = str(repo_template.resolve())
+            discovered = discover_workspace_template(self.repo_root)
+            if discovered is not None:
+                template_dir = str(discovered)
             else:
-                template_dir = str((Path(__file__).resolve().parent / "workspace_template").resolve())
+                repo_template = self.repo_root / "lean_workspace_template"
+                if repo_template.exists():
+                    template_dir = str(repo_template.resolve())
+                else:
+                    template_dir = str((Path(__file__).resolve().parent / "workspace_template").resolve())
         return RunManifest(
             run_id=payload["run_id"],
             source=SourceRef(

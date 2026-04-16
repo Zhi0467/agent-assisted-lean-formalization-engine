@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -262,6 +263,9 @@ class CodexAgentTest(unittest.TestCase):
             repo_root = Path(temp_dir)
             run_root = repo_root / "artifacts" / "runs" / "legacy"
             run_root.mkdir(parents=True)
+            project_root = Path(__file__).resolve().parents[1]
+            child_template = repo_root / "child" / "lean_workspace_template"
+            shutil.copytree(project_root / "lean_workspace_template", child_template)
             (run_root / "manifest.json").write_text(
                 json.dumps(
                     {
@@ -280,3 +284,4 @@ class CodexAgentTest(unittest.TestCase):
 
             self.assertEqual(manifest.run_id, "legacy")
             self.assertEqual(manifest.agent_config.backend, "demo")
+            self.assertEqual(manifest.template_dir, str(child_template.resolve()))

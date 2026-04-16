@@ -11,7 +11,7 @@ from .lean_runner import LeanRunner
 from .models import AgentConfig, RunManifest, RunStage, to_jsonable
 from .storage import RunStore, validate_run_id
 from .subprocess_agent import SubprocessFormalizationAgent
-from .template_manager import resolve_workspace_template
+from .template_manager import discover_workspace_template, resolve_workspace_template
 from .workflow import FormalizationWorkflow
 
 
@@ -177,6 +177,9 @@ def _load_manifest(repo_root: Path, run_id: str) -> RunManifest:
 
 
 def _default_template_dir(repo_root: Path) -> str:
+    discovered = discover_workspace_template(repo_root)
+    if discovered is not None:
+        return str(discovered)
     repo_template = repo_root / "lean_workspace_template"
     if repo_template.exists():
         return str(repo_template.resolve())

@@ -630,6 +630,38 @@ class DemoWorkflowTest(unittest.TestCase):
             persisted_manifest = RunStore(temp_root / "artifacts", "lake-override").read_json("manifest.json")
             self.assertEqual(persisted_manifest["lake_path"], str(fake_lake.resolve()))
 
+    def test_resume_without_override_keeps_manifest_lake_path(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        template_dir = project_root / "lean_workspace_template"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            fake_lake = self._write_fake_lake(temp_root)
+            source_path = temp_root / "input.md"
+            source_path.write_text(
+                "For every natural number n, adding zero on the left gives back n.\n",
+                encoding="utf-8",
+            )
+            initial_workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
+            )
+            manifest = initial_workflow.prove(source_path=source_path, run_id="lake-sticky", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+
+            resumed_workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=LeanRunner(template_dir=template_dir),
+            )
+            manifest = resumed_workflow.resume("lake-sticky", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+
+            persisted_manifest = RunStore(temp_root / "artifacts", "lake-sticky").read_json("manifest.json")
+            self.assertEqual(persisted_manifest["lake_path"], str(fake_lake.resolve()))
+
     def test_retry_decision_allows_exactly_one_more_attempt(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
