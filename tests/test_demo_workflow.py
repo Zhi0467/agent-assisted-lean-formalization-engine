@@ -590,6 +590,38 @@ class DemoWorkflowTest(unittest.TestCase):
             manifest = workflow.resume("reject-review", auto_approve=False)
             self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
 
+    def test_auto_approve_still_respects_rejected_review_file(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        template_dir = project_root / "lean_workspace_template"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text(
+                "For every natural number n, adding zero on the left gives back n.\n",
+                encoding="utf-8",
+            )
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=LeanRunner(template_dir=template_dir, lake_path="/definitely/missing/lake"),
+            )
+
+            manifest = workflow.prove(source_path=source_path, run_id="reject-auto-approve", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+
+            run_root = temp_root / "artifacts" / "runs" / "reject-auto-approve"
+            self._write_review(run_root, "01_enrichment", "reject", "Need changes first.")
+            manifest = workflow.resume("reject-auto-approve", auto_approve=True)
+
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+            self.assertEqual(
+                RunStore(temp_root / "artifacts", "reject-auto-approve").read_json("01_enrichment/decision.json")[
+                    "decision"
+                ],
+                "reject",
+            )
+
     def test_resume_proving_run_with_final_candidate_promotes_final_review(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -840,6 +872,151 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
             self.assertEqual(manifest.attempt_count, 1)
             self.assertTrue((run_root / "03_proof" / "checkpoint.md").exists())
+
+    def test_resume_legacy_enrichment_review_honors_existing_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            run_root = temp_root / "artifacts" / "runs" / "legacy-enrichment"
+            run_root.mkdir(parents=True)
+            (run_root / "00_input").mkdir(parents=True, exist_ok=True)
+            (run_root / "00_input" / "source.txt").write_text(
+                "For every natural number n, adding zero on the left gives back n.\n",
+                encoding="utf-8",
+            )
+            (run_root / "manifest.json").write_text(
+                """{
+  "run_id": "legacy-enrichment",
+  "source": {"path": "input.md", "kind": "markdown"},
+  "agent_name": "repair_resume_agent",
+  "created_at": "2026-04-16T00:00:00Z",
+  "updated_at": "2026-04-16T00:00:00Z",
+  "current_stage": "awaiting_enrichment_review"
+}
+""",
+                encoding="utf-8",
+            )
+            store = RunStore(temp_root / "artifacts", "legacy-enrichment")
+            store.write_json(
+                "02_extraction/theorem_extraction.json",
+                {
+                    "title": "Zero add",
+                    "informal_statement": "For every natural number n, 0 + n = n.",
+                    "definitions": ["Nat"],
+                    "lemmas": ["Nat.zero_add"],
+                    "propositions": [],
+                    "dependencies": ["Nat.zero_add"],
+                    "notes": [],
+                },
+            )
+            store.write_json(
+                "03_enrichment/enrichment_report.json",
+                {
+                    "self_contained": True,
+                    "satisfied_prerequisites": ["Nat.zero_add exists."],
+                    "missing_prerequisites": [],
+                    "required_plan_additions": [],
+                    "recommended_scope": "Keep the theorem over Nat.",
+                    "difficulty_assessment": "easy",
+                    "open_questions": [],
+                    "next_steps": ["Approve the merged plan."],
+                    "human_handoff": "Everything needed is already present.",
+                },
+            )
+            store.write_json(
+                "03_enrichment/decision.json",
+                {
+                    "approved": True,
+                    "updated_at": "2026-04-16T00:01:00Z",
+                    "notes": "approved legacy enrichment",
+                },
+            )
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=SequencedLeanRunner(["compile_failed"]),
+                max_attempts=1,
+            )
+            manifest = workflow.resume("legacy-enrichment", auto_approve=False)
+
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
+            self.assertTrue((run_root / "02_plan" / "checkpoint.md").exists())
+
+    def test_resume_legacy_plan_review_honors_existing_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            run_root = temp_root / "artifacts" / "runs" / "legacy-plan-review"
+            run_root.mkdir(parents=True)
+            (run_root / "00_input").mkdir(parents=True, exist_ok=True)
+            (run_root / "00_input" / "source.txt").write_text(
+                "For every natural number n, adding zero on the left gives back n.\n",
+                encoding="utf-8",
+            )
+            (run_root / "manifest.json").write_text(
+                """{
+  "run_id": "legacy-plan-review",
+  "source": {"path": "input.md", "kind": "markdown"},
+  "agent_name": "repair_resume_agent",
+  "created_at": "2026-04-16T00:00:00Z",
+  "updated_at": "2026-04-16T00:00:00Z",
+  "current_stage": "awaiting_plan_review"
+}
+""",
+                encoding="utf-8",
+            )
+            store = RunStore(temp_root / "artifacts", "legacy-plan-review")
+            store.write_json(
+                "04_spec/theorem_spec.approved.json",
+                {
+                    "title": "Zero add",
+                    "informal_statement": "For every natural number n, 0 + n = n.",
+                    "assumptions": ["n : Nat"],
+                    "conclusion": "0 + n = n",
+                    "symbols": ["0", "+", "Nat"],
+                    "ambiguities": [],
+                    "paraphrase": "Zero on the left does not change a natural number.",
+                },
+            )
+            store.write_json(
+                "05_context/context_pack.json",
+                {
+                    "recommended_imports": ["FormalizationEngineWorkspace.Basic"],
+                    "local_examples": ["examples/inputs/zero_add.md"],
+                    "notes": ["Use Nat.zero_add."],
+                },
+            )
+            store.write_json(
+                "06_plan/formalization_plan.json",
+                {
+                    "theorem_name": "zero_add_legacy",
+                    "imports": ["FormalizationEngineWorkspace.Basic"],
+                    "prerequisites_to_formalize": [],
+                    "helper_definitions": [],
+                    "target_statement": "theorem zero_add_legacy (n : Nat) : 0 + n = n",
+                    "proof_sketch": ["Use the existing `Nat.zero_add` lemma."],
+                },
+            )
+            store.write_json(
+                "06_plan/decision.json",
+                {
+                    "approved": True,
+                    "updated_at": "2026-04-16T00:01:00Z",
+                    "notes": "approved legacy plan",
+                },
+            )
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=SequencedLeanRunner(["compile_failed"]),
+                max_attempts=1,
+            )
+            manifest = workflow.resume("legacy-plan-review", auto_approve=False)
+
+            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
+            self.assertEqual(manifest.attempt_count, 1)
 
     def test_resume_legacy_spec_review_builds_merged_plan_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

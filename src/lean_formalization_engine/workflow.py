@@ -999,7 +999,7 @@ class FormalizationWorkflow:
         auto_approve: bool,
     ) -> ReviewDecision | None:
         review_path = f"{stage_dir}/review.md"
-        if not auto_approve and store.exists(review_path):
+        if store.exists(review_path):
             decision = self._parse_review_file(store.read_text(review_path))
             if decision is not None:
                 self._write_decision(store, stage_dir, decision)
@@ -1364,13 +1364,9 @@ class FormalizationWorkflow:
         stage_dir: str,
         continue_decision: str,
     ) -> ReviewDecision | None:
-        if stage_dir == ENRICHMENT_DIR:
-            if not store.exists(LEGACY_ENRICHMENT_APPROVED_JSON):
-                return None
+        if stage_dir == ENRICHMENT_DIR and store.exists(LEGACY_ENRICHMENT_DECISION):
             return self._map_legacy_decision(store, LEGACY_ENRICHMENT_DECISION, continue_decision)
-        if stage_dir == PLAN_DIR:
-            if not store.exists(LEGACY_PLAN_APPROVED_JSON):
-                return None
+        if stage_dir == PLAN_DIR and store.exists(LEGACY_PLAN_DECISION):
             return self._map_legacy_decision(store, LEGACY_PLAN_DECISION, continue_decision)
         if stage_dir == PROOF_DIR and store.exists(LEGACY_STALL_DECISION):
             return self._map_legacy_decision(store, LEGACY_STALL_DECISION, continue_decision)
