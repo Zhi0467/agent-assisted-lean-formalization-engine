@@ -359,6 +359,53 @@ class CodexAgentTest(unittest.TestCase):
             self.assertIn("Checkpoint: artifacts/runs/legacy-final/10_final/final_report.md", summary)
             self.assertIn("Review file: artifacts/runs/legacy-final/10_final/decision.json", summary)
 
+    def test_render_manifest_summary_includes_agent_command_for_legacy_command_run(self) -> None:
+        repo_root = Path("/tmp/terry")
+        manifest = RunManifest(
+            run_id="legacy-command",
+            source=SourceRef(path="examples/inputs/zero_add.md", kind=SourceKind.MARKDOWN),
+            agent_name="my-custom-provider",
+            agent_config=AgentConfig(backend="command"),
+            template_dir="/tmp/terry/lean_workspace_template",
+            created_at="2026-04-16T00:00:00Z",
+            updated_at="2026-04-16T00:01:00Z",
+            current_stage=RunStage.AWAITING_ENRICHMENT_APPROVAL,
+        )
+
+        summary = render_manifest_summary(manifest, repo_root)
+
+        self.assertIn("--agent-command", summary)
+        self.assertIn("python3 path/to/provider.py", summary)
+
+    def test_render_manifest_summary_prefers_legacy_spec_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            run_root = repo_root / "artifacts" / "runs" / "legacy-spec"
+            (run_root / "04_spec").mkdir(parents=True)
+            (run_root / "04_spec" / "theorem_spec.json").write_text(
+                '{"title": "Zero add"}\n',
+                encoding="utf-8",
+            )
+            (run_root / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "legacy-spec",
+                        "source": {"path": "input.md", "kind": "markdown"},
+                        "agent_name": "repair_resume_agent",
+                        "created_at": "2026-04-16T00:00:00Z",
+                        "updated_at": "2026-04-16T00:00:00Z",
+                        "current_stage": "awaiting_spec_review",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            manifest = _load_manifest(repo_root, "legacy-spec")
+            summary = render_manifest_summary(manifest, repo_root)
+
+            self.assertIn("Checkpoint: artifacts/runs/legacy-spec/04_spec/theorem_spec.json", summary)
+            self.assertIn("Review file: artifacts/runs/legacy-spec/04_spec/theorem_spec.json", summary)
+
     def test_prove_validation_happens_before_template_resolution(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as temp_dir:

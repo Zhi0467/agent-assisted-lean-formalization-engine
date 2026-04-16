@@ -622,6 +622,34 @@ class DemoWorkflowTest(unittest.TestCase):
                 "reject",
             )
 
+    def test_successful_retry_clears_latest_error_before_final_review(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        template_dir = project_root / "lean_workspace_template"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            fake_lake = self._write_fake_lake(temp_root)
+            source_path = temp_root / "input.md"
+            source_path.write_text(
+                "For every natural number n, adding zero on the left gives back n.\n",
+                encoding="utf-8",
+            )
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
+            )
+
+            manifest = workflow.prove(source_path=source_path, run_id="clear-latest-error", auto_approve=False)
+            run_root = temp_root / "artifacts" / "runs" / "clear-latest-error"
+            self._write_review(run_root, "01_enrichment", "approve", "Looks good.")
+            manifest = workflow.resume("clear-latest-error", auto_approve=False)
+            self._write_review(run_root, "02_plan", "approve", "Proceed to proof.")
+            manifest = workflow.resume("clear-latest-error", auto_approve=False)
+
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_FINAL_APPROVAL)
+            self.assertIsNone(manifest.latest_error)
+
     def test_resume_proving_run_with_final_candidate_promotes_final_review(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)

@@ -497,6 +497,7 @@ class FormalizationWorkflow:
             manifest.updated_at = utc_now()
 
             if compile_result.passed:
+                manifest.latest_error = None
                 store.append_log(
                     "prove_attempt_passed",
                     f"Attempt {attempt} compiled successfully.",
@@ -691,7 +692,7 @@ class FormalizationWorkflow:
         self._save_manifest(store, manifest)
         review_path = f"{stage_dir}/review.md"
         checkpoint_path = f"{stage_dir}/checkpoint.md"
-        resume_command = self._resume_command(manifest.run_id)
+        resume_command = self._resume_command(manifest)
 
         existing_decision = self._load_decision(store, f"{stage_dir}/decision.json")
         if existing_decision is None or existing_decision.decision in {"pending", continue_decision}:
@@ -978,7 +979,7 @@ class FormalizationWorkflow:
             ]
         )
 
-    def _resume_command(self, run_id: str) -> str:
+    def _resume_command(self, manifest: RunManifest) -> str:
         command = [
             self.terry_command,
             "--repo-root",
@@ -987,7 +988,14 @@ class FormalizationWorkflow:
         lake_path = self._persisted_lake_path()
         if lake_path:
             command.extend(["--lake-path", lake_path])
-        command.extend(["resume", run_id])
+        command.extend(["resume", manifest.run_id])
+        if manifest.agent_config.backend == "command":
+            provider_command = (
+                shlex.join(manifest.agent_config.command)
+                if manifest.agent_config.command
+                else "python3 path/to/provider.py"
+            )
+            command.extend(["--agent-command", provider_command])
         return " ".join(shlex.quote(part) for part in command)
 
     def _resolve_checkpoint_decision(

@@ -21,6 +21,7 @@ _STATUS_SURFACE_CANDIDATES = {
     ],
     RunStage.AWAITING_PLAN_APPROVAL: [
         ("02_plan/checkpoint.md", "02_plan/review.md"),
+        ("04_spec/theorem_spec.json", "04_spec/theorem_spec.json"),
         ("06_plan/formalization_plan.json", "06_plan/decision.json"),
     ],
     RunStage.PROOF_BLOCKED: [
@@ -240,7 +241,12 @@ def _resume_agent_config(
     )
 
 
-def render_resume_command(run_id: str, repo_root: Path, lake_path: str | None) -> str:
+def render_resume_command(
+    run_id: str,
+    repo_root: Path,
+    lake_path: str | None,
+    agent_config: AgentConfig | None = None,
+) -> str:
     command = [
         "terry",
         "--repo-root",
@@ -249,6 +255,13 @@ def render_resume_command(run_id: str, repo_root: Path, lake_path: str | None) -
     if lake_path:
         command.extend(["--lake-path", lake_path])
     command.extend(["resume", run_id])
+    if agent_config is not None and agent_config.backend == "command":
+        provider_command = (
+            shlex.join(agent_config.command)
+            if agent_config.command
+            else "python3 path/to/provider.py"
+        )
+        command.extend(["--agent-command", provider_command])
     return " ".join(shlex.quote(part) for part in command)
 
 
@@ -282,7 +295,7 @@ def render_manifest_summary(manifest: RunManifest, repo_root: Path) -> str:
         lines.append(f"Checkpoint: {checkpoint_path.relative_to(repo_root)}")
         lines.append(f"Review file: {review_path.relative_to(repo_root)}")
         lines.append(
-            f"Resume with: {render_resume_command(manifest.run_id, repo_root, manifest.lake_path)}"
+            f"Resume with: {render_resume_command(manifest.run_id, repo_root, manifest.lake_path, manifest.agent_config)}"
         )
 
     if manifest.final_output_path:
