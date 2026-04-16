@@ -26,6 +26,8 @@ def resolve_workspace_template(
         return TemplateResolution(template_dir=discovered, origin="discovered")
 
     target_dir = search_root / "lean_workspace_template"
+    if not target_dir.exists() and _resolve_lake(lake_path) is None:
+        return TemplateResolution(template_dir=package_template_dir.resolve(), origin="packaged", command=[])
     command = _initialize_workspace_template(
         search_root=search_root,
         target_dir=target_dir,

@@ -25,7 +25,7 @@ from .models import (
     utc_now,
 )
 from .storage import RunStore
-from .template_manager import discover_workspace_template, resolve_workspace_template
+from .template_manager import _is_eligible_template, discover_workspace_template, resolve_workspace_template
 
 ENRICHMENT_DIR = "01_enrichment"
 PLAN_DIR = "02_plan"
@@ -1388,7 +1388,7 @@ class FormalizationWorkflow:
             return manifest
 
         template_path = Path(manifest.template_dir)
-        if template_path.exists():
+        if template_path.exists() and _is_eligible_template(template_path):
             self.lean_runner.template_dir = template_path
             return manifest
 

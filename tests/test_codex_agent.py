@@ -237,6 +237,22 @@ class CodexAgentTest(unittest.TestCase):
             self.assertTrue((resolution.template_dir / "FormalizationEngineWorkspace" / "Basic.lean").exists())
             self.assertEqual(resolution.command, [str(fake_lake), "new", "lean_workspace_template", "math"])
 
+    def test_template_resolution_falls_back_to_packaged_template_without_lake(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        package_template_dir = project_root / "lean_workspace_template"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+
+            resolution = resolve_workspace_template(
+                temp_root,
+                package_template_dir,
+                lake_path="/definitely/missing/lake",
+            )
+
+            self.assertEqual(resolution.origin, "packaged")
+            self.assertEqual(resolution.command, [])
+            self.assertEqual(resolution.template_dir, package_template_dir.resolve())
+
     def test_template_resolution_preserves_existing_ineligible_template(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         package_template_dir = project_root / "lean_workspace_template"
@@ -378,6 +394,78 @@ class CodexAgentTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("awaiting_enrichment_approval", result.stdout)
             self.assertTrue((repo_root / "artifacts" / "runs" / "fresh-root" / "01_enrichment" / "review.md").exists())
+
+    def test_prove_reports_missing_lake_as_proof_blocked(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            source_path = project_root / "examples" / "inputs" / "zero_add.md"
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "lean_formalization_engine.cli",
+                    "--repo-root",
+                    str(repo_root),
+                    "--lake-path",
+                    "/definitely/missing/lake",
+                    "prove",
+                    str(source_path),
+                    "--run-id",
+                    "missing-lake",
+                    "--agent-backend",
+                    "demo",
+                    "--auto-approve",
+                ],
+                cwd=project_root,
+                env={**os.environ, "PYTHONPATH": "src"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("proof_blocked", result.stdout)
+
+    def test_prove_rejects_existing_ineligible_template_cleanly(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            target_dir = repo_root / "lean_workspace_template"
+            (target_dir / "FormalizationEngineWorkspace").mkdir(parents=True)
+            (target_dir / "lakefile.toml").write_text(
+                'name = "Scratch"\n[[require]]\nname = "mathlib"\n',
+                encoding="utf-8",
+            )
+            (target_dir / "local.txt").write_text("keep", encoding="utf-8")
+            source_path = project_root / "examples" / "inputs" / "zero_add.md"
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "lean_formalization_engine.cli",
+                    "--repo-root",
+                    str(repo_root),
+                    "prove",
+                    str(source_path),
+                    "--run-id",
+                    "bad-template",
+                    "--agent-backend",
+                    "demo",
+                    "--auto-approve",
+                ],
+                cwd=project_root,
+                env={**os.environ, "PYTHONPATH": "src"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("not an eligible Terry template", result.stderr)
+            self.assertTrue((target_dir / "local.txt").exists())
 
     def test_resume_does_not_require_template_while_checkpoint_is_still_pending(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
