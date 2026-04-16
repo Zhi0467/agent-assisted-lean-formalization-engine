@@ -26,13 +26,20 @@ Branch-local verification is now `92/92`. The direct local review gate on the re
 worktree was already clear, and the last live GitHub Codex pass on PR `#3` only surfaced
 two smaller compatibility follow-ups on top of that same branch: the `resume`
 subcommand still hid backend/model overrides, and the legacy typed-binder fallback still
-rejected Unicode type names like `ℕ`. Both are fixed on the current head. Milestone 1 is
-therefore complete; the next honest work is Milestone 2 proof stress plus richer
-revision control.
+rejected Unicode type names like `ℕ`. Both are fixed on the current head.
+
+That said, the merge is now paused by one more architectural objection from Wangzhi:
+Terry still owns stage-content schemas and parser logic, but the intended contract is
+backend-owned enrichment / plan / proof work with files as the only interface. In the
+current code that hardcoding lives in `models.py` / `agents.py`, `codex_agent.py`,
+`subprocess_agent.py`, and the Terry-authored summaries in `workflow.py`. The next
+honest cut is therefore not Milestone 2 proof stress yet; it is to replace those typed
+stage payloads with backend-written stage files while leaving Terry responsible only for
+checkpointing, logging, and compile / retry control.
 
 ## Milestone 1 — Terry CLI Contract
 
-Status: complete on the current head.
+Status: functionally complete, but merge is blocked by the orchestrator-only contract correction above.
 
 Success criteria:
 
@@ -73,6 +80,8 @@ Gate:
 - [2026-04-16 20:12 UTC] The first focused local review on that bootstrap delta then found two follow-ups and both are fixed now: non-recoverable `lake new` failures still raise immediately instead of limping into the proof loop, and multi-line `lake` diagnostics stay out of the one-line `logs/timeline.md` surface. The fallback path is now covered by a fresh Terry smoke plus dedicated template-resolution / CLI regressions, and the full branch-local suite is `90/90`.
 - [2026-04-16 22:12 UTC] The later live GitHub Codex pass on `1a7761e` surfaced two smaller compatibility gaps outside the bootstrap patch: `terry resume` still rejected `--agent-backend` / `--codex-model` after the subcommand, and the legacy typed-binder fallback still dropped assumptions for Unicode type names like `ℕ`. Both are fixed now with parser and theorem-spec regressions.
 - [2026-04-16 22:12 UTC] Re-ran the full branch-local suite after those last compatibility fixes: `PYTHONPATH=src python3 -m unittest discover -s tests` (`92` tests, all passing). The docs/backlog now treat the Terry rewrite gate as closed, so the next work starts at Milestone 2 rather than another review-only loop.
+- [2026-04-16 22:16 UTC] During the final doc+merge pass, Wangzhi rejected the remaining Terry stage-schema design itself: each stage should be owned end to end by the chosen backend, with files as the interface, not Terry-authored parsing or theorem-spec synthesis.
+- [2026-04-16 22:16 UTC] Paused the merge and mapped the current hardcoded surfaces that violate that rule: `models.py` / `agents.py` stage dataclasses, `codex_agent.py` JSON-schema output, `subprocess_agent.py` `parsed_output` plus fallback theorem parsing, and the Terry-authored extraction/enrichment/plan summaries in `workflow.py`. The next cut is to move actual formalization content fully behind the backend/file boundary.
 
 ## Milestone 2 — Real Proof Stress
 

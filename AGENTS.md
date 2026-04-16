@@ -1,8 +1,9 @@
 # Project: Agent-Assisted Lean Formalization Engine
 
 CLI-first engine for turning theorem sources into compiling Lean 4 code with explicit
-human checkpoints. Current focus: stress Terry on a non-demo theorem that needs a real
-repair turn, then make enrichment/plan revision richer than approval-only review files.
+human checkpoints. Current focus: strip Terry down to workflow orchestration only so the
+chosen backend owns enrichment, planning, and proving end to end through files, then
+stress that surface on a non-demo theorem with a real repair turn.
 
 ## Key Docs
 

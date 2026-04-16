@@ -2,8 +2,8 @@
 
 The Terry rewrite gate is clear now. The last live GitHub Codex pass on PR `#3` only
 surfaced two non-fatal P2 compatibility issues, and both are fixed on the current head.
-Branch-local verification is `92/92`, so the rewrite items below are closed and the open
-backlog starts at the post-merge work.
+Branch-local verification is `92/92`, so the rewrite review items below are closed. The
+open blocker is no longer review cleanliness; it is the architecture correction below.
 
 ## Terry Rewrite Gate (Cleared)
 
@@ -21,6 +21,20 @@ current head. The later bootstrap-fallback patch for `revision not found 'v4.29.
 also stays in place, but Terry now records the full `lake` stderr in structured workflow
 details while keeping the one-line timeline readable. Current local verification:
 `PYTHONPATH=src python3 -m unittest discover -s tests` (`92` tests, all passing).
+
+## Architecture Correction (Open)
+
+- [ ] Remove Terry-owned stage-content schemas and theorem/parser logic so the chosen backend owns enrichment, planning, and proving end to end through files.
+
+Current note:
+After the final doc+merge pass, Wangzhi explicitly rejected the remaining schema-owned
+design. The branch no longer has a review-cleanliness problem; it has a product-contract
+problem. `models.py` / `agents.py` still define Terry-owned stage payloads,
+`codex_agent.py` still forces JSON-schema output, `subprocess_agent.py` still expects
+`parsed_output` and synthesizes fallback theorem logic, and `workflow.py` still renders
+Terry-authored extraction/enrichment/plan summaries from those parsed objects. Merge is
+paused until that content contract is replaced with backend-owned files plus Terry's
+checkpoint / logging / compile-retry orchestration.
 
 ## Terry Rewrite Surface
 
