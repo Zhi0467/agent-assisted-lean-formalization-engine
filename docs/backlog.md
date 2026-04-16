@@ -10,6 +10,12 @@ review coverage. Even the items that are already implemented locally remain on t
 - [ ] Publish the Terry rewrite on a fresh PR and request `@codex` review.
 - [ ] Clear or explicitly disposition the review findings before removing any rewrite items from this backlog.
 
+Current note:
+The first local review pass already surfaced two real Terry regressions and both are fixed
+on the active branch: legacy paused runs now import their old checkpoint artifacts into
+the Terry surface, and proof-loop `decision: retry` now grants exactly one extra attempt.
+A second review pass is still in flight, so the rewrite items below remain open.
+
 ## Terry Rewrite Surface
 
 - [ ] Land the `terry` CLI as the primary human interface, with `prove`, `resume`, and `status`.
