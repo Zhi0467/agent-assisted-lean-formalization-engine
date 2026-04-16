@@ -23,7 +23,10 @@ local review also caught one remaining CLI-compatibility regression: Terry left 
 rerun exposed two smaller compatibility gaps inside it: legacy global option ordering
 like `--agent-backend demo run ...` was still getting shadowed by subparser defaults, and
 `terry resume --agent-command ...` still left the stale command in the manifest after the
-current turn. Both are now fixed without changing the documented Terry contract, the
+current turn. The next rerun then found one more old-provider parsing bug: if the source
+statement also included a `Target statement:` line, the synthesized fallback
+`theorem_spec` conclusion swallowed the full prose block instead of the explicit target.
+All three follow-ups are now fixed without changing the documented Terry contract, the
 branch-local suite is currently `63/63`, and one more direct `codex review --base main`
 rerun is the remaining local gate before the PR step.
 

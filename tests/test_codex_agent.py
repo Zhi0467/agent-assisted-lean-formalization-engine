@@ -136,6 +136,8 @@ class CodexAgentTest(unittest.TestCase):
                 "For every natural number n: 0 + n = n.",
                 "For all n : Nat, 0 + n = n.",
                 "Given n : Nat, 0 + n = n.",
+                "For every natural number `n`, adding zero on the left gives back `n`.\n\nTarget statement: `0 + n = n`.",
+                "For every natural number n, adding zero on the left gives back n.\nTarget statement: n + 0 = n.",
             ]:
                 with self.subTest(statement=statement):
                     plan, _ = agent.draft_formalization_plan(
@@ -171,7 +173,10 @@ class CodexAgentTest(unittest.TestCase):
                     self.assertEqual(plan.theorem_name, "legacy_zero_add")
                     self.assertEqual(plan.title, "Zero add")
                     self.assertEqual(plan.assumptions, ["n : Nat"])
-                    self.assertEqual(plan.conclusion, "0 + n = n")
+                    if "Target statement: n + 0 = n" in statement:
+                        self.assertEqual(plan.conclusion, "n + 0 = n")
+                    else:
+                        self.assertEqual(plan.conclusion, "0 + n = n")
                     self.assertEqual(plan.symbols, ["Nat", "0", "+", "="])
 
     def test_subprocess_plan_payload_prefers_real_legacy_theorem_spec(self) -> None:

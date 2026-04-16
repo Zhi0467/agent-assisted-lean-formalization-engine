@@ -225,19 +225,40 @@ def _legacy_theorem_spec_payload(extraction: TheoremExtraction) -> dict[str, obj
 
 def _infer_assumptions_and_conclusion(statement: str) -> tuple[list[str], str]:
     stripped = statement.strip().rstrip(".")
-    lowered = stripped.lower()
+    target_statement = _extract_target_statement(stripped)
+    primary_statement = _strip_target_statement_lines(stripped)
+    lowered = primary_statement.lower()
     for prefix in ("for every ", "for each ", "for any ", "for all ", "given "):
         if not lowered.startswith(prefix):
             continue
-        remainder = stripped[len(prefix) :]
+        remainder = primary_statement[len(prefix) :]
         subject, conclusion = _split_subject_and_conclusion(remainder)
         if subject is None or conclusion is None:
             break
         assumption = _subject_to_assumption(subject.strip())
         if assumption is not None:
-            return [assumption], conclusion.strip()
+            return [assumption], target_statement or conclusion.strip()
         break
-    return [], stripped
+    return [], target_statement or stripped
+
+
+def _extract_target_statement(statement: str) -> str | None:
+    for line in statement.splitlines():
+        match = re.match(r"target statement\s*:\s*(.+)", line.strip(), flags=re.IGNORECASE)
+        if match is None:
+            continue
+        return match.group(1).strip().strip("`").rstrip(".")
+    return None
+
+
+def _strip_target_statement_lines(statement: str) -> str:
+    lines = [
+        line
+        for line in statement.splitlines()
+        if not re.match(r"target statement\s*:", line.strip(), flags=re.IGNORECASE)
+    ]
+    cleaned = "\n".join(line for line in lines if line.strip()).strip()
+    return cleaned or statement
 
 
 def _subject_to_assumption(subject: str) -> str | None:
