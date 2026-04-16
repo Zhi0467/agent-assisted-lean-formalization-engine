@@ -195,7 +195,10 @@ class CodexAgentTest(unittest.TestCase):
 
         self.assertIn("Stage: awaiting_plan_approval", summary)
         self.assertIn("Review file: artifacts/runs/zero-add/02_plan/review.md", summary)
-        self.assertIn("Resume with: terry resume zero-add", summary)
+        self.assertIn(
+            f"Resume with: terry --repo-root {repo_root.resolve()} resume zero-add",
+            summary,
+        )
 
     def test_load_manifest_falls_back_for_legacy_runs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

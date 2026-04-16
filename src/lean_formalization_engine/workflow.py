@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 
 from .agents import FormalizationAgent
@@ -29,6 +30,8 @@ ENRICHMENT_DIR = "01_enrichment"
 PLAN_DIR = "02_plan"
 PROOF_DIR = "03_proof"
 FINAL_DIR = "04_final"
+EXTRACTION_TURN_DIR = f"{ENRICHMENT_DIR}/extraction_turn"
+ENRICHMENT_TURN_DIR = f"{ENRICHMENT_DIR}/enrichment_turn"
 
 LEGACY_NORMALIZED_PATH = "01_normalized/normalized.md"
 LEGACY_EXTRACTION_JSON = "02_extraction/theorem_extraction.json"
@@ -85,6 +88,7 @@ class FormalizationWorkflow:
             created_at=utc_now(),
             updated_at=utc_now(),
             current_stage=RunStage.CREATED,
+            lake_path=self._persisted_lake_path(),
         )
         self._save_manifest(store, manifest)
 
@@ -302,7 +306,7 @@ class FormalizationWorkflow:
             extraction,
             extraction_markdown,
         )
-        self._write_agent_turn(store, ENRICHMENT_DIR, turn, enrichment)
+        self._write_agent_turn(store, ENRICHMENT_TURN_DIR, turn, enrichment)
         store.write_json(f"{ENRICHMENT_DIR}/extraction.json", extraction)
         store.write_text(f"{ENRICHMENT_DIR}/extraction.md", extraction_markdown)
         store.write_json(f"{ENRICHMENT_DIR}/enrichment_report.json", enrichment)
@@ -674,7 +678,7 @@ class FormalizationWorkflow:
         extraction: TheoremExtraction,
         turn,
     ) -> None:
-        self._write_agent_turn(store, ENRICHMENT_DIR, turn, extraction)
+        self._write_agent_turn(store, EXTRACTION_TURN_DIR, turn, extraction)
         store.write_json(f"{ENRICHMENT_DIR}/extraction.json", extraction)
         store.write_text(f"{ENRICHMENT_DIR}/extraction.md", self._render_extraction_markdown(extraction))
         store.append_log(
@@ -894,7 +898,16 @@ class FormalizationWorkflow:
         )
 
     def _resume_command(self, run_id: str) -> str:
-        return f"{self.terry_command} resume {run_id}"
+        command = [
+            self.terry_command,
+            "--repo-root",
+            str(self.repo_root.resolve()),
+        ]
+        lake_path = self._persisted_lake_path()
+        if lake_path:
+            command.extend(["--lake-path", lake_path])
+        command.extend(["resume", run_id])
+        return " ".join(shlex.quote(part) for part in command)
 
     def _resolve_checkpoint_decision(
         self,
@@ -1013,6 +1026,7 @@ class FormalizationWorkflow:
             created_at=payload["created_at"],
             updated_at=payload["updated_at"],
             current_stage=RunStage(resolved_stage),
+            lake_path=payload.get("lake_path"),
             workflow_version=payload.get("workflow_version", DEFAULT_WORKFLOW_VERSION),
             workflow_tags=payload.get("workflow_tags", list(DEFAULT_WORKFLOW_TAGS)),
             attempt_count=payload.get("attempt_count", 0),
@@ -1281,3 +1295,11 @@ class FormalizationWorkflow:
         if decision.decision not in {"approve", continue_decision}:
             return None
         return ReviewDecision(continue_decision, decision.updated_at, decision.notes)
+
+    def _persisted_lake_path(self) -> str | None:
+        if not self.lean_runner.lake_path:
+            return None
+        configured = Path(self.lean_runner.lake_path).expanduser()
+        if configured.is_absolute() or "/" in self.lean_runner.lake_path:
+            return str(configured.resolve())
+        return self.lean_runner.lake_path

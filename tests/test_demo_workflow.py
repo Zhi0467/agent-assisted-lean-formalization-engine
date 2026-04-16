@@ -143,6 +143,7 @@ class SequencedLeanRunner:
         self.outcomes = outcomes
         self.attempts: list[int] = []
         self.template_dir = Path("/tmp/legacy-template")
+        self.lake_path: str | None = None
 
     def compile_draft(self, store: RunStore, draft: LeanDraft, attempt: int) -> CompileAttempt:
         self.attempts.append(attempt)
@@ -316,6 +317,74 @@ class DemoWorkflowTest(unittest.TestCase):
             self._write_review(run_root, "04_final", "approve", "The compiling Lean file matches the plan.")
             manifest = workflow.resume("manual-review", auto_approve=False)
             self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
+
+    def test_checkpoint_resume_command_preserves_repo_root_and_lake_path(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        template_dir = project_root / "lean_workspace_template"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            fake_lake = self._write_fake_lake(temp_root)
+            source_path = temp_root / "input.md"
+            source_path.write_text(
+                "For every natural number n, adding zero on the left gives back n.\n",
+                encoding="utf-8",
+            )
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
+            )
+
+            manifest = workflow.prove(source_path=source_path, run_id="resume-context", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+
+            checkpoint_text = (
+                temp_root
+                / "artifacts"
+                / "runs"
+                / "resume-context"
+                / "01_enrichment"
+                / "checkpoint.md"
+            ).read_text(encoding="utf-8")
+            self.assertIn(
+                (
+                    "terry --repo-root "
+                    f"{temp_root.resolve()} --lake-path {fake_lake.resolve()} resume resume-context"
+                ),
+                checkpoint_text,
+            )
+
+    def test_extraction_turn_artifacts_are_preserved(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        template_dir = project_root / "lean_workspace_template"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            fake_lake = self._write_fake_lake(temp_root)
+            source_path = temp_root / "input.md"
+            source_path.write_text(
+                "For every natural number n, adding zero on the left gives back n.\n",
+                encoding="utf-8",
+            )
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
+            )
+
+            manifest = workflow.prove(source_path=source_path, run_id="turn-artifacts", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+
+            run_root = temp_root / "artifacts" / "runs" / "turn-artifacts" / "01_enrichment"
+            self.assertEqual(
+                (run_root / "extraction_turn" / "prompt.md").read_text(encoding="utf-8"),
+                "extraction",
+            )
+            self.assertEqual(
+                (run_root / "enrichment_turn" / "prompt.md").read_text(encoding="utf-8"),
+                "enrichment",
+            )
 
     def test_proof_blocked_requires_retry_decision(self) -> None:
         project_root = Path(__file__).resolve().parents[1]

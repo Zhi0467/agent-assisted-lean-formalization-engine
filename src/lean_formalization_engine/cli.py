@@ -163,7 +163,7 @@ def _load_manifest(repo_root: Path, run_id: str) -> RunManifest:
         repo_root=repo_root,
         agent=DemoFormalizationAgent(),
         agent_config=AgentConfig(backend="demo"),
-        lean_runner=LeanRunner(template_dir=template_dir),
+        lean_runner=LeanRunner(template_dir=template_dir, lake_path=payload.get("lake_path")),
     )
     return workflow.status(run_id)
 
@@ -173,6 +173,18 @@ def _default_template_dir(repo_root: Path) -> str:
     if repo_template.exists():
         return str(repo_template.resolve())
     return str((Path(__file__).resolve().parent / "workspace_template").resolve())
+
+
+def render_resume_command(run_id: str, repo_root: Path, lake_path: str | None) -> str:
+    command = [
+        "terry",
+        "--repo-root",
+        str(repo_root.resolve()),
+    ]
+    if lake_path:
+        command.extend(["--lake-path", lake_path])
+    command.extend(["resume", run_id])
+    return " ".join(shlex.quote(part) for part in command)
 
 
 def render_manifest_summary(manifest: RunManifest, repo_root: Path) -> str:
@@ -202,7 +214,9 @@ def render_manifest_summary(manifest: RunManifest, repo_root: Path) -> str:
         checkpoint_path = repo_root / "artifacts" / "runs" / manifest.run_id / checkpoint_map[manifest.current_stage]
         lines.append(f"Checkpoint: {checkpoint_path.relative_to(repo_root)}")
         lines.append(f"Review file: {review_path.relative_to(repo_root)}")
-        lines.append(f"Resume with: terry resume {manifest.run_id}")
+        lines.append(
+            f"Resume with: {render_resume_command(manifest.run_id, repo_root, manifest.lake_path)}"
+        )
 
     if manifest.final_output_path:
         final_path = repo_root / "artifacts" / "runs" / manifest.run_id / manifest.final_output_path
@@ -246,18 +260,19 @@ def main() -> None:
 
         elif args.command == "resume":
             manifest = _load_manifest(repo_root, args.run_id)
+            lake_path = args.lake_path or manifest.lake_path
             template_path = Path(manifest.template_dir)
             if not template_path.exists():
                 template_path = resolve_workspace_template(
                     repo_root,
                     package_template_dir,
-                    lake_path=args.lake_path,
+                    lake_path=lake_path,
                 ).template_dir
             workflow = FormalizationWorkflow(
                 repo_root=repo_root,
                 agent=build_agent(manifest.agent_config, repo_root),
                 agent_config=manifest.agent_config,
-                lean_runner=LeanRunner(template_dir=template_path, lake_path=args.lake_path),
+                lean_runner=LeanRunner(template_dir=template_path, lake_path=lake_path),
             )
             manifest = workflow.resume(args.run_id, auto_approve=args.auto_approve)
 

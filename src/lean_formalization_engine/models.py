@@ -182,6 +182,7 @@ class RunManifest:
     created_at: str
     updated_at: str
     current_stage: RunStage
+    lake_path: str | None = None
     workflow_version: str = DEFAULT_WORKFLOW_VERSION
     workflow_tags: list[str] = field(default_factory=lambda: list(DEFAULT_WORKFLOW_TAGS))
     attempt_count: int = 0
