@@ -1,19 +1,21 @@
 # Project: Agent-Assisted Lean Formalization Engine
 
-Scaffold for an agentic workflow that turns theorem sources into compiling Lean 4 code.
-Current focus: close PR `#2`'s missing-`codex` and backend-persistence blockers, then
-push from the first manual Codex theorem path toward harder repair-heavy runs.
+CLI-first engine for turning theorem sources into compiling Lean 4 code with explicit
+human checkpoints. Current focus: land the new `terry` workflow on top of `main`, then
+clear local review and Codex review on the rewritten three-checkpoint surface.
 
 ## Key Docs
 
-- `docs/roadmap.md` — milestones, gates, activity log
-- `docs/backlog.md` — open tasks and follow-ups
-- `docs/README.md` — index into architecture and landscape notes
+- `docs/roadmap.md` — current milestone state and activity log
+- `docs/backlog.md` — open tasks and review-gated follow-ups
+- `docs/architecture.md` — workflow shape, run layout, logger, and template rules
+- `docs/manual-review-walkthrough.md` — literal `terry prove` / `terry resume` path
 
 ## Sub-Session Instructions
 
-- Example run: `PYTHONPATH=src python3 examples/run_zero_add_demo.py`
-- Optional install: `python3 -m pip install . --user`
+- Install: `python3 -m pip install . --user`
+- PATH helper: `export PATH="$(python3 -m site --user-base)/bin:$PATH"`
+- Main CLI: `terry prove ...`, `terry resume ...`, `terry status ...`
 - Tests: `PYTHONPATH=src python3 -m unittest discover -s tests`
 - Lean tools: `source "$HOME/.elan/env"`
 - Do not communicate on Slack from inside the project repo
@@ -21,6 +23,6 @@ push from the first manual Codex theorem path toward harder repair-heavy runs.
 ## Context Loading
 
 - New to this project? Read `docs/roadmap.md` then `docs/README.md`
-- Changing engine contracts? Read `docs/architecture.md`
-- Comparing against existing systems? Read `docs/landscape.md`
-- A reproducible example running the engine e2e for debugging purposes? Read `docs/manual-review-walkthrough.md`
+- Changing workflow or persistence? Read `docs/architecture.md`
+- Updating the user-facing CLI path? Read `docs/manual-review-walkthrough.md`
+- Need adjacent-system context? Read `docs/landscape.md`

@@ -15,21 +15,19 @@ from .models import (
     RepairContext,
     SourceRef,
     TheoremExtraction,
-    TheoremSpec,
 )
 
 ParsedOutput = TypeVar(
     "ParsedOutput",
     TheoremExtraction,
     EnrichmentReport,
-    TheoremSpec,
     FormalizationPlan,
     LeanDraft,
 )
 
 
 class SubprocessFormalizationAgent:
-    """Delegate each agent turn to an external command over stdin/stdout."""
+    """Delegate each Terry turn to an external command over stdin/stdout."""
 
     def __init__(
         self,
@@ -77,36 +75,22 @@ class SubprocessFormalizationAgent:
             response_type=EnrichmentReport,
         )
 
-    def draft_theorem_spec(
+    def draft_formalization_plan(
         self,
         source_ref: SourceRef,
         source_text: str,
         extraction: TheoremExtraction,
         enrichment: EnrichmentReport,
-    ) -> tuple[TheoremSpec, AgentTurn]:
+        context_pack: ContextPack,
+    ) -> tuple[FormalizationPlan, AgentTurn]:
         return self._invoke(
-            stage="draft_theorem_spec",
+            stage="draft_formalization_plan",
             payload={
                 "source_ref": asdict(source_ref),
                 "source_text": source_text,
                 "extraction": asdict(extraction),
                 "enrichment": asdict(enrichment),
-            },
-            response_type=TheoremSpec,
-        )
-
-    def draft_formalization_plan(
-        self,
-        theorem_spec: TheoremSpec,
-        context_pack: ContextPack,
-        enrichment: EnrichmentReport,
-    ) -> tuple[FormalizationPlan, AgentTurn]:
-        return self._invoke(
-            stage="draft_formalization_plan",
-            payload={
-                "theorem_spec": asdict(theorem_spec),
                 "context_pack": asdict(context_pack),
-                "enrichment": asdict(enrichment),
             },
             response_type=FormalizationPlan,
         )
@@ -131,18 +115,21 @@ class SubprocessFormalizationAgent:
         payload: dict[str, Any],
         response_type: type[ParsedOutput],
     ) -> tuple[ParsedOutput, AgentTurn]:
-        request_payload = {
-            "stage": stage,
-            **payload,
-        }
-        response = subprocess.run(
-            self.command,
-            cwd=self.working_directory,
-            input=json.dumps(request_payload),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        request_payload = {"stage": stage, **payload}
+        try:
+            response = subprocess.run(
+                self.command,
+                cwd=self.working_directory,
+                input=json.dumps(request_payload),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"Provider command `{self.command[0]}` is not available for `{stage}`."
+            ) from exc
+
         if response.returncode != 0:
             stderr = response.stderr.strip()
             stdout = response.stdout.strip()

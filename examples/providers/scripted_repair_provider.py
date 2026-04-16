@@ -13,9 +13,7 @@ def _extraction_response(request: dict[str, object]) -> dict[str, object]:
             "Nat: the variable ranges over natural numbers.",
             "Left addition by zero: the target expression is `0 + n`.",
         ],
-        "lemmas": [
-            "Nat.zero_add: proves the target theorem directly for natural numbers."
-        ],
+        "lemmas": ["Nat.zero_add: proves the target theorem directly."],
         "propositions": [],
         "dependencies": [
             "definition: Nat -- needed to type the quantified variable.",
@@ -31,12 +29,12 @@ def _extraction_response(request: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _enrichment_response(request: dict[str, object]) -> dict[str, object]:
+def _enrichment_response(_: dict[str, object]) -> dict[str, object]:
     parsed_output = {
         "self_contained": True,
         "satisfied_prerequisites": [
             "Natural numbers and addition are already available in Lean/mathlib.",
-            "`Nat.zero_add` is already available for the proof."
+            "`Nat.zero_add` is already available for the proof.",
         ],
         "missing_prerequisites": [],
         "required_plan_additions": [],
@@ -45,13 +43,13 @@ def _enrichment_response(request: dict[str, object]) -> dict[str, object]:
         "open_questions": [],
         "next_steps": [
             "Approve the enrichment handoff.",
-            "Draft the theorem spec.",
-            "Use `Nat.zero_add` in the Lean plan."
+            "Approve the merged plan checkpoint.",
+            "Let Terry enter the prove-and-repair loop.",
         ],
         "human_handoff": (
             "The extracted theorem is already self-contained for Lean. "
             "All required prerequisites are present in the standard natural-number API, "
-            "so the formalization plan does not need extra definitions."
+            "so the plan can stay focused on the theorem itself."
         ),
     }
     return {
@@ -61,8 +59,9 @@ def _enrichment_response(request: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _spec_response(request: dict[str, object]) -> dict[str, object]:
+def _plan_response(request: dict[str, object]) -> dict[str, object]:
     extraction = request["extraction"]
+    enrichment = request["enrichment"]
     parsed_output = {
         "title": extraction["title"],
         "informal_statement": extraction["informal_statement"],
@@ -71,31 +70,23 @@ def _spec_response(request: dict[str, object]) -> dict[str, object]:
         "symbols": ["0", "+", "Nat"],
         "ambiguities": [],
         "paraphrase": "For every natural number n, adding zero on the left returns n.",
-    }
-    return {
-        "prompt": "Extract a theorem specification from the normalized theorem source.",
-        "raw_response": json.dumps(parsed_output, indent=2, sort_keys=True),
-        "parsed_output": parsed_output,
-    }
-
-
-def _plan_response(request: dict[str, object]) -> dict[str, object]:
-    theorem_spec = request["theorem_spec"]
-    enrichment = request["enrichment"]
-    parsed_output = {
         "theorem_name": "zero_add_provider_demo",
         "imports": ["FormalizationEngineWorkspace.Basic"],
         "prerequisites_to_formalize": enrichment["required_plan_additions"],
         "helper_definitions": [],
         "target_statement": "theorem zero_add_provider_demo (n : Nat) : 0 + n = n",
         "proof_sketch": [
-            f"Formalize the approved theorem titled {theorem_spec['title']}.",
+            "Formalize the approved theorem inside the local workspace.",
             "Use the local basic workspace module.",
             "Repair once compiler or quality feedback arrives.",
         ],
+        "human_summary": (
+            "This plan keeps the theorem over `Nat`, names it `zero_add_provider_demo`, "
+            "and proves it with `Nat.zero_add` after the proof loop sees compiler feedback."
+        ),
     }
     return {
-        "prompt": "Produce a Lean-facing plan for the approved theorem specification.",
+        "prompt": "Produce the merged mathematical-meaning and Lean-plan checkpoint.",
         "raw_response": json.dumps(parsed_output, indent=2, sort_keys=True),
         "parsed_output": parsed_output,
     }
@@ -163,8 +154,6 @@ def main() -> int:
         response = _extraction_response(request)
     elif stage == "draft_theorem_enrichment":
         response = _enrichment_response(request)
-    elif stage == "draft_theorem_spec":
-        response = _spec_response(request)
     elif stage == "draft_formalization_plan":
         response = _plan_response(request)
     elif stage == "draft_lean_file":

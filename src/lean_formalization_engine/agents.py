@@ -11,7 +11,6 @@ from .models import (
     RepairContext,
     SourceRef,
     TheoremExtraction,
-    TheoremSpec,
 )
 
 
@@ -35,20 +34,13 @@ class FormalizationAgent(Protocol):
     ) -> Tuple[EnrichmentReport, AgentTurn]:
         ...
 
-    def draft_theorem_spec(
+    def draft_formalization_plan(
         self,
         source_ref: SourceRef,
         source_text: str,
         extraction: TheoremExtraction,
         enrichment: EnrichmentReport,
-    ) -> Tuple[TheoremSpec, AgentTurn]:
-        ...
-
-    def draft_formalization_plan(
-        self,
-        theorem_spec: TheoremSpec,
         context_pack: ContextPack,
-        enrichment: EnrichmentReport,
     ) -> Tuple[FormalizationPlan, AgentTurn]:
         ...
 

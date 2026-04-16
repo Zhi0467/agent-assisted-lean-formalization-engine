@@ -35,6 +35,7 @@ setup(
     },
     entry_points={
         "console_scripts": [
+            "terry=lean_formalization_engine.cli:main",
             "lean-formalize=lean_formalization_engine.cli:main",
         ]
     },

@@ -34,22 +34,21 @@ class SourceKind(str, Enum):
 
 class RunStage(str, Enum):
     CREATED = "created"
-    AWAITING_ENRICHMENT_REVIEW = "awaiting_enrichment_review"
-    AWAITING_SPEC_REVIEW = "awaiting_spec_review"
-    AWAITING_PLAN_REVIEW = "awaiting_plan_review"
-    REPAIRING = "repairing"
-    AWAITING_FINAL_REVIEW = "awaiting_final_review"
-    AWAITING_STALL_REVIEW = "awaiting_stall_review"
+    AWAITING_ENRICHMENT_APPROVAL = "awaiting_enrichment_approval"
+    AWAITING_PLAN_APPROVAL = "awaiting_plan_approval"
+    PROVING = "proving"
+    PROOF_BLOCKED = "proof_blocked"
+    AWAITING_FINAL_APPROVAL = "awaiting_final_approval"
     COMPLETED = "completed"
     FAILED = "failed"
 
 
-DEFAULT_WORKFLOW_VERSION = "0.2.0"
+DEFAULT_WORKFLOW_VERSION = "0.3.0"
 DEFAULT_WORKFLOW_TAGS = [
-    "mathlib-template",
-    "pre-spec-extraction",
-    "enrichment-handoff",
-    "bounded-repair-loop",
+    "three-checkpoint",
+    "review-files",
+    "terry-cli",
+    "bounded-prove-loop",
 ]
 
 
@@ -91,17 +90,6 @@ class EnrichmentReport:
 
 
 @dataclass
-class TheoremSpec:
-    title: str
-    informal_statement: str
-    assumptions: list[str]
-    conclusion: str
-    symbols: list[str]
-    ambiguities: list[str]
-    paraphrase: str
-
-
-@dataclass
 class ContextPack:
     recommended_imports: list[str]
     local_examples: list[str]
@@ -110,12 +98,20 @@ class ContextPack:
 
 @dataclass
 class FormalizationPlan:
+    title: str
+    informal_statement: str
+    assumptions: list[str]
+    conclusion: str
+    symbols: list[str]
+    ambiguities: list[str]
+    paraphrase: str
     theorem_name: str
     imports: list[str]
     prerequisites_to_formalize: list[str]
     helper_definitions: list[str]
     target_statement: str
     proof_sketch: list[str]
+    human_summary: str
 
 
 @dataclass
@@ -159,13 +155,21 @@ class RepairContext:
     attempts_remaining: int
     previous_draft: LeanDraft | None
     previous_result: CompileAttempt | None
+    human_feedback: str | None = None
 
 
 @dataclass
-class HumanDecision:
-    approved: bool
+class ReviewDecision:
+    decision: str
     updated_at: str
     notes: str = ""
+
+
+@dataclass
+class AgentConfig:
+    backend: str
+    command: list[str] | None = None
+    codex_model: str | None = None
 
 
 @dataclass
@@ -173,13 +177,13 @@ class RunManifest:
     run_id: str
     source: SourceRef
     agent_name: str
+    agent_config: AgentConfig
+    template_dir: str
     created_at: str
     updated_at: str
     current_stage: RunStage
     workflow_version: str = DEFAULT_WORKFLOW_VERSION
-    workflow_tags: list[str] = field(
-        default_factory=lambda: list(DEFAULT_WORKFLOW_TAGS)
-    )
+    workflow_tags: list[str] = field(default_factory=lambda: list(DEFAULT_WORKFLOW_TAGS))
     attempt_count: int = 0
     latest_error: str | None = None
     final_output_path: str | None = None

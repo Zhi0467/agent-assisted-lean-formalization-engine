@@ -44,6 +44,9 @@ class RunStore:
         destination.write_text(content, encoding="utf-8")
         return destination
 
+    def read_text(self, relative_path: str) -> str:
+        return self.path(relative_path).read_text(encoding="utf-8")
+
     def write_json(self, relative_path: str, payload: Any) -> Path:
         destination = self.path(relative_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -54,23 +57,33 @@ class RunStore:
         return destination
 
     def read_json(self, relative_path: str) -> Any:
-        return json.loads(self.path(relative_path).read_text(encoding="utf-8"))
+        return json.loads(self.read_text(relative_path))
 
     def exists(self, relative_path: str) -> bool:
         return self.path(relative_path).exists()
 
-    def append_event(self, event_type: str, payload: dict[str, Any]) -> None:
-        events_path = self.path("events.jsonl")
-        events_path.parent.mkdir(parents=True, exist_ok=True)
-        with events_path.open("a", encoding="utf-8") as handle:
-            handle.write(
-                json.dumps(
-                    {
-                        "event_type": event_type,
-                        "timestamp": utc_now(),
-                        "payload": to_jsonable(payload),
-                    },
-                    sort_keys=True,
-                )
-                + "\n"
-            )
+    def append_log(
+        self,
+        event_type: str,
+        summary: str,
+        *,
+        stage: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        payload = {
+            "timestamp": utc_now(),
+            "event_type": event_type,
+            "summary": summary,
+            "stage": stage,
+            "details": to_jsonable(details or {}),
+        }
+        log_path = self.path("logs/workflow.jsonl")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, sort_keys=True) + "\n")
+
+        timeline_path = self.path("logs/timeline.md")
+        timeline_path.parent.mkdir(parents=True, exist_ok=True)
+        stage_suffix = f" [{stage}]" if stage else ""
+        with timeline_path.open("a", encoding="utf-8") as handle:
+            handle.write(f"- {payload['timestamp']} | `{event_type}`{stage_suffix} | {summary}\n")

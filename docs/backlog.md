@@ -1,44 +1,29 @@
 # Backlog
 
-## Immediate Follow-Ups
+These items stay open until the rewritten Terry surface has both local review and Codex
+review coverage. Even the items that are already implemented locally remain on this list
+ until that review comes back clean or only surfaces non-fatal issues.
 
-- Catch missing-`codex` launch failures as structured run errors instead of letting the default CLI path die with a raw traceback.
-- Persist and enforce the selected backend across `run`, `resume`, and `approve-*` so a non-default run cannot silently switch providers mid-artifact.
-- Run a second non-demo theorem that forces at least one genuine Codex repair attempt, then check in that artifact alongside the first-pass right-add example.
-- Add an explicit retry/escalation policy so repeated compile failures cleanly route to plan revision, spec revision, or human intervention.
-- Add a `ProofSession` interface for stepwise Lean interaction once the file-level compile-repair loop is stable.
-- Add richer theorem examples beyond the deterministic `0 + n = n` demo.
-- Extend PDF ingestion with optional `PyMuPDF` or `pypdf` adapters once dependency policy is settled.
-- Decide whether long-term artifact storage should keep every run in Git or only selected canonical runs.
-- Decide when to swap the file-copy Lean runner for a richer backend such as LeanInteract or PyPantograph.
+## Pending Review Gate
 
-## Controlled Repair Layer Follow-Ups
+- [ ] Run `scripts/review_project.sh agent-assisted-lean-formalization-engine --base main` on the Terry rewrite and address any real findings.
+- [ ] Publish the Terry rewrite on a fresh PR and request `@codex` review.
+- [ ] Clear or explicitly disposition the review findings before removing any rewrite items from this backlog.
 
-- Split theorem generation from compile-retry control instead of assuming one model owns the whole loop end to end.
-- Add a bounded `ProofSession` or `RepairSession` layer that sits on top of theorem generation and owns the compile-diagnose-repair cycle.
-- Replace single-file `LeanDraft` retries with a persisted workspace-patch attempt model so a run can repair both theorem code and theorem-specific harness code when needed.
-- Keep the repo template as the default scaffold, but treat it as a run-local starting point rather than a permanently fixed wrapper.
-- Restrict harness edits to the copied run workspace under `artifacts/runs/<run_id>/workspace/` so theorem-specific repairs do not mutate the checked-in template.
-- Define the allowed repair surface explicitly. Initial candidates:
-  `FormalizationEngineWorkspace/Generated.lean`, helper modules such as `Basic.lean` or new sibling modules, top-level import wiring, and possibly `lakefile.toml` if dependency edits are allowed.
-- Decide whether package and dependency edits belong in the bounded repair loop for v1 or should remain a manual review boundary.
-- Persist richer per-attempt artifacts for workspace repairs:
-  requested actions, files changed, applied patch or file snapshots, rationale, compiler diagnostics, and stop reason.
-- Add attempt-level guardrails for the repair controller:
-  max iterations, max files touched, max new helper modules, and explicit disallow lists for repo-global edits.
-- Evaluate controller backends separately from theorem-generation backends. The inner theorem model can stay specialized for Lean generation, while the outer repair controller may use a code-capable agent when multi-file edits are needed.
-- Update the agent protocol to represent dual responsibility during repair:
-  theorem drafting plus bounded workspace maintenance in response to Lean diagnostics.
+## Terry Rewrite Surface
 
-## Lean-Side Follow-Ups
+- [ ] Land the `terry` CLI as the primary human interface, with `prove`, `resume`, and `status`.
+- [ ] Keep only three human approval checkpoints: enrichment, merged plan, and final.
+- [ ] Drive checkpoint handoff through review files plus `terry resume`, not hidden `approve-*` commands.
+- [ ] Keep a readable workflow logger (`logs/timeline.md`) plus machine-readable log (`logs/workflow.jsonl`) at each significant event.
+- [ ] Auto-discover `lean_workspace_template` at depth 1 and initialize one with `lake new ... math` if absent.
+- [ ] Persist backend choice in the run manifest so resumed runs cannot silently switch backends.
+- [ ] Refresh the docs so a fresh install can follow the Terry path directly.
 
-- Add import selection heuristics beyond the local basic workspace module.
-- Distinguish parse and type errors from proof failures in compile diagnostics.
-- Add a quality gate that checks for placeholders beyond the literal string `sorry`.
-- Preserve machine-readable Lean diagnostics alongside the raw compiler logs so repair prompts can stay structured.
+## Follow-Ups After The Rewrite Lands
 
-## Product Follow-Ups
-
-- Add a reviewer-friendly summary artifact per run.
-- Add source-span provenance for PDF snippets instead of normalized text only.
-- Add a browser or notebook view for run artifacts.
+- [ ] Run a non-demo theorem that forces at least one genuine Codex repair attempt on the Terry surface and check in the resulting artifact.
+- [ ] Add a richer revision path when enrichment or plan review wants changes instead of approval, rather than leaving those checkpoints manual-only.
+- [ ] Preserve more structured Lean diagnostics than the current stderr tail when the proof loop fails.
+- [ ] Decide whether Terry should keep every run in Git or only selected canonical runs.
+- [ ] Decide when the proof loop should be allowed to patch helper modules or harness files beyond `Generated.lean`.

@@ -6,24 +6,29 @@ from .agents import FormalizationAgent
 from .ingest import ingest_source
 from .lean_runner import LeanRunner
 from .models import (
+    AgentConfig,
     CompileAttempt,
     ContextPack,
     DEFAULT_WORKFLOW_TAGS,
     DEFAULT_WORKFLOW_VERSION,
     EnrichmentReport,
     FormalizationPlan,
-    HumanDecision,
     LeanDraft,
     RepairContext,
+    ReviewDecision,
     RunManifest,
     RunStage,
     SourceKind,
     SourceRef,
     TheoremExtraction,
-    TheoremSpec,
     utc_now,
 )
 from .storage import RunStore
+
+ENRICHMENT_DIR = "01_enrichment"
+PLAN_DIR = "02_plan"
+PROOF_DIR = "03_proof"
+FINAL_DIR = "04_final"
 
 
 class FormalizationWorkflow:
@@ -31,30 +36,39 @@ class FormalizationWorkflow:
         self,
         repo_root: Path,
         agent: FormalizationAgent,
+        agent_config: AgentConfig,
         lean_runner: LeanRunner | None = None,
+        *,
         max_attempts: int = 3,
+        terry_command: str = "terry",
     ):
         self.repo_root = repo_root
         self.agent = agent
+        self.agent_config = agent_config
         self.max_attempts = max_attempts
+        self.terry_command = terry_command
         self.artifacts_root = repo_root / "artifacts"
         self.lean_runner = lean_runner or LeanRunner(repo_root / "lean_workspace_template")
 
-    def run(self, source_path: Path, run_id: str, auto_approve: bool = False) -> RunManifest:
+    def prove(self, source_path: Path, run_id: str, auto_approve: bool = False) -> RunManifest:
         store = RunStore(self.artifacts_root, run_id)
         source_ref, ingested = ingest_source(source_path, repo_root=self.repo_root)
         store.ensure_new()
+
         manifest = RunManifest(
             run_id=run_id,
             source=source_ref,
             agent_name=self.agent.name,
+            agent_config=self.agent_config,
+            template_dir=str(self.lean_runner.template_dir.resolve()),
             created_at=utc_now(),
             updated_at=utc_now(),
             current_stage=RunStage.CREATED,
         )
         self._save_manifest(store, manifest)
+
         store.write_text("00_input/source.txt", ingested.raw_text)
-        store.write_text("01_normalized/normalized.md", ingested.normalized_text)
+        store.write_text("00_input/normalized.md", ingested.normalized_text)
         store.write_json(
             "00_input/provenance.json",
             {
@@ -62,191 +76,177 @@ class FormalizationWorkflow:
                 "extraction_method": ingested.extraction_method,
             },
         )
-        store.append_event(
-            "run_created",
-            {"run_id": run_id, "source_path": source_ref.path, "agent": self.agent.name},
+        store.append_log(
+            "run_started",
+            f"Started run `{run_id}` from `{source_ref.path}`.",
+            stage="input",
+            details={
+                "agent": self.agent.name,
+                "template_dir": manifest.template_dir,
+            },
         )
-
-        self._draft_extraction(store, source_ref, ingested.raw_text, ingested.normalized_text)
-        enrichment = self._draft_enrichment(
-            store,
-            source_ref,
-            ingested.raw_text,
-            auto_approve=auto_approve,
-        )
-        if isinstance(enrichment, RunManifest):
-            return enrichment
-
-        theorem_spec = self._draft_spec(
-            store,
-            source_ref,
-            ingested.raw_text,
-            auto_approve=auto_approve,
-        )
-        if isinstance(theorem_spec, RunManifest):
-            return theorem_spec
-
-        self._build_context_pack(store, theorem_spec, enrichment)
-        plan = self._draft_plan(store, auto_approve=auto_approve)
-        if isinstance(plan, RunManifest):
-            return plan
-        return self._compile_loop(store, plan, auto_approve=auto_approve)
+        return self._resume_from_created(store, manifest, auto_approve=auto_approve)
 
     def resume(self, run_id: str, auto_approve: bool = False) -> RunManifest:
         store = RunStore(self.artifacts_root, run_id)
         manifest = self._load_manifest(store)
+        store.append_log(
+            "resume_requested",
+            f"Resume requested while run is in `{manifest.current_stage.value}`.",
+            stage=manifest.current_stage.value,
+        )
 
         if manifest.current_stage == RunStage.CREATED:
-            return self._resume_created_run(store, manifest, auto_approve=auto_approve)
+            return self._resume_from_created(store, manifest, auto_approve=auto_approve)
 
-        if manifest.current_stage == RunStage.AWAITING_ENRICHMENT_REVIEW:
-            if auto_approve:
-                self._seed_enrichment_approval(store)
-            if not store.exists("03_enrichment/enrichment_report.approved.json"):
-                return manifest
-            source_text = store.path("00_input/source.txt").read_text(encoding="utf-8")
-            theorem_spec = self._draft_spec(
+        if manifest.current_stage == RunStage.AWAITING_ENRICHMENT_APPROVAL:
+            decision = self._resolve_checkpoint_decision(
                 store,
-                manifest.source,
-                source_text,
+                ENRICHMENT_DIR,
+                continue_decision="approve",
                 auto_approve=auto_approve,
             )
-            if isinstance(theorem_spec, RunManifest):
-                return theorem_spec
-            enrichment = self._load_enrichment(store, approved=True)
-            self._build_context_pack(store, theorem_spec, enrichment)
-            plan = self._draft_plan(store, auto_approve=auto_approve)
+            if decision is None:
+                return manifest
+            store.append_log(
+                "checkpoint_approved",
+                "Enrichment checkpoint approved.",
+                stage="enrichment",
+                details={"notes": decision.notes},
+            )
+            plan = self._draft_plan(store, manifest.source, store.read_text("00_input/source.txt"), auto_approve)
             if isinstance(plan, RunManifest):
                 return plan
-            return self._compile_loop(store, plan, auto_approve=auto_approve)
+            return self._prove_loop(store, plan, auto_approve=auto_approve)
 
-        if manifest.current_stage == RunStage.AWAITING_SPEC_REVIEW:
-            if auto_approve:
-                self._seed_spec_approval(store)
-            if not store.exists("04_spec/theorem_spec.approved.json"):
+        if manifest.current_stage == RunStage.AWAITING_PLAN_APPROVAL:
+            decision = self._resolve_checkpoint_decision(
+                store,
+                PLAN_DIR,
+                continue_decision="approve",
+                auto_approve=auto_approve,
+            )
+            if decision is None:
                 return manifest
-            theorem_spec = self._load_theorem_spec(store, approved=True)
-            enrichment = self._load_enrichment(store, approved=True)
-            self._build_context_pack(store, theorem_spec, enrichment)
-            plan = self._draft_plan(store, auto_approve=auto_approve)
-            if isinstance(plan, RunManifest):
-                return plan
-            return self._compile_loop(store, plan, auto_approve=auto_approve)
+            store.append_log(
+                "checkpoint_approved",
+                "Plan checkpoint approved.",
+                stage="plan",
+                details={"notes": decision.notes},
+            )
+            plan = self._load_plan(store)
+            return self._prove_loop(store, plan, auto_approve=auto_approve)
 
-        if manifest.current_stage == RunStage.AWAITING_PLAN_REVIEW:
-            if auto_approve:
-                self._seed_plan_approval(store)
-            if not store.exists("06_plan/formalization_plan.approved.json"):
+        if manifest.current_stage == RunStage.PROVING:
+            plan = self._load_plan(store)
+            return self._prove_loop(store, plan, auto_approve=auto_approve)
+
+        if manifest.current_stage == RunStage.PROOF_BLOCKED:
+            decision = self._resolve_checkpoint_decision(
+                store,
+                PROOF_DIR,
+                continue_decision="retry",
+                auto_approve=auto_approve,
+            )
+            if decision is None:
                 return manifest
-            plan = self._load_plan(store, approved=True)
-            return self._compile_loop(store, plan, auto_approve=auto_approve)
-
-        if manifest.current_stage == RunStage.REPAIRING:
-            plan = self._load_plan(store, approved=True)
-            return self._compile_loop(store, plan, auto_approve=auto_approve)
-
-        if manifest.current_stage == RunStage.AWAITING_STALL_REVIEW:
-            plan = self._load_plan(store, approved=True)
-            previous_result = self._load_previous_compile_result(store, manifest)
-            if previous_result is None:
-                return manifest
-
-            next_attempt_limit = max(self.max_attempts, manifest.attempt_count + 1)
-            if previous_result.missing_toolchain:
-                return self._compile_loop(
-                    store,
-                    plan,
-                    auto_approve=auto_approve,
-                    max_attempts=next_attempt_limit,
-                )
-
-            if auto_approve:
-                self._seed_stall_approval(store)
-            stall_decision = self._load_decision(store, "09_review/decision.json")
-            if stall_decision is None or not stall_decision.approved:
-                return manifest
-            if stall_decision.updated_at < manifest.updated_at:
-                return manifest
-            return self._compile_loop(
+            store.append_log(
+                "proof_retry_approved",
+                "Human approved one more prove-and-repair attempt.",
+                stage="proof",
+                details={"notes": decision.notes},
+            )
+            plan = self._load_plan(store)
+            return self._prove_loop(
                 store,
                 plan,
                 auto_approve=auto_approve,
-                max_attempts=next_attempt_limit,
+                max_attempts=max(self.max_attempts, manifest.attempt_count + 1),
+                human_feedback=decision.notes,
             )
 
-        if manifest.current_stage == RunStage.AWAITING_FINAL_REVIEW:
-            if auto_approve:
-                self._seed_final_approval(store)
-            if not self._decision_is_approved(store, "10_final/decision.json"):
+        if manifest.current_stage == RunStage.AWAITING_FINAL_APPROVAL:
+            decision = self._resolve_checkpoint_decision(
+                store,
+                FINAL_DIR,
+                continue_decision="approve",
+                auto_approve=auto_approve,
+            )
+            if decision is None:
                 return manifest
+            store.append_log(
+                "checkpoint_approved",
+                "Final checkpoint approved.",
+                stage="final",
+                details={"notes": decision.notes},
+            )
             return self._complete_from_candidate(store, manifest)
 
         return manifest
-
-    def approve_enrichment(self, run_id: str, notes: str = "Approved by CLI.") -> None:
-        store = RunStore(self.artifacts_root, run_id)
-        payload = store.read_json("03_enrichment/enrichment_report.json")
-        store.write_json("03_enrichment/enrichment_report.approved.json", payload)
-        store.write_json(
-            "03_enrichment/decision.json",
-            HumanDecision(approved=True, updated_at=utc_now(), notes=notes),
-        )
-
-    def approve_spec(self, run_id: str, notes: str = "Approved by CLI.") -> None:
-        store = RunStore(self.artifacts_root, run_id)
-        payload = store.read_json("04_spec/theorem_spec.json")
-        store.write_json("04_spec/theorem_spec.approved.json", payload)
-        store.write_json(
-            "04_spec/decision.json",
-            HumanDecision(approved=True, updated_at=utc_now(), notes=notes),
-        )
-
-    def approve_plan(self, run_id: str, notes: str = "Approved by CLI.") -> None:
-        store = RunStore(self.artifacts_root, run_id)
-        payload = store.read_json("06_plan/formalization_plan.json")
-        store.write_json("06_plan/formalization_plan.approved.json", payload)
-        store.write_json(
-            "06_plan/decision.json",
-            HumanDecision(approved=True, updated_at=utc_now(), notes=notes),
-        )
-
-    def approve_final(self, run_id: str, notes: str = "Approved by CLI.") -> None:
-        store = RunStore(self.artifacts_root, run_id)
-        store.write_json(
-            "10_final/decision.json",
-            HumanDecision(approved=True, updated_at=utc_now(), notes=notes),
-        )
-
-    def approve_stall(self, run_id: str, notes: str = "Approved one more repair attempt.") -> None:
-        store = RunStore(self.artifacts_root, run_id)
-        store.write_json(
-            "09_review/decision.json",
-            HumanDecision(approved=True, updated_at=utc_now(), notes=notes),
-        )
 
     def status(self, run_id: str) -> RunManifest:
         store = RunStore(self.artifacts_root, run_id)
         return self._load_manifest(store)
 
-    def _draft_extraction(
+    def _resume_from_created(
         self,
         store: RunStore,
-        source_ref: SourceRef,
-        source_text: str,
-        normalized_text: str,
-    ) -> TheoremExtraction:
-        extraction, extraction_turn = self.agent.draft_theorem_extraction(
-            source_ref,
-            source_text,
-            normalized_text,
-        )
-        self._write_agent_turn(store, "02_extraction", extraction_turn, extraction)
-        store.write_json("02_extraction/theorem_extraction.json", extraction)
-        store.write_text(
-            "02_extraction/extracted.md",
-            self._render_extraction_markdown(extraction),
-        )
-        return extraction
+        manifest: RunManifest,
+        *,
+        auto_approve: bool,
+    ) -> RunManifest:
+        source_text = store.read_text("00_input/source.txt")
+        normalized_text = store.read_text("00_input/normalized.md")
+
+        if store.exists(f"{FINAL_DIR}/final_candidate.lean"):
+            if self._resolve_checkpoint_decision(
+                store,
+                FINAL_DIR,
+                continue_decision="approve",
+                auto_approve=auto_approve,
+            ):
+                return self._complete_from_candidate(store, manifest)
+            return self._pause_for_final(store, manifest)
+
+        if store.exists(f"{PLAN_DIR}/formalization_plan.json"):
+            if self._resolve_checkpoint_decision(
+                store,
+                PLAN_DIR,
+                continue_decision="approve",
+                auto_approve=auto_approve,
+            ):
+                return self._prove_loop(store, self._load_plan(store), auto_approve=auto_approve)
+            return self._pause_for_plan(store, manifest)
+
+        if store.exists(f"{ENRICHMENT_DIR}/enrichment_report.json"):
+            if self._resolve_checkpoint_decision(
+                store,
+                ENRICHMENT_DIR,
+                continue_decision="approve",
+                auto_approve=auto_approve,
+            ):
+                plan = self._draft_plan(store, manifest.source, source_text, auto_approve)
+                if isinstance(plan, RunManifest):
+                    return plan
+                return self._prove_loop(store, plan, auto_approve=auto_approve)
+            return self._pause_for_enrichment(store, manifest)
+
+        if not store.exists(f"{ENRICHMENT_DIR}/extraction.json"):
+            extraction = self.agent.draft_theorem_extraction(
+                manifest.source,
+                source_text,
+                normalized_text,
+            )
+            self._write_extraction(store, extraction[0], extraction[1])
+
+        enrichment = self._draft_enrichment(store, manifest.source, source_text, auto_approve)
+        if isinstance(enrichment, RunManifest):
+            return enrichment
+
+        plan = self._draft_plan(store, manifest.source, source_text, auto_approve)
+        if isinstance(plan, RunManifest):
+            return plan
+        return self._prove_loop(store, plan, auto_approve=auto_approve)
 
     def _draft_enrichment(
         self,
@@ -256,199 +256,100 @@ class FormalizationWorkflow:
         auto_approve: bool,
     ) -> EnrichmentReport | RunManifest:
         extraction = self._load_extraction(store)
-        extraction_markdown = store.path("02_extraction/extracted.md").read_text(encoding="utf-8")
-        enrichment, enrichment_turn = self.agent.draft_theorem_enrichment(
+        extraction_markdown = self._render_extraction_markdown(extraction)
+        enrichment, turn = self.agent.draft_theorem_enrichment(
             source_ref,
             source_text,
             extraction,
             extraction_markdown,
         )
-        self._write_agent_turn(store, "03_enrichment", enrichment_turn, enrichment)
-        store.write_json("03_enrichment/enrichment_report.json", enrichment)
+        self._write_agent_turn(store, ENRICHMENT_DIR, turn, enrichment)
+        store.write_json(f"{ENRICHMENT_DIR}/extraction.json", extraction)
+        store.write_text(f"{ENRICHMENT_DIR}/extraction.md", extraction_markdown)
+        store.write_json(f"{ENRICHMENT_DIR}/enrichment_report.json", enrichment)
         store.write_text(
-            "03_enrichment/handoff.md",
+            f"{ENRICHMENT_DIR}/handoff.md",
             self._render_enrichment_handoff(extraction, enrichment),
+        )
+        store.append_log(
+            "enrichment_ready",
+            "Prepared enrichment handoff and reviewer summary.",
+            stage="enrichment",
         )
 
         if auto_approve:
-            self._seed_enrichment_approval(store)
+            self._write_decision(
+                store,
+                ENRICHMENT_DIR,
+                ReviewDecision("approve", utc_now(), "Auto-approved."),
+            )
+            return enrichment
 
-        if not store.exists("03_enrichment/enrichment_report.approved.json"):
-            manifest = self._load_manifest(store)
-            manifest.current_stage = RunStage.AWAITING_ENRICHMENT_REVIEW
-            return self._save_manifest(store, manifest)
+        manifest = self._load_manifest(store)
+        return self._pause_for_enrichment(store, manifest)
 
-        return self._load_enrichment(store, approved=True)
-
-    def _draft_spec(
+    def _draft_plan(
         self,
         store: RunStore,
         source_ref: SourceRef,
         source_text: str,
         auto_approve: bool,
-    ) -> TheoremSpec | RunManifest:
+    ) -> FormalizationPlan | RunManifest:
         extraction = self._load_extraction(store)
-        enrichment = self._load_enrichment(store, approved=True)
-        theorem_spec, spec_turn = self.agent.draft_theorem_spec(
+        enrichment = self._load_enrichment(store)
+        context_pack = self._build_context_pack(extraction, enrichment)
+        store.write_json(f"{PLAN_DIR}/context_pack.json", context_pack)
+
+        plan, turn = self.agent.draft_formalization_plan(
             source_ref,
             source_text,
             extraction,
             enrichment,
-        )
-        self._write_agent_turn(store, "04_spec", spec_turn, theorem_spec)
-        store.write_json("04_spec/theorem_spec.json", theorem_spec)
-
-        if auto_approve:
-            self._seed_spec_approval(store)
-
-        if not store.exists("04_spec/theorem_spec.approved.json"):
-            manifest = self._load_manifest(store)
-            manifest.current_stage = RunStage.AWAITING_SPEC_REVIEW
-            return self._save_manifest(store, manifest)
-
-        return self._load_theorem_spec(store, approved=True)
-
-    def _draft_plan(self, store: RunStore, auto_approve: bool) -> FormalizationPlan | RunManifest:
-        theorem_spec = self._load_theorem_spec(store, approved=True)
-        enrichment = self._load_enrichment(store, approved=True)
-        context_payload = store.read_json("05_context/context_pack.json")
-        context_pack = ContextPack(**context_payload)
-        plan, plan_turn = self.agent.draft_formalization_plan(
-            theorem_spec,
             context_pack,
-            enrichment,
         )
-        self._write_agent_turn(store, "06_plan", plan_turn, plan)
-        store.write_json("06_plan/formalization_plan.json", plan)
+        self._write_agent_turn(store, PLAN_DIR, turn, plan)
+        store.write_json(f"{PLAN_DIR}/formalization_plan.json", plan)
+        store.write_text(f"{PLAN_DIR}/summary.md", self._render_plan_summary(plan))
+        store.append_log(
+            "plan_ready",
+            "Prepared the merged mathematical-meaning and Lean-plan checkpoint.",
+            stage="plan",
+            details={"theorem_name": plan.theorem_name},
+        )
 
         if auto_approve:
-            self._seed_plan_approval(store)
-
-        if not store.exists("06_plan/formalization_plan.approved.json"):
-            manifest = self._load_manifest(store)
-            manifest.current_stage = RunStage.AWAITING_PLAN_REVIEW
-            return self._save_manifest(store, manifest)
-
-        return self._load_plan(store, approved=True)
-
-    def _resume_created_run(
-        self,
-        store: RunStore,
-        manifest: RunManifest,
-        auto_approve: bool,
-    ) -> RunManifest:
-        source_text = store.path("00_input/source.txt").read_text(encoding="utf-8")
-        normalized_text = store.path("01_normalized/normalized.md").read_text(encoding="utf-8")
-
-        if store.exists("06_plan/formalization_plan.approved.json"):
-            plan = self._load_plan(store, approved=True)
-            return self._compile_loop(store, plan, auto_approve=auto_approve)
-
-        if store.exists("06_plan/formalization_plan.json"):
-            if auto_approve:
-                self._seed_plan_approval(store)
-            if not store.exists("06_plan/formalization_plan.approved.json"):
-                manifest.current_stage = RunStage.AWAITING_PLAN_REVIEW
-                return self._save_manifest(store, manifest)
-            plan = self._load_plan(store, approved=True)
-            return self._compile_loop(store, plan, auto_approve=auto_approve)
-
-        if store.exists("04_spec/theorem_spec.approved.json"):
-            theorem_spec = self._load_theorem_spec(store, approved=True)
-            enrichment = self._load_enrichment(store, approved=True)
-            if not store.exists("05_context/context_pack.json"):
-                self._build_context_pack(store, theorem_spec, enrichment)
-            plan = self._draft_plan(store, auto_approve=auto_approve)
-            if isinstance(plan, RunManifest):
-                return plan
-            return self._compile_loop(store, plan, auto_approve=auto_approve)
-
-        if store.exists("04_spec/theorem_spec.json"):
-            if auto_approve:
-                self._seed_spec_approval(store)
-            if not store.exists("04_spec/theorem_spec.approved.json"):
-                manifest.current_stage = RunStage.AWAITING_SPEC_REVIEW
-                return self._save_manifest(store, manifest)
-            theorem_spec = self._load_theorem_spec(store, approved=True)
-            enrichment = self._load_enrichment(store, approved=True)
-            self._build_context_pack(store, theorem_spec, enrichment)
-            plan = self._draft_plan(store, auto_approve=auto_approve)
-            if isinstance(plan, RunManifest):
-                return plan
-            return self._compile_loop(store, plan, auto_approve=auto_approve)
-
-        if store.exists("03_enrichment/enrichment_report.approved.json"):
-            theorem_spec = self._draft_spec(
+            self._write_decision(
                 store,
-                manifest.source,
-                source_text,
-                auto_approve=auto_approve,
+                PLAN_DIR,
+                ReviewDecision("approve", utc_now(), "Auto-approved."),
             )
-            if isinstance(theorem_spec, RunManifest):
-                return theorem_spec
-            enrichment = self._load_enrichment(store, approved=True)
-            self._build_context_pack(store, theorem_spec, enrichment)
-            plan = self._draft_plan(store, auto_approve=auto_approve)
-            if isinstance(plan, RunManifest):
-                return plan
-            return self._compile_loop(store, plan, auto_approve=auto_approve)
-
-        if store.exists("03_enrichment/enrichment_report.json"):
-            if auto_approve:
-                self._seed_enrichment_approval(store)
-            if not store.exists("03_enrichment/enrichment_report.approved.json"):
-                manifest.current_stage = RunStage.AWAITING_ENRICHMENT_REVIEW
-                return self._save_manifest(store, manifest)
-            theorem_spec = self._draft_spec(
-                store,
-                manifest.source,
-                source_text,
-                auto_approve=auto_approve,
-            )
-            if isinstance(theorem_spec, RunManifest):
-                return theorem_spec
-            enrichment = self._load_enrichment(store, approved=True)
-            self._build_context_pack(store, theorem_spec, enrichment)
-            plan = self._draft_plan(store, auto_approve=auto_approve)
-            if isinstance(plan, RunManifest):
-                return plan
-            return self._compile_loop(store, plan, auto_approve=auto_approve)
-
-        if not store.exists("02_extraction/theorem_extraction.json"):
-            self._draft_extraction(store, manifest.source, source_text, normalized_text)
-
-        enrichment = self._draft_enrichment(
-            store,
-            manifest.source,
-            source_text,
-            auto_approve=auto_approve,
-        )
-        if isinstance(enrichment, RunManifest):
-            return enrichment
-
-        theorem_spec = self._draft_spec(
-            store,
-            manifest.source,
-            source_text,
-            auto_approve=auto_approve,
-        )
-        if isinstance(theorem_spec, RunManifest):
-            return theorem_spec
-
-        self._build_context_pack(store, theorem_spec, enrichment)
-        plan = self._draft_plan(store, auto_approve=auto_approve)
-        if isinstance(plan, RunManifest):
             return plan
-        return self._compile_loop(store, plan, auto_approve=auto_approve)
 
-    def _compile_loop(
+        manifest = self._load_manifest(store)
+        return self._pause_for_plan(store, manifest)
+
+    def _prove_loop(
         self,
         store: RunStore,
         plan: FormalizationPlan,
+        *,
         auto_approve: bool,
         max_attempts: int | None = None,
+        human_feedback: str | None = None,
     ) -> RunManifest:
         manifest = self._load_manifest(store)
+        manifest.current_stage = RunStage.PROVING
+        self._save_manifest(store, manifest)
+        store.append_log(
+            "prove_loop_started",
+            "Started the bounded prove-and-repair loop.",
+            stage="proof",
+            details={
+                "attempt_count": manifest.attempt_count,
+                "max_attempts": max_attempts or self.max_attempts,
+            },
+        )
+
         previous_result = self._load_previous_compile_result(store, manifest)
         previous_draft = self._load_previous_draft(store, manifest)
         attempt_limit = max_attempts or self.max_attempts
@@ -462,9 +363,16 @@ class FormalizationWorkflow:
                 attempts_remaining=attempt_limit - attempt + 1,
                 previous_draft=previous_draft,
                 previous_result=previous_result,
+                human_feedback=human_feedback,
             )
-            draft, draft_turn = self.agent.draft_lean_file(plan, repair_context)
-            self._write_attempt(store, attempt, draft_turn, draft)
+            store.append_log(
+                "prove_attempt_started",
+                f"Starting proof attempt {attempt} of {attempt_limit}.",
+                stage="proof",
+                details={"attempt": attempt},
+            )
+            draft, turn = self.agent.draft_lean_file(plan, repair_context)
+            self._write_attempt(store, attempt, turn, draft)
             compile_result = self.lean_runner.compile_draft(store, draft, attempt)
             self._write_compile_result(store, attempt, compile_result)
 
@@ -472,141 +380,274 @@ class FormalizationWorkflow:
             manifest.updated_at = utc_now()
 
             if compile_result.passed:
-                return self._queue_final_review(store, manifest, draft, auto_approve)
+                store.append_log(
+                    "prove_attempt_passed",
+                    f"Attempt {attempt} compiled successfully.",
+                    stage="proof",
+                    details={"attempt": attempt},
+                )
+                return self._queue_final_review(store, manifest, draft, compile_result, auto_approve)
 
             if compile_result.missing_toolchain:
-                manifest.current_stage = RunStage.AWAITING_STALL_REVIEW
                 manifest.latest_error = compile_result.stderr.strip() or compile_result.status
                 self._save_manifest(store, manifest)
-                store.write_text(
-                    "09_review/stall_report.md",
-                    "Lean toolchain is unavailable, so the run stopped before proving the compile gate.\n\n"
-                    "Install Lean via elan, then resume the run or rerun the example.\n",
+                store.append_log(
+                    "prove_loop_blocked",
+                    "Proof loop stopped because the Lean toolchain is unavailable.",
+                    stage="proof",
+                    details={"attempt": attempt},
                 )
-                return manifest
+                return self._pause_for_proof_blocked(
+                    store,
+                    manifest,
+                    reason=(
+                        "Lean toolchain is unavailable, so Terry could not continue the proof loop.\n\n"
+                        "Fix the toolchain, then set `decision: retry` in the review file to allow "
+                        "one more attempt."
+                    ),
+                )
 
-            manifest.current_stage = RunStage.REPAIRING
             manifest.latest_error = compile_result.stderr.strip() or compile_result.status
             self._save_manifest(store, manifest)
             previous_draft = draft
             previous_result = compile_result
+            human_feedback = None
+            store.append_log(
+                "prove_attempt_failed",
+                f"Attempt {attempt} failed and Terry is trying the next repair step.",
+                stage="proof",
+                details={"attempt": attempt, "status": compile_result.status},
+            )
 
-        manifest.current_stage = RunStage.AWAITING_STALL_REVIEW
         manifest.latest_error = previous_result.stderr.strip() if previous_result else "Unknown failure."
         self._save_manifest(store, manifest)
-        store.write_text(
-            "09_review/stall_report.md",
-            "The compile loop hit the retry cap.\n\n"
-            "Next action should be one of:\n"
-            "- revise the enrichment handoff\n"
-            "- revise the theorem spec\n"
-            "- revise the formalization plan\n"
-            "- allow one more targeted repair attempt\n",
+        store.append_log(
+            "prove_loop_blocked",
+            "Proof loop hit the retry cap and paused for human input.",
+            stage="proof",
+            details={"attempt_count": manifest.attempt_count},
         )
-        return manifest
-
-    def _build_context_pack(
-        self,
-        store: RunStore,
-        theorem_spec: TheoremSpec,
-        enrichment: EnrichmentReport,
-    ) -> ContextPack:
-        notes = [
-            f"Title: {theorem_spec.title}",
-            f"Recommended scope: {enrichment.recommended_scope}",
-            f"Difficulty: {enrichment.difficulty_assessment}",
-            "Start from repo-local examples before adding retrieval or external corpora.",
-        ]
-        notes.extend(
-            f"Carry this prerequisite into the plan: {item}"
-            for item in enrichment.required_plan_additions
+        return self._pause_for_proof_blocked(
+            store,
+            manifest,
+            reason=(
+                "The prove-and-repair loop hit the retry cap.\n\n"
+                "If you want Terry to take one more attempt on the same locked plan, set "
+                "`decision: retry` in the proof review file and keep any guidance in the notes."
+            ),
         )
-        context_pack = ContextPack(
-            recommended_imports=["FormalizationEngineWorkspace.Basic"],
-            local_examples=["examples/inputs/zero_add.md"],
-            notes=notes,
-        )
-        store.write_json("05_context/context_pack.json", context_pack)
-        return context_pack
 
     def _queue_final_review(
         self,
         store: RunStore,
         manifest: RunManifest,
         draft: LeanDraft,
+        compile_result: CompileAttempt,
         auto_approve: bool,
     ) -> RunManifest:
-        candidate_relative_path = "10_final/final_candidate.lean"
+        candidate_relative_path = f"{FINAL_DIR}/final_candidate.lean"
         store.write_text(candidate_relative_path, draft.content)
         store.write_text(
-            "10_final/final_report.md",
-            "Candidate Lean file passed the compile gate and the no-`sorry` quality check.\n",
+            f"{FINAL_DIR}/final_report.md",
+            self._render_final_report(draft, compile_result),
         )
         store.write_json(
-            "10_final/provenance.json",
+            f"{FINAL_DIR}/provenance.json",
             {
                 "agent_name": self.agent.name,
                 "candidate_path": candidate_relative_path,
                 "generated_at": utc_now(),
+                "attempt": manifest.attempt_count,
             },
         )
+        store.append_log(
+            "final_candidate_ready",
+            "Generated a compiling Lean candidate for final review.",
+            stage="final",
+            details={"attempt_count": manifest.attempt_count},
+        )
+
         if auto_approve:
-            self._seed_final_approval(store)
-        if not self._decision_is_approved(store, "10_final/decision.json"):
-            manifest.current_stage = RunStage.AWAITING_FINAL_REVIEW
-            manifest.final_output_path = candidate_relative_path
-            return self._save_manifest(store, manifest)
-        return self._complete_from_candidate(store, manifest)
+            self._write_decision(
+                store,
+                FINAL_DIR,
+                ReviewDecision("approve", utc_now(), "Auto-approved."),
+            )
+            return self._complete_from_candidate(store, manifest)
+        return self._pause_for_final(store, manifest)
 
     def _complete_from_candidate(self, store: RunStore, manifest: RunManifest) -> RunManifest:
-        candidate_relative_path = "10_final/final_candidate.lean"
-        final_relative_path = "10_final/final.lean"
-        candidate_path = store.path(candidate_relative_path)
-        store.write_text(final_relative_path, candidate_path.read_text(encoding="utf-8"))
+        candidate_relative_path = f"{FINAL_DIR}/final_candidate.lean"
+        final_relative_path = f"{FINAL_DIR}/final.lean"
+        store.write_text(final_relative_path, store.read_text(candidate_relative_path))
         manifest.current_stage = RunStage.COMPLETED
         manifest.updated_at = utc_now()
         manifest.final_output_path = final_relative_path
         manifest.latest_error = None
-        return self._save_manifest(store, manifest)
+        self._save_manifest(store, manifest)
+        store.append_log(
+            "run_completed",
+            "Final Lean file approved and written to disk.",
+            stage="final",
+            details={"final_output_path": final_relative_path},
+        )
+        return manifest
 
-    def _seed_enrichment_approval(self, store: RunStore) -> None:
-        payload = store.read_json("03_enrichment/enrichment_report.json")
-        store.write_json("03_enrichment/enrichment_report.approved.json", payload)
-        store.write_json(
-            "03_enrichment/decision.json",
-            HumanDecision(approved=True, updated_at=utc_now(), notes="Auto-approved."),
+    def _pause_for_enrichment(self, store: RunStore, manifest: RunManifest) -> RunManifest:
+        return self._pause_for_checkpoint(
+            store,
+            manifest,
+            stage=RunStage.AWAITING_ENRICHMENT_APPROVAL,
+            stage_dir=ENRICHMENT_DIR,
+            title="Enrichment Approval",
+            summary="Terry is waiting for enrichment approval before locking the formalization scope.",
+            artifact_paths=[
+                f"{ENRICHMENT_DIR}/handoff.md",
+                f"{ENRICHMENT_DIR}/enrichment_report.json",
+                f"{ENRICHMENT_DIR}/extraction.md",
+            ],
+            continue_decision="approve",
         )
 
-    def _seed_spec_approval(self, store: RunStore) -> None:
-        payload = store.read_json("04_spec/theorem_spec.json")
-        store.write_json("04_spec/theorem_spec.approved.json", payload)
-        store.write_json(
-            "04_spec/decision.json",
-            HumanDecision(approved=True, updated_at=utc_now(), notes="Auto-approved."),
+    def _pause_for_plan(self, store: RunStore, manifest: RunManifest) -> RunManifest:
+        return self._pause_for_checkpoint(
+            store,
+            manifest,
+            stage=RunStage.AWAITING_PLAN_APPROVAL,
+            stage_dir=PLAN_DIR,
+            title="Plan Approval",
+            summary="Terry is waiting for the merged plan approval before starting the prove-and-repair loop.",
+            artifact_paths=[
+                f"{PLAN_DIR}/formalization_plan.json",
+                f"{PLAN_DIR}/summary.md",
+                f"{PLAN_DIR}/context_pack.json",
+            ],
+            continue_decision="approve",
         )
 
-    def _seed_plan_approval(self, store: RunStore) -> None:
-        payload = store.read_json("06_plan/formalization_plan.json")
-        store.write_json("06_plan/formalization_plan.approved.json", payload)
-        store.write_json(
-            "06_plan/decision.json",
-            HumanDecision(approved=True, updated_at=utc_now(), notes="Auto-approved."),
+    def _pause_for_proof_blocked(
+        self,
+        store: RunStore,
+        manifest: RunManifest,
+        *,
+        reason: str,
+    ) -> RunManifest:
+        store.write_text(f"{PROOF_DIR}/blocker.md", self._render_proof_blocker(reason))
+        return self._pause_for_checkpoint(
+            store,
+            manifest,
+            stage=RunStage.PROOF_BLOCKED,
+            stage_dir=PROOF_DIR,
+            title="Proof Loop Blocked",
+            summary="Terry paused inside the prove-and-repair loop and needs explicit permission to retry.",
+            artifact_paths=[
+                f"{PROOF_DIR}/blocker.md",
+                f"{PROOF_DIR}/loop.md",
+            ],
+            continue_decision="retry",
         )
 
-    def _seed_final_approval(self, store: RunStore) -> None:
-        store.write_json(
-            "10_final/decision.json",
-            HumanDecision(approved=True, updated_at=utc_now(), notes="Auto-approved."),
+    def _pause_for_final(self, store: RunStore, manifest: RunManifest) -> RunManifest:
+        latest_attempt = max(manifest.attempt_count, 1)
+        return self._pause_for_checkpoint(
+            store,
+            manifest,
+            stage=RunStage.AWAITING_FINAL_APPROVAL,
+            stage_dir=FINAL_DIR,
+            title="Final Approval",
+            summary="Terry is waiting for final approval of the compiling Lean candidate.",
+            artifact_paths=[
+                f"{FINAL_DIR}/final_candidate.lean",
+                f"{FINAL_DIR}/final_report.md",
+                f"{PROOF_DIR}/attempts/attempt_{latest_attempt:04d}/compile_result.json",
+            ],
+            continue_decision="approve",
         )
 
-    def _seed_stall_approval(self, store: RunStore) -> None:
-        store.write_json(
-            "09_review/decision.json",
-            HumanDecision(
-                approved=True,
-                updated_at=utc_now(),
-                notes="Auto-approved one more repair attempt.",
+    def _pause_for_checkpoint(
+        self,
+        store: RunStore,
+        manifest: RunManifest,
+        *,
+        stage: RunStage,
+        stage_dir: str,
+        title: str,
+        summary: str,
+        artifact_paths: list[str],
+        continue_decision: str,
+    ) -> RunManifest:
+        manifest.current_stage = stage
+        self._save_manifest(store, manifest)
+        review_path = f"{stage_dir}/review.md"
+        checkpoint_path = f"{stage_dir}/checkpoint.md"
+        resume_command = self._resume_command(manifest.run_id)
+
+        self._write_decision(
+            store,
+            stage_dir,
+            ReviewDecision("pending", utc_now(), ""),
+        )
+        store.write_text(
+            review_path,
+            self._review_template(title, continue_decision),
+        )
+        store.write_text(
+            checkpoint_path,
+            self._checkpoint_text(
+                title=title,
+                summary=summary,
+                artifact_paths=artifact_paths,
+                review_path=review_path,
+                resume_command=resume_command,
+                continue_decision=continue_decision,
             ),
+        )
+        store.append_log(
+            "checkpoint_opened",
+            summary,
+            stage=stage.value,
+            details={
+                "checkpoint_path": checkpoint_path,
+                "review_path": review_path,
+                "resume_command": resume_command,
+            },
+        )
+        return manifest
+
+    def _build_context_pack(
+        self,
+        extraction: TheoremExtraction,
+        enrichment: EnrichmentReport,
+    ) -> ContextPack:
+        notes = [
+            f"Title: {extraction.title}",
+            f"Recommended scope: {enrichment.recommended_scope}",
+            f"Difficulty: {enrichment.difficulty_assessment}",
+            "Use the local Terry workspace scaffold before adding extra imports.",
+        ]
+        notes.extend(
+            f"Carry this prerequisite into the plan: {item}"
+            for item in enrichment.required_plan_additions
+        )
+        return ContextPack(
+            recommended_imports=["FormalizationEngineWorkspace.Basic"],
+            local_examples=["examples/inputs/zero_add.md"],
+            notes=notes,
+        )
+
+    def _write_extraction(
+        self,
+        store: RunStore,
+        extraction: TheoremExtraction,
+        turn,
+    ) -> None:
+        self._write_agent_turn(store, ENRICHMENT_DIR, turn, extraction)
+        store.write_json(f"{ENRICHMENT_DIR}/extraction.json", extraction)
+        store.write_text(f"{ENRICHMENT_DIR}/extraction.md", self._render_extraction_markdown(extraction))
+        store.append_log(
+            "extraction_ready",
+            "Prepared the internal theorem extraction package.",
+            stage="enrichment",
         )
 
     def _write_agent_turn(self, store: RunStore, stage_dir: str, turn, parsed_output) -> None:
@@ -616,13 +657,13 @@ class FormalizationWorkflow:
         store.write_json(f"{stage_dir}/parsed_output.json", parsed_output)
 
     def _write_attempt(self, store: RunStore, attempt: int, turn, draft: LeanDraft) -> None:
-        attempt_dir = f"07_draft/attempt_{attempt:04d}"
+        attempt_dir = f"{PROOF_DIR}/attempts/attempt_{attempt:04d}"
         self._write_agent_turn(store, attempt_dir, turn, draft)
         store.write_text(f"{attempt_dir}/draft.lean", draft.content)
 
     def _write_compile_result(self, store: RunStore, attempt: int, compile_result: CompileAttempt) -> None:
-        attempt_dir = f"08_compile/attempt_{attempt:04d}"
-        store.write_json(f"{attempt_dir}/result.json", compile_result)
+        attempt_dir = f"{PROOF_DIR}/attempts/attempt_{attempt:04d}"
+        store.write_json(f"{attempt_dir}/compile_result.json", compile_result)
         store.write_text(f"{attempt_dir}/stdout.txt", compile_result.stdout)
         store.write_text(f"{attempt_dir}/stderr.txt", compile_result.stderr)
         store.write_json(
@@ -632,6 +673,7 @@ class FormalizationWorkflow:
                 "checks": ["no_sorry_literals"],
             },
         )
+        store.write_text(f"{PROOF_DIR}/loop.md", self._render_loop_summary(store, attempt))
 
     def _render_extraction_markdown(self, extraction: TheoremExtraction) -> str:
         sections = [
@@ -695,6 +737,184 @@ class FormalizationWorkflow:
         ]
         return "\n".join(sections)
 
+    def _render_plan_summary(self, plan: FormalizationPlan) -> str:
+        sections = [
+            f"# Plan Summary: {plan.title}",
+            "",
+            plan.human_summary.strip(),
+            "",
+            "## Mathematical Meaning",
+            f"Assumptions: {', '.join(plan.assumptions) if plan.assumptions else 'none'}",
+            f"Conclusion: {plan.conclusion}",
+            f"Paraphrase: {plan.paraphrase}",
+            "",
+            "## Lean Target",
+            f"Theorem name: {plan.theorem_name}",
+            f"Target statement: {plan.target_statement}",
+            "",
+            "## Imports",
+            *self._render_bullets(plan.imports),
+            "",
+            "## Proof Sketch",
+            *self._render_bullets(plan.proof_sketch),
+            "",
+            "## Explicit Ambiguities",
+            *self._render_bullets(plan.ambiguities),
+            "",
+            "## Prerequisites To Formalize",
+            *self._render_bullets(plan.prerequisites_to_formalize),
+            "",
+        ]
+        return "\n".join(sections)
+
+    def _render_loop_summary(self, store: RunStore, latest_attempt: int) -> str:
+        sections = [
+            "# Prove-And-Repair Loop",
+            "",
+            f"Latest completed attempt: {latest_attempt}",
+            "",
+            "## Attempts",
+        ]
+        for attempt in range(1, latest_attempt + 1):
+            result_path = f"{PROOF_DIR}/attempts/attempt_{attempt:04d}/compile_result.json"
+            if not store.exists(result_path):
+                continue
+            payload = store.read_json(result_path)
+            status = payload.get("status", "unknown")
+            diagnostics = payload.get("diagnostics", [])
+            sections.append(f"- attempt {attempt}: {status}")
+            if diagnostics:
+                sections.append(f"  diagnostics: {' | '.join(str(item) for item in diagnostics)}")
+        sections.append("")
+        return "\n".join(sections)
+
+    def _render_proof_blocker(self, reason: str) -> str:
+        return "\n".join(
+            [
+                "# Proof Loop Blocked",
+                "",
+                reason.strip(),
+                "",
+            ]
+        )
+
+    def _render_final_report(self, draft: LeanDraft, compile_result: CompileAttempt) -> str:
+        diagnostics = "\n".join(f"- {line}" for line in compile_result.diagnostics) or "- none"
+        return "\n".join(
+            [
+                "# Final Candidate",
+                "",
+                f"The theorem `{draft.theorem_name}` compiled successfully.",
+                "",
+                "## Rationale",
+                draft.rationale,
+                "",
+                "## Compile Diagnostics Snapshot",
+                diagnostics,
+                "",
+            ]
+        )
+
+    def _checkpoint_text(
+        self,
+        *,
+        title: str,
+        summary: str,
+        artifact_paths: list[str],
+        review_path: str,
+        resume_command: str,
+        continue_decision: str,
+    ) -> str:
+        artifact_lines = "\n".join(f"- `{path}`" for path in artifact_paths)
+        return "\n".join(
+            [
+                f"# {title}",
+                "",
+                summary,
+                "",
+                "## Review Artifacts",
+                artifact_lines,
+                "",
+                "## Review File",
+                f"- `{review_path}`",
+                "",
+                "## Continue Condition",
+                f"Set `decision: {continue_decision}` in the review file when you want Terry to continue.",
+                "",
+                "## Resume Command",
+                f"`{resume_command}`",
+                "",
+            ]
+        )
+
+    def _review_template(self, title: str, continue_decision: str) -> str:
+        return "\n".join(
+            [
+                f"# {title}",
+                "",
+                "decision: pending",
+                "",
+                "Notes:",
+                f"- Replace `pending` with `{continue_decision}` when you want Terry to continue.",
+                "- Write any review notes below. Terry records them in `decision.json` when resumed.",
+                "",
+            ]
+        )
+
+    def _resume_command(self, run_id: str) -> str:
+        return f"{self.terry_command} resume {run_id}"
+
+    def _resolve_checkpoint_decision(
+        self,
+        store: RunStore,
+        stage_dir: str,
+        *,
+        continue_decision: str,
+        auto_approve: bool,
+    ) -> ReviewDecision | None:
+        existing = self._load_decision(store, f"{stage_dir}/decision.json")
+        if existing is not None and existing.decision == continue_decision:
+            return existing
+
+        if auto_approve:
+            decision = ReviewDecision(continue_decision, utc_now(), "Auto-approved.")
+            self._write_decision(store, stage_dir, decision)
+            return decision
+
+        review_path = f"{stage_dir}/review.md"
+        if not store.exists(review_path):
+            return None
+        decision = self._parse_review_file(store.read_text(review_path))
+        if decision is None or decision.decision != continue_decision:
+            return None
+        self._write_decision(store, stage_dir, decision)
+        return decision
+
+    def _write_decision(self, store: RunStore, stage_dir: str, decision: ReviewDecision) -> None:
+        store.write_json(f"{stage_dir}/decision.json", decision)
+
+    def _parse_review_file(self, content: str) -> ReviewDecision | None:
+        lines = content.splitlines()
+        decision_value: str | None = None
+        notes_lines: list[str] = []
+        in_notes = False
+
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not in_notes and line.lower().startswith("decision:"):
+                decision_value = line.split(":", 1)[1].strip().lower()
+                continue
+            if line.lower() == "notes:":
+                in_notes = True
+                continue
+            if in_notes:
+                notes_lines.append(raw_line)
+
+        if decision_value is None or decision_value in {"", "pending"}:
+            return None
+        notes = "\n".join(notes_lines).strip()
+        return ReviewDecision(decision=decision_value, updated_at=utc_now(), notes=notes)
+
     def _render_bullets(self, items: list[str]) -> list[str]:
         if not items:
             return ["- none"]
@@ -707,6 +927,44 @@ class FormalizationWorkflow:
 
     def _load_manifest(self, store: RunStore) -> RunManifest:
         payload = store.read_json("manifest.json")
+        stage_value = payload["current_stage"]
+        if stage_value == "awaiting_spec_review":
+            raise RuntimeError(
+                "This run predates Terry's merged plan checkpoint and cannot be resumed automatically. "
+                "Start a fresh Terry run from the same source."
+            )
+        stage_aliases = {
+            "awaiting_enrichment_review": RunStage.AWAITING_ENRICHMENT_APPROVAL,
+            "awaiting_plan_review": RunStage.AWAITING_PLAN_APPROVAL,
+            "repairing": RunStage.PROVING,
+            "awaiting_stall_review": RunStage.PROOF_BLOCKED,
+            "awaiting_final_review": RunStage.AWAITING_FINAL_APPROVAL,
+        }
+        resolved_stage = stage_aliases.get(stage_value, stage_value)
+
+        agent_config_payload = payload.get("agent_config")
+        if isinstance(agent_config_payload, dict):
+            agent_config = AgentConfig(**agent_config_payload)
+        else:
+            agent_name = payload.get("agent_name", "")
+            if str(agent_name).startswith("codex_cli:"):
+                model = str(agent_name).split(":", 1)[1]
+                agent_config = AgentConfig(
+                    backend="codex",
+                    codex_model=None if model == "default" else model,
+                )
+            elif str(agent_name).startswith("subprocess:"):
+                agent_config = AgentConfig(backend="command")
+            else:
+                agent_config = AgentConfig(backend="demo")
+
+        template_dir = payload.get("template_dir")
+        if not template_dir:
+            repo_template = self.repo_root / "lean_workspace_template"
+            if repo_template.exists():
+                template_dir = str(repo_template.resolve())
+            else:
+                template_dir = str((Path(__file__).resolve().parent / "workspace_template").resolve())
         return RunManifest(
             run_id=payload["run_id"],
             source=SourceRef(
@@ -714,9 +972,11 @@ class FormalizationWorkflow:
                 kind=SourceKind(payload["source"]["kind"]),
             ),
             agent_name=payload["agent_name"],
+            agent_config=agent_config,
+            template_dir=template_dir,
             created_at=payload["created_at"],
             updated_at=payload["updated_at"],
-            current_stage=RunStage(payload["current_stage"]),
+            current_stage=RunStage(resolved_stage),
             workflow_version=payload.get("workflow_version", DEFAULT_WORKFLOW_VERSION),
             workflow_tags=payload.get("workflow_tags", list(DEFAULT_WORKFLOW_TAGS)),
             attempt_count=payload.get("attempt_count", 0),
@@ -725,35 +985,13 @@ class FormalizationWorkflow:
         )
 
     def _load_extraction(self, store: RunStore) -> TheoremExtraction:
-        payload = store.read_json("02_extraction/theorem_extraction.json")
-        return TheoremExtraction(**payload)
+        return TheoremExtraction(**store.read_json(f"{ENRICHMENT_DIR}/extraction.json"))
 
-    def _load_enrichment(self, store: RunStore, approved: bool) -> EnrichmentReport:
-        filename = (
-            "03_enrichment/enrichment_report.approved.json"
-            if approved
-            else "03_enrichment/enrichment_report.json"
-        )
-        payload = store.read_json(filename)
-        return EnrichmentReport(**payload)
+    def _load_enrichment(self, store: RunStore) -> EnrichmentReport:
+        return EnrichmentReport(**store.read_json(f"{ENRICHMENT_DIR}/enrichment_report.json"))
 
-    def _load_theorem_spec(self, store: RunStore, approved: bool) -> TheoremSpec:
-        filename = (
-            "04_spec/theorem_spec.approved.json"
-            if approved
-            else "04_spec/theorem_spec.json"
-        )
-        payload = store.read_json(filename)
-        return TheoremSpec(**payload)
-
-    def _load_plan(self, store: RunStore, approved: bool) -> FormalizationPlan:
-        filename = (
-            "06_plan/formalization_plan.approved.json"
-            if approved
-            else "06_plan/formalization_plan.json"
-        )
-        payload = store.read_json(filename)
-        return FormalizationPlan(**payload)
+    def _load_plan(self, store: RunStore) -> FormalizationPlan:
+        return FormalizationPlan(**store.read_json(f"{PLAN_DIR}/formalization_plan.json"))
 
     def _load_previous_compile_result(
         self,
@@ -762,11 +1000,10 @@ class FormalizationWorkflow:
     ) -> CompileAttempt | None:
         if manifest.attempt_count <= 0:
             return None
-        result_path = f"08_compile/attempt_{manifest.attempt_count:04d}/result.json"
+        result_path = f"{PROOF_DIR}/attempts/attempt_{manifest.attempt_count:04d}/compile_result.json"
         if not store.exists(result_path):
             return None
-        payload = store.read_json(result_path)
-        return CompileAttempt(**payload)
+        return CompileAttempt(**store.read_json(result_path))
 
     def _load_previous_draft(
         self,
@@ -775,18 +1012,12 @@ class FormalizationWorkflow:
     ) -> LeanDraft | None:
         if manifest.attempt_count <= 0:
             return None
-        draft_path = f"07_draft/attempt_{manifest.attempt_count:04d}/parsed_output.json"
+        draft_path = f"{PROOF_DIR}/attempts/attempt_{manifest.attempt_count:04d}/parsed_output.json"
         if not store.exists(draft_path):
             return None
-        payload = store.read_json(draft_path)
-        return LeanDraft(**payload)
+        return LeanDraft(**store.read_json(draft_path))
 
-    def _load_decision(self, store: RunStore, relative_path: str) -> HumanDecision | None:
+    def _load_decision(self, store: RunStore, relative_path: str) -> ReviewDecision | None:
         if not store.exists(relative_path):
             return None
-        payload = store.read_json(relative_path)
-        return HumanDecision(**payload)
-
-    def _decision_is_approved(self, store: RunStore, relative_path: str) -> bool:
-        decision = self._load_decision(store, relative_path)
-        return bool(decision and decision.approved)
+        return ReviewDecision(**store.read_json(relative_path))

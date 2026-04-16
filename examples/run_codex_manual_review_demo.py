@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 
 from lean_formalization_engine.codex_agent import CodexCliFormalizationAgent
-from lean_formalization_engine.models import RunManifest, RunStage
+from lean_formalization_engine.models import AgentConfig, RunManifest, RunStage
 from lean_formalization_engine.workflow import FormalizationWorkflow
 
 EXPECTED_IMPORT = "FormalizationEngineWorkspace.Basic"
@@ -23,26 +23,21 @@ def _expect_stage(manifest: RunManifest, expected: RunStage, label: str) -> None
         )
 
 
-def _normalize_text(value: str) -> str:
-    return "".join(character for character in value.lower() if character.isalnum())
-
-
-def validate_theorem_spec(theorem_spec: dict[str, object]) -> None:
-    conclusion = _normalize_text(str(theorem_spec.get("conclusion", "")))
-    if _normalize_text("n + 0 = n") not in conclusion:
-        raise RuntimeError("Spec review failed: conclusion does not match `n + 0 = n`.")
-
-    assumptions = theorem_spec.get("assumptions", [])
-    symbols = theorem_spec.get("symbols", [])
-    context_text = _normalize_text(
-        " ".join(str(item) for item in [*assumptions, *symbols])
+def _write_review_decision(path: Path, decision: str, notes: str) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                f"# {path.parent.name} review",
+                "",
+                f"decision: {decision}",
+                "",
+                "Notes:",
+                notes,
+                "",
+            ]
+        ),
+        encoding="utf-8",
     )
-    if "nat" not in context_text:
-        raise RuntimeError("Spec review failed: natural-number context is missing.")
-
-    ambiguities = theorem_spec.get("ambiguities", [])
-    if ambiguities:
-        raise RuntimeError("Spec review failed: live Codex surfaced ambiguities.")
 
 
 def validate_enrichment_report(enrichment_report: dict[str, object]) -> None:
@@ -63,6 +58,10 @@ def validate_formalization_plan(plan: dict[str, object]) -> None:
     imports = [str(item) for item in plan.get("imports", [])]
     if EXPECTED_IMPORT not in imports:
         raise RuntimeError("Plan review failed: expected import is missing.")
+
+    assumptions = [str(item) for item in plan.get("assumptions", [])]
+    if "n : Nat" not in assumptions:
+        raise RuntimeError("Plan review failed: natural-number assumption is missing.")
 
     proof_sketch = " ".join(str(item) for item in plan.get("proof_sketch", []))
     if "Nat.add_zero" not in proof_sketch:
@@ -90,54 +89,42 @@ def main() -> None:
     workflow = FormalizationWorkflow(
         repo_root=repo_root,
         agent=CodexCliFormalizationAgent(repo_root=repo_root),
+        agent_config=AgentConfig(backend="codex"),
     )
     source_path = repo_root / "examples" / "inputs" / "right_add_zero.md"
 
-    manifest = workflow.run(
+    manifest = workflow.prove(
         source_path=source_path,
         run_id=run_id,
         auto_approve=False,
     )
-    _expect_stage(manifest, RunStage.AWAITING_ENRICHMENT_REVIEW, "enrichment review")
-    enrichment_report = _read_json(run_root / "03_enrichment" / "enrichment_report.json")
+    _expect_stage(manifest, RunStage.AWAITING_ENRICHMENT_APPROVAL, "enrichment review")
+    enrichment_report = _read_json(run_root / "01_enrichment" / "enrichment_report.json")
     validate_enrichment_report(enrichment_report)
-    print(f"Enrichment review: self_contained={enrichment_report['self_contained']}")
-    workflow.approve_enrichment(
-        run_id,
-        notes="Enrichment confirms the theorem is self-contained over Nat.",
+    _write_review_decision(
+        run_root / "01_enrichment" / "review.md",
+        "approve",
+        "The theorem is self-contained over Nat and ready for plan approval.",
     )
 
     manifest = workflow.resume(run_id, auto_approve=False)
-    _expect_stage(manifest, RunStage.AWAITING_SPEC_REVIEW, "spec review")
-    theorem_spec = _read_json(run_root / "04_spec" / "theorem_spec.json")
-    validate_theorem_spec(theorem_spec)
-    print(f"Spec review: {theorem_spec['title']}")
-    print(f"Conclusion: {theorem_spec['conclusion']}")
-    workflow.approve_spec(
-        run_id,
-        notes="Spec matches the intended right-add-zero theorem and symbols.",
-    )
-
-    manifest = workflow.resume(run_id, auto_approve=False)
-    _expect_stage(manifest, RunStage.AWAITING_PLAN_REVIEW, "plan review")
-    plan = _read_json(run_root / "06_plan" / "formalization_plan.json")
+    _expect_stage(manifest, RunStage.AWAITING_PLAN_APPROVAL, "plan review")
+    plan = _read_json(run_root / "02_plan" / "formalization_plan.json")
     validate_formalization_plan(plan)
-    print(f"Plan review: {plan['theorem_name']}")
-    print(f"Target: {plan['target_statement']}")
-    workflow.approve_plan(
-        run_id,
-        notes="Plan uses the expected import, theorem target, and Nat.add_zero proof route.",
+    _write_review_decision(
+        run_root / "02_plan" / "review.md",
+        "approve",
+        "The theorem statement, imports, and proof route are all correct.",
     )
 
     manifest = workflow.resume(run_id, auto_approve=False)
-    _expect_stage(manifest, RunStage.AWAITING_FINAL_REVIEW, "final review")
-    print(f"Compile attempts before final review: {manifest.attempt_count}")
-    candidate_path = run_root / "10_final" / "final_candidate.lean"
+    _expect_stage(manifest, RunStage.AWAITING_FINAL_APPROVAL, "final review")
+    candidate_path = run_root / "04_final" / "final_candidate.lean"
     validate_final_candidate(candidate_path.read_text(encoding="utf-8"))
-    print(f"Final review candidate: {candidate_path.relative_to(repo_root)}")
-    workflow.approve_final(
-        run_id,
-        notes="Final Lean file matches the intended theorem and compiles cleanly.",
+    _write_review_decision(
+        run_root / "04_final" / "review.md",
+        "approve",
+        "The compiling Lean file matches the approved plan.",
     )
 
     manifest = workflow.resume(run_id, auto_approve=False)

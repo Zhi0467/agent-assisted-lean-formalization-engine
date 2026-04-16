@@ -4,6 +4,7 @@ import shutil
 import sys
 from pathlib import Path
 
+from lean_formalization_engine.models import AgentConfig
 from lean_formalization_engine.subprocess_agent import SubprocessFormalizationAgent
 from lean_formalization_engine.workflow import FormalizationWorkflow
 
@@ -16,11 +17,13 @@ def main() -> None:
         shutil.rmtree(run_root)
 
     provider_script = repo_root / "examples" / "providers" / "scripted_repair_provider.py"
+    command = [sys.executable, str(provider_script)]
     workflow = FormalizationWorkflow(
         repo_root=repo_root,
-        agent=SubprocessFormalizationAgent([sys.executable, str(provider_script)]),
+        agent=SubprocessFormalizationAgent(command),
+        agent_config=AgentConfig(backend="command", command=command),
     )
-    manifest = workflow.run(
+    manifest = workflow.prove(
         source_path=repo_root / "examples" / "inputs" / "zero_add.md",
         run_id=run_id,
         auto_approve=True,

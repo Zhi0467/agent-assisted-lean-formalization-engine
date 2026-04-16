@@ -1,100 +1,67 @@
 # Roadmap
 
-Last updated: 2026-04-15 20:45 UTC
+Last updated: 2026-04-16 08:46 UTC
 
 ## Current Status
 
-The repo now has a concrete v0 scaffold:
+The repo is in the middle of a workflow rewrite on top of the new enrichment commit from
+`main`. The old surface mixed four human gates, hidden `approve-*` commands, and a CLI
+that still looked more like an internal scaffold than the intended Terry product. The
+current rewrite changes that contract:
 
-- typed Python engine under `src/`,
-- runnable demo under `examples/`,
-- persisted run artifacts under `artifacts/`,
-- and a minimal Lean workspace template for compile checks.
+- the installable CLI is now `terry`
+- the human path is `terry prove` plus `terry resume`
+- the workflow has three approvals only: enrichment, merged plan, and final
+- plan approval now locks both mathematical meaning and Lean theorem/proof plan together
+- the proof phase is an explicit prove-and-repair loop between plan approval and final approval
+- each checkpoint writes `checkpoint.md` plus `review.md`
+- each run now has `logs/timeline.md` and `logs/workflow.jsonl`
+- backend choice is persisted in the manifest, so resumed runs cannot silently swap providers
+- template discovery is now part of the CLI contract rather than an implicit repo assumption
 
-The repo's core agentic object is now pinned more sharply than the first scaffold note
-made it sound: spec, plan, then a bounded compile-repair loop. The generic external turn
-boundary is still there via a subprocess-backed agent, and the live Codex path now has
-two checked-in surfaces: an auto-approved zero-add run and a manual-review run on the
-non-demo theorem `n + 0 = n`. That means the repo now proves both halves of the intended
-workflow object: live model turns plus explicit human checkpoints on a real theorem path.
-Codex is now the default CLI backend for real runs, and the repo also has an explicit
-CLI walkthrough for the manual-review path so the human surface is visible without reading
-Python demo code. But the next gate is not yet a harder theorem: open `PR #2` still has
-two concrete workflow blockers on its current head. Missing `codex` binaries still crash
-with a raw traceback, and multi-command runs can silently switch providers on `resume`
-because backend choice is not yet persisted with the run.
+Local unit coverage for the rewritten surface is green, but the branch has not yet been
+pushed through local review or Codex review. Until that review gate is clear, the rewrite
+items stay open in `docs/backlog.md`.
 
-The workflow now also has an explicit pre-spec understanding layer. Source ingestion no
-longer jumps straight from normalized text to theorem spec. It first emits an extraction
-artifact with the theorem's dependency chain, then an enrichment handoff that says what
-is already in Lean/mathlib, what is missing, what should be added to the formalization
-plan, and what the human reviewer should approve before the theorem-spec stage continues.
-The Lean template is now mathlib-backed rather than Lean-only.
-
-## Milestone 1 — Lock the Engine Skeleton
+## Milestone 1 — Terry CLI Contract
 
 Success criteria:
 
-- the repo has a stable directory layout,
-- the engine modules have explicit interfaces,
-- the run state machine persists artifacts at each stage,
-- a demo example exercises the full flow.
+- humans can run `terry prove` and `terry resume` without using hidden approval commands
+- Terry writes the review artifacts humans need at each checkpoint
+- the workflow logger is readable and complete enough to follow a run from disk
 
 Gate:
 
-- the demo produces a final Lean file and compile logs under `artifacts/runs/`.
+- the rewritten CLI passes local tests and survives local review on a PR branch
 
 ### Activity Log
 
-- [2026-04-15 20:45 UTC] Split the old pre-spec surface into `02_extraction` and `03_enrichment`, added an explicit enrichment review gate and handoff artifact, threaded missing prerequisites into the formalization plan, versioned/tagged the workflow in the manifest and architecture doc, and upgraded the Lean workspace template to a neutral mathlib-backed scaffold.
-- [2026-04-04 06:20 UTC] Switched the CLI default backend for real runs from the deterministic demo agent to Codex, while keeping `--agent-backend demo` explicit for examples/tests and preserving `--agent-command` as the subprocess override.
-- [2026-04-04 06:20 UTC] Added `docs/manual-review-walkthrough.md` so the human-reviewed theorem path is visible as direct CLI commands instead of only through the Python demo script.
-- [2026-04-03 10:25 UTC] Initialized the project surface around five durable directories: `src/`, `examples/`, `assets/`, `artifacts/`, and `lean_workspace_template/`.
-- [2026-04-03 10:25 UTC] Chose Python for the v0 engine, using typed dataclasses and protocols instead of an agent framework.
-- [2026-04-03 10:25 UTC] Added an approval-driven workflow scaffold with theorem-spec review, plan review, compile attempts, and final review.
-- [2026-04-03 10:25 UTC] Added `docs/landscape.md` so the repo starts with explicit borrow-vs-rebuild guidance rather than an ungrounded agent loop.
-- [2026-04-03 10:59 UTC] Synced the repo-local and packaged Lean workspace templates so both surfaces compile the same generated module path.
-- [2026-04-03 10:59 UTC] Switched persisted source and final-output metadata to repo-relative paths so checked-in artifacts stay portable across machines.
-- [2026-04-03 10:59 UTC] Athena standard consult confirmed the local direction: keep Python for v0, use a filesystem-backed state machine with explicit human gates, avoid a heavyweight agent framework, and add a `ProofSession` layer next. Immediate borrow targets are LeanInteract and PyPantograph, with LeanDojo-v2 as the broader later substrate. Full consult record: `.agent/runtime/consult_history/1775197696.768269.jsonl`.
-- [2026-04-04 00:28 UTC] Tightened the project-language after Wangzhi's loop question: the core agentic surface is not generic "provider wiring" but the bounded post-plan Lean compile-repair cycle, where compiler diagnostics feed the next draft attempt until success, retry-cap stall, or escalation back to spec/plan review.
-- [2026-04-04 00:28 UTC] Reordered the backlog so the first follow-ups center on the model-backed compile-repair loop, structured diagnostics, and explicit escalation policy before deeper interactive proof sessions.
-- [2026-04-04 00:40 UTC] Fixed an actual repair-loop gap uncovered by the local review attempt: interrupted runs can now resume from `repairing`, and the workflow reloads the last persisted compile result so the next attempt still sees the prior compiler diagnostics. Added a regression test covering crash-then-resume behavior inside the compile-repair phase.
-- [2026-04-04 03:15 UTC] Added a subprocess-backed agent adapter so theorem-spec, plan, and Lean-draft turns can already cross a real external command boundary without changing the run-state machine or artifact schema.
-- [2026-04-04 03:15 UTC] Made repair context explicit in the agent protocol: the repeated draft turn now receives retry-budget state, the previous draft, and the previous compile result, and resumed runs reload both persisted artifacts before re-entering repair.
-- [2026-04-04 03:15 UTC] Added a local command-agent demo plus regression coverage showing a provider can fail once, read the saved compile feedback, and repair the theorem on the next attempt.
-- [2026-04-04 04:40 UTC] Merged PR `#1` on `main`, then tightened the core loop around the review findings: run IDs are now safe and unique, rejected final decisions cannot silently complete a run, stall review can explicitly grant one more repair attempt, and pre-compile provider crashes can resume from the persisted `created` surface instead of stranding the run.
-- [2026-04-04 04:40 UTC] Added `CodexCliFormalizationAgent` as the first built-in live provider path. The CLI can now select `--agent-backend codex`, the repo ships a runnable `examples/run_codex_agent_demo.py`, and the engine still persists the same prompt/request/response artifacts as the demo and subprocess-backed paths.
-- [2026-04-04 04:40 UTC] Ran the new live Codex path end to end on the smallest theorem object (`examples/inputs/zero_add.md`) and checked the resulting canonical artifact into the repo at `artifacts/runs/demo-codex-agent/`. That run compiled on the first attempt and preserved the same stage-by-stage trail as the scripted paths.
-- [2026-04-04 05:03 UTC] Removed the stale wording that framed Codex-as-default as an open product choice. The remaining work is to implement Codex as the default real-run path and push it through a non-demo theorem, not to re-ask for direction that was already given in-thread.
+- [2026-04-16 08:46 UTC] Rebased work onto `origin/main` after the new enrichment commit landed and stopped building on the older dirty `murphy/codex-agent-backend` branch.
+- [2026-04-16 08:46 UTC] Replaced the old four-gate CLI surface with the new Terry contract: `terry prove`, `terry resume`, review-file checkpoints, merged plan approval, and a readable workflow logger.
+- [2026-04-16 08:46 UTC] Added depth-1 `lean_workspace_template` discovery plus fallback initialization through `lake new lean_workspace_template math`, with the shipped Terry scaffold overlaid onto the initialized project.
+- [2026-04-16 08:46 UTC] Persisted backend configuration in the run manifest so resumed runs rebuild the original backend instead of guessing from current CLI flags.
+- [2026-04-16 08:46 UTC] Refreshed the project docs around the Terry path and updated the examples/tests to exercise review files and `resume`, not hidden `approve-*` commands.
+- [2026-04-16 08:46 UTC] Re-ran the local unit suite on the rewrite surface: `PYTHONPATH=src python3 -m unittest discover -s tests` (`16` tests, all passing).
 
-## Milestone 2 — Add A Real Provider Adapter
+## Milestone 2 — Real Proof Stress
 
 Success criteria:
 
-- an external provider can produce theorem specs, plans, and Lean drafts,
-- prompts and responses are persisted without changing the artifact contract,
-- compilation failures feed a bounded repair loop with explicit repair context,
-- repeated repair failures escalate cleanly instead of silently thrashing.
+- a non-demo theorem forces at least one genuine repair attempt on the Terry surface
+- the resulting artifact trail is readable enough that a human can audit the proof loop
 
 Gate:
 
-- at least one non-demo theorem runs through a live API-backed path with persisted prompts and diagnostics.
+- at least one checked-in run proves a theorem only after seeing real compile feedback
 
-### Activity Log
-
-- [2026-04-04 05:36 UTC] Simulated the full human-in-the-loop Codex path on a first non-demo theorem (`n + 0 = n`) without `--auto-approve`. The run paused at spec review, plan review, and final review in turn, accepted explicit human notes at each gate, and was checked into the repo at `artifacts/runs/demo-codex-manual-right-add/`.
-- [2026-04-04 05:49 UTC] Normalized persisted Lean command and compiler-trace paths so checked-in compile artifacts stop leaking machine-local absolute paths. Added a regression test for this at the runner level and regenerated the manual-review artifact with the sanitized trace surface.
-- [2026-04-04 06:12 UTC] Re-ran the same manual-review theorem end to end against the live Codex backend and confirmed the checked-in `n + 0 = n` path still pauses cleanly at spec, plan, and final review before completing after explicit human approvals.
-- [2026-04-04 06:58 UTC] Rechecked `PR #2` on its current head after another local review attempt. The branch still passes the local unit-test gate, but it is not merge-ready yet: missing `codex` still crashes with raw `FileNotFoundError`, and a run started with a non-default backend can still resume through Codex because backend choice is not persisted with the run manifest.
-
-## Milestone 3 — Improve Lean Context And Repair
+## Milestone 3 — Richer Revision Control
 
 Success criteria:
 
-- the engine can choose imports more intelligently,
-- the repair loop uses structured diagnostics rather than raw stderr only,
-- auxiliary lemma generation can be turned on without changing the base pipeline.
+- enrichment and plan review can request changes through Terry rather than stopping at approval-only review files
+- proof-loop diagnostics become more structured than the current stderr tail
 
 Gate:
 
-- at least one previously failing theorem is recovered by the repair loop without manual file editing.
+- at least one review-requested change is handled through Terry without manual artifact surgery

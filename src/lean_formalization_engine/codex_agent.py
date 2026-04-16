@@ -16,14 +16,12 @@ from .models import (
     RepairContext,
     SourceRef,
     TheoremExtraction,
-    TheoremSpec,
 )
 
 ParsedOutput = TypeVar(
     "ParsedOutput",
     TheoremExtraction,
     EnrichmentReport,
-    TheoremSpec,
     FormalizationPlan,
     LeanDraft,
 )
@@ -33,7 +31,7 @@ _STRING_ARRAY = {"type": "array", "items": {"type": "string"}}
 
 
 class CodexCliFormalizationAgent:
-    """Use `codex exec` as a live extraction, enrichment, spec, plan, and Lean backend."""
+    """Use `codex exec` as a live Terry backend."""
 
     def __init__(
         self,
@@ -45,38 +43,6 @@ class CodexCliFormalizationAgent:
         self.model = model
         self.executable = executable
         self.name = f"codex_cli:{model or 'default'}"
-
-    def draft_theorem_spec(
-        self,
-        source_ref: SourceRef,
-        source_text: str,
-        extraction: TheoremExtraction,
-        enrichment: EnrichmentReport,
-    ) -> tuple[TheoremSpec, AgentTurn]:
-        request_payload = {
-            "stage": "draft_theorem_spec",
-            "model": self.model,
-            "source_ref": asdict(source_ref),
-            "source_text": source_text,
-            "extraction": asdict(extraction),
-            "enrichment": asdict(enrichment),
-        }
-        prompt = (
-            "You are the theorem-spec turn for a Lean 4 formalization workflow.\n"
-            "Return JSON only. Use the extraction and enrichment outputs to produce a precise, "
-            "reviewable theorem specification. Stay faithful to the source statement and keep "
-            "real ambiguities explicit.\n\n"
-            f"Source reference:\n{json.dumps(request_payload['source_ref'], indent=2, sort_keys=True)}\n\n"
-            f"Original source statement:\n{source_text.strip()}\n\n"
-            f"Approved extraction:\n{json.dumps(request_payload['extraction'], indent=2, sort_keys=True)}\n\n"
-            f"Approved enrichment:\n{json.dumps(request_payload['enrichment'], indent=2, sort_keys=True)}\n"
-        )
-        return self._invoke(
-            request_payload=request_payload,
-            prompt=prompt,
-            response_type=TheoremSpec,
-            schema=_theorem_spec_schema(),
-        )
 
     def draft_theorem_extraction(
         self,
@@ -92,9 +58,9 @@ class CodexCliFormalizationAgent:
             "normalized_text": normalized_text,
         }
         prompt = (
-            "You are the extraction turn for a Lean 4 formalization workflow.\n"
-            "Return JSON only. Extract the theorem statement, the required definitions, lemmas, "
-            "propositions, and a dependency list that makes the prerequisite chain explicit.\n\n"
+            "You are the extraction turn for Terry, a Lean 4 formalization workflow.\n"
+            "Return JSON only. Extract the theorem statement, required definitions, "
+            "lemmas, propositions, and an explicit dependency chain.\n\n"
             f"Source reference:\n{json.dumps(request_payload['source_ref'], indent=2, sort_keys=True)}\n\n"
             f"Original source statement:\n{source_text.strip()}\n\n"
             f"Normalized theorem source:\n{normalized_text.strip()}\n"
@@ -122,13 +88,11 @@ class CodexCliFormalizationAgent:
             "extraction_markdown": extraction_markdown,
         }
         prompt = (
-            "You are the enrichment turn for a Lean 4 formalization workflow.\n"
-            "Return JSON only. Decide whether the extracted theorem package is self-contained, "
-            "what prerequisites appear satisfied by standard Lean/mathlib infrastructure, what "
-            "is missing, and what must be added to the later formalization plan. The "
-            "`human_handoff` field should be a concise, markdown-ready summary for a human "
-            "reviewer that clearly states what is available, what is missing, and the recommended "
-            "next scope.\n\n"
+            "You are the enrichment turn for Terry, a Lean 4 formalization workflow.\n"
+            "Return JSON only. Decide whether the theorem is self-contained, what "
+            "standard Lean/mathlib prerequisites are already satisfied, what is missing, "
+            "and what must remain explicit before the plan checkpoint. The `human_handoff` "
+            "field should read like a concise note to the reviewer.\n\n"
             f"Source reference:\n{json.dumps(request_payload['source_ref'], indent=2, sort_keys=True)}\n\n"
             f"Original source statement:\n{source_text.strip()}\n\n"
             f"Extraction JSON:\n{json.dumps(request_payload['extraction'], indent=2, sort_keys=True)}\n\n"
@@ -143,26 +107,33 @@ class CodexCliFormalizationAgent:
 
     def draft_formalization_plan(
         self,
-        theorem_spec: TheoremSpec,
-        context_pack: ContextPack,
+        source_ref: SourceRef,
+        source_text: str,
+        extraction: TheoremExtraction,
         enrichment: EnrichmentReport,
+        context_pack: ContextPack,
     ) -> tuple[FormalizationPlan, AgentTurn]:
         request_payload = {
             "stage": "draft_formalization_plan",
             "model": self.model,
-            "theorem_spec": asdict(theorem_spec),
-            "context_pack": asdict(context_pack),
+            "source_ref": asdict(source_ref),
+            "source_text": source_text,
+            "extraction": asdict(extraction),
             "enrichment": asdict(enrichment),
+            "context_pack": asdict(context_pack),
         }
         prompt = (
-            "You are the formalization-plan turn for a Lean 4 workflow.\n"
-            "Return JSON only. Produce the Lean-facing theorem target and a concise proof plan.\n"
-            "Prefer the simplest imports that fit the local workspace. Keep helper definitions "
-            "empty unless they are genuinely needed, and carry any missing prerequisites from "
-            "enrichment into `prerequisites_to_formalize` so they remain explicit in the plan.\n\n"
-            f"Approved theorem spec:\n{json.dumps(request_payload['theorem_spec'], indent=2, sort_keys=True)}\n\n"
-            f"Local context pack:\n{json.dumps(request_payload['context_pack'], indent=2, sort_keys=True)}\n\n"
-            f"Approved enrichment:\n{json.dumps(request_payload['enrichment'], indent=2, sort_keys=True)}\n"
+            "You are the merged plan turn for Terry, a Lean 4 formalization workflow.\n"
+            "Return JSON only. This one checkpoint must lock the mathematical meaning and "
+            "the Lean plan together. Include the informal theorem meaning, assumptions, "
+            "conclusion, symbols, ambiguities, theorem name, imports, target statement, "
+            "helper definitions, and proof sketch. Keep helper definitions empty unless "
+            "they are genuinely needed.\n\n"
+            f"Source reference:\n{json.dumps(request_payload['source_ref'], indent=2, sort_keys=True)}\n\n"
+            f"Original source statement:\n{source_text.strip()}\n\n"
+            f"Extraction JSON:\n{json.dumps(request_payload['extraction'], indent=2, sort_keys=True)}\n\n"
+            f"Approved enrichment:\n{json.dumps(request_payload['enrichment'], indent=2, sort_keys=True)}\n\n"
+            f"Local context pack:\n{json.dumps(request_payload['context_pack'], indent=2, sort_keys=True)}\n"
         )
         return self._invoke(
             request_payload=request_payload,
@@ -183,12 +154,13 @@ class CodexCliFormalizationAgent:
             "repair_context": asdict(repair_context),
         }
         prompt = (
-            "You are the Lean-draft turn in a bounded compile-repair loop.\n"
+            "You are the Lean proving turn in Terry's bounded prove-and-repair loop.\n"
             "Return JSON only. Produce Lean 4 code for "
             "`FormalizationEngineWorkspace/Generated.lean`.\n"
             "The `content` field must contain the full file contents, including imports.\n"
-            "Do not use `sorry`. If there is prior compiler feedback, fix that exact failure first.\n\n"
-            f"Approved formalization plan:\n{json.dumps(request_payload['plan'], indent=2, sort_keys=True)}\n\n"
+            "Do not use `sorry`. If there is prior compiler feedback, fix that exact "
+            "failure first. The theorem statement is locked by the approved plan.\n\n"
+            f"Approved plan:\n{json.dumps(request_payload['plan'], indent=2, sort_keys=True)}\n\n"
             f"Repair context:\n{json.dumps(request_payload['repair_context'], indent=2, sort_keys=True)}\n"
         )
         return self._invoke(
@@ -228,13 +200,19 @@ class CodexCliFormalizationAgent:
             if self.model:
                 command.extend(["-m", self.model])
 
-            response = subprocess.run(
-                command,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            try:
+                response = subprocess.run(
+                    command,
+                    input=prompt,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            except FileNotFoundError as exc:
+                raise RuntimeError(
+                    "The `codex` CLI is not available. Install it before running the Codex backend."
+                ) from exc
+
             if response.returncode != 0:
                 stderr = response.stderr.strip()
                 stdout = response.stdout.strip()
@@ -272,69 +250,6 @@ def _base_schema(properties: dict[str, Any], required: list[str]) -> dict[str, A
         "required": required,
         "additionalProperties": False,
     }
-
-
-def _theorem_spec_schema() -> dict[str, Any]:
-    return _base_schema(
-        properties={
-            "title": {"type": "string"},
-            "informal_statement": {"type": "string"},
-            "assumptions": _STRING_ARRAY,
-            "conclusion": {"type": "string"},
-            "symbols": _STRING_ARRAY,
-            "ambiguities": _STRING_ARRAY,
-            "paraphrase": {"type": "string"},
-        },
-        required=[
-            "title",
-            "informal_statement",
-            "assumptions",
-            "conclusion",
-            "symbols",
-            "ambiguities",
-            "paraphrase",
-        ],
-    )
-
-
-def _formalization_plan_schema() -> dict[str, Any]:
-    return _base_schema(
-        properties={
-            "theorem_name": {"type": "string"},
-            "imports": _STRING_ARRAY,
-            "prerequisites_to_formalize": _STRING_ARRAY,
-            "helper_definitions": _STRING_ARRAY,
-            "target_statement": {"type": "string"},
-            "proof_sketch": _STRING_ARRAY,
-        },
-        required=[
-            "theorem_name",
-            "imports",
-            "prerequisites_to_formalize",
-            "helper_definitions",
-            "target_statement",
-            "proof_sketch",
-        ],
-    )
-
-
-def _lean_draft_schema() -> dict[str, Any]:
-    return _base_schema(
-        properties={
-            "theorem_name": {"type": "string"},
-            "module_name": {"type": "string"},
-            "imports": _STRING_ARRAY,
-            "content": {"type": "string"},
-            "rationale": {"type": "string"},
-        },
-        required=[
-            "theorem_name",
-            "module_name",
-            "imports",
-            "content",
-            "rationale",
-        ],
-    )
 
 
 def _theorem_extraction_schema() -> dict[str, Any]:
@@ -383,5 +298,61 @@ def _enrichment_report_schema() -> dict[str, Any]:
             "open_questions",
             "next_steps",
             "human_handoff",
+        ],
+    )
+
+
+def _formalization_plan_schema() -> dict[str, Any]:
+    return _base_schema(
+        properties={
+            "title": {"type": "string"},
+            "informal_statement": {"type": "string"},
+            "assumptions": _STRING_ARRAY,
+            "conclusion": {"type": "string"},
+            "symbols": _STRING_ARRAY,
+            "ambiguities": _STRING_ARRAY,
+            "paraphrase": {"type": "string"},
+            "theorem_name": {"type": "string"},
+            "imports": _STRING_ARRAY,
+            "prerequisites_to_formalize": _STRING_ARRAY,
+            "helper_definitions": _STRING_ARRAY,
+            "target_statement": {"type": "string"},
+            "proof_sketch": _STRING_ARRAY,
+            "human_summary": {"type": "string"},
+        },
+        required=[
+            "title",
+            "informal_statement",
+            "assumptions",
+            "conclusion",
+            "symbols",
+            "ambiguities",
+            "paraphrase",
+            "theorem_name",
+            "imports",
+            "prerequisites_to_formalize",
+            "helper_definitions",
+            "target_statement",
+            "proof_sketch",
+            "human_summary",
+        ],
+    )
+
+
+def _lean_draft_schema() -> dict[str, Any]:
+    return _base_schema(
+        properties={
+            "theorem_name": {"type": "string"},
+            "module_name": {"type": "string"},
+            "imports": _STRING_ARRAY,
+            "content": {"type": "string"},
+            "rationale": {"type": "string"},
+        },
+        required=[
+            "theorem_name",
+            "module_name",
+            "imports",
+            "content",
+            "rationale",
         ],
     )

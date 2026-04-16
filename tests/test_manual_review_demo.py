@@ -6,26 +6,15 @@ from examples.run_codex_manual_review_demo import (
     validate_enrichment_report,
     validate_final_candidate,
     validate_formalization_plan,
-    validate_theorem_spec,
 )
 
 
 class ManualReviewDemoValidationTest(unittest.TestCase):
-    def test_validate_enrichment_accepts_self_contained_right_add_zero(self) -> None:
+    def test_validate_enrichment_report_accepts_self_contained_case(self) -> None:
         validate_enrichment_report(
             {
                 "self_contained": True,
                 "missing_prerequisites": [],
-            }
-        )
-
-    def test_validate_theorem_spec_accepts_right_add_zero(self) -> None:
-        validate_theorem_spec(
-            {
-                "conclusion": "forall n : Nat, n + 0 = n",
-                "assumptions": ["n : Nat"],
-                "symbols": ["n", "+", "0"],
-                "ambiguities": [],
             }
         )
 
@@ -36,6 +25,7 @@ class ManualReviewDemoValidationTest(unittest.TestCase):
                     "theorem_name": "right_add_zero_nat",
                     "imports": ["FormalizationEngineWorkspace.Basic"],
                     "proof_sketch": ["Use Nat.add_zero."],
+                    "assumptions": ["n : Nat"],
                     "target_statement": "theorem wrong (n : Nat) : n = n",
                 }
             )

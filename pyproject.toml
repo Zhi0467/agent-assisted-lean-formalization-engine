@@ -25,6 +25,7 @@ dev = [
 ]
 
 [project.scripts]
+terry = "lean_formalization_engine.cli:main"
 lean-formalize = "lean_formalization_engine.cli:main"
 
 [tool.setuptools]

@@ -1,48 +1,55 @@
 # Manual Review Walkthrough
 
-This is the explicit human-in-the-loop CLI path for a live Codex run. It uses the
-checked-in theorem input `examples/inputs/right_add_zero.md`, which states `n + 0 = n`.
+This is the literal Terry path for a human-reviewed Codex run on
+`examples/inputs/right_add_zero.md`, which states `n + 0 = n`.
 
 Run from the repo root after Lean and the Codex CLI are available:
 
-1. Start the run:
-   `PYTHONPATH=src python3 -m lean_formalization_engine run --source examples/inputs/right_add_zero.md --run-id cli-manual-right-add`
-2. Inspect the extraction and enrichment handoff:
-   `cat artifacts/runs/cli-manual-right-add/02_extraction/extracted.md`
-   `cat artifacts/runs/cli-manual-right-add/03_enrichment/handoff.md`
-3. Record the human enrichment approval:
-   `PYTHONPATH=src python3 -m lean_formalization_engine approve-enrichment --run-id cli-manual-right-add --notes "Enrichment matches the intended theorem scope and required prerequisites."`
-4. Resume into spec review:
-   `PYTHONPATH=src python3 -m lean_formalization_engine resume --run-id cli-manual-right-add`
-5. Inspect the drafted theorem spec:
-   `cat artifacts/runs/cli-manual-right-add/04_spec/theorem_spec.json`
-6. Record the human spec approval:
-   `PYTHONPATH=src python3 -m lean_formalization_engine approve-spec --run-id cli-manual-right-add --notes "Spec matches the intended right-add-zero theorem and symbols."`
-7. Resume into plan review:
-   `PYTHONPATH=src python3 -m lean_formalization_engine resume --run-id cli-manual-right-add`
-8. Inspect the drafted plan:
-   `cat artifacts/runs/cli-manual-right-add/06_plan/formalization_plan.json`
-9. Record the human plan approval:
-   `PYTHONPATH=src python3 -m lean_formalization_engine approve-plan --run-id cli-manual-right-add --notes "Plan uses the expected import, theorem target, and Nat.add_zero proof route."`
-10. Resume into final review:
-   `PYTHONPATH=src python3 -m lean_formalization_engine resume --run-id cli-manual-right-add`
-11. Inspect the compiling candidate and compile result:
-   `cat artifacts/runs/cli-manual-right-add/10_final/final_candidate.lean`
-   `cat artifacts/runs/cli-manual-right-add/08_compile/attempt_0001/result.json`
-12. Record the human final approval:
-   `PYTHONPATH=src python3 -m lean_formalization_engine approve-final --run-id cli-manual-right-add --notes "Final Lean file matches the intended theorem and compiles cleanly."`
-13. Finish the run:
-    `PYTHONPATH=src python3 -m lean_formalization_engine resume --run-id cli-manual-right-add`
+1. Install Terry:
+   `python3 -m pip install . --user`
+2. Ensure the Terry script is on `PATH`:
+   `export PATH="$(python3 -m site --user-base)/bin:$PATH"`
+3. Start the run:
+   `terry prove examples/inputs/right_add_zero.md --run-id right-add-zero`
+4. Read the first checkpoint:
+   `cat artifacts/runs/right-add-zero/01_enrichment/checkpoint.md`
+5. Review the enrichment artifacts:
+   `cat artifacts/runs/right-add-zero/01_enrichment/handoff.md`
+   `cat artifacts/runs/right-add-zero/01_enrichment/enrichment_report.json`
+6. Edit the enrichment review file so it begins with:
+   `decision: approve`
+7. Resume:
+   `terry resume right-add-zero`
+8. Read the plan checkpoint:
+   `cat artifacts/runs/right-add-zero/02_plan/checkpoint.md`
+9. Review the merged plan artifact:
+   `cat artifacts/runs/right-add-zero/02_plan/formalization_plan.json`
+   `cat artifacts/runs/right-add-zero/02_plan/summary.md`
+10. Edit the plan review file so it begins with:
+   `decision: approve`
+11. Resume into the prove-and-repair loop:
+    `terry resume right-add-zero`
+12. If Terry reaches final approval directly, inspect:
+    `cat artifacts/runs/right-add-zero/04_final/checkpoint.md`
+    `cat artifacts/runs/right-add-zero/04_final/final_candidate.lean`
+13. If Terry blocks inside the proof loop instead, inspect:
+    `cat artifacts/runs/right-add-zero/03_proof/checkpoint.md`
+    `cat artifacts/runs/right-add-zero/03_proof/blocker.md`
+    Then set `decision: retry` in `artifacts/runs/right-add-zero/03_proof/review.md`
+    and run `terry resume right-add-zero`.
+14. When the final checkpoint is open, set `decision: approve` in:
+    `artifacts/runs/right-add-zero/04_final/review.md`
+15. Finish the run:
+    `terry resume right-add-zero`
 
 At the end, the canonical output is:
 
-- `artifacts/runs/cli-manual-right-add/10_final/final.lean`
+- `artifacts/runs/right-add-zero/04_final/final.lean`
 
-To inspect the persisted state at any point:
+Useful status command:
 
-- `PYTHONPATH=src python3 -m lean_formalization_engine status --run-id cli-manual-right-add`
+- `terry status right-add-zero`
 
-The deterministic demo path remains available for tests and examples:
-
-- `PYTHONPATH=src python3 examples/run_zero_add_demo.py`
-- `PYTHONPATH=src python3 -m lean_formalization_engine --agent-backend demo run --source examples/inputs/zero_add.md --run-id demo-cli-zero-add --auto-approve`
+The example scripts under `examples/` still exist for deterministic or backend-specific
+demo runs, but the intended human path is the Terry CLI plus the review files Terry
+writes into the run directory.

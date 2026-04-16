@@ -84,7 +84,7 @@ class LeanRunner:
         )
 
     def _prepare_workspace(self, store: RunStore) -> Path:
-        workspace = store.path("workspace")
+        workspace = store.path("03_proof/workspace")
         if workspace.exists():
             shutil.rmtree(workspace)
         shutil.copytree(
@@ -135,7 +135,7 @@ class LeanRunner:
         lake_path: str,
     ) -> str:
         run_root_display = f"artifacts/runs/{store.run_id}"
-        sanitized = content.replace(str(workspace), f"{run_root_display}/workspace")
+        sanitized = content.replace(str(workspace), f"{run_root_display}/03_proof/workspace")
         sanitized = sanitized.replace(str(store.run_root), run_root_display)
         sanitized = sanitized.replace(lake_path, self._display_lake())
         sanitized = sanitized.replace(str(Path.home()), "~")

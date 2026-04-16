@@ -1,5 +1,7 @@
 # Docs Index
 
-- `architecture.md` — module layout, interfaces, and run-state model
-- `landscape.md` — nearby repos and products that influence this design
-- `manual-review-walkthrough.md` — step-by-step CLI path for a human-reviewed live Codex run
+- `architecture.md` — module layout, three-checkpoint workflow, run directory shape, logger, and template discovery
+- `manual-review-walkthrough.md` — literal `terry prove` / `terry resume` path with review files
+- `backlog.md` — open work items and review-gated follow-ups
+- `roadmap.md` — milestone state and dated activity log
+- `landscape.md` — nearby repos and products that influence the design
