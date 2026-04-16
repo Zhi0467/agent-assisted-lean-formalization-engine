@@ -265,6 +265,16 @@ def _subject_to_assumptions(subject: str) -> list[str] | None:
     cleaned = subject.replace("`", "").strip()
     if not cleaned:
         return None
+    assumptions = _comma_separated_typed_assumptions(cleaned)
+    if assumptions is not None:
+        return assumptions
+    return _single_subject_to_assumptions(cleaned)
+
+
+def _single_subject_to_assumptions(subject: str) -> list[str] | None:
+    cleaned = subject.replace("`", "").strip()
+    if not cleaned:
+        return None
 
     typed_match = re.fullmatch(r"\(?\s*(.+?)\s*:\s*([A-Za-z_][\w.]*)\s*\)?", cleaned)
     if typed_match is not None:
@@ -282,6 +292,19 @@ def _subject_to_assumptions(subject: str) -> list[str] | None:
     if assumptions is not None:
         return assumptions
     return None
+
+
+def _comma_separated_typed_assumptions(subject: str) -> list[str] | None:
+    segments = [segment.strip() for segment in subject.split(",")]
+    if len(segments) < 2 or any(":" not in segment for segment in segments):
+        return None
+    assumptions: list[str] = []
+    for segment in segments:
+        segment_assumptions = _single_subject_to_assumptions(segment)
+        if segment_assumptions is None:
+            return None
+        assumptions.extend(segment_assumptions)
+    return assumptions
 
 
 def _split_variable_names(raw_variables: str) -> list[str]:
