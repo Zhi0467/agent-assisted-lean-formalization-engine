@@ -586,6 +586,10 @@ class DemoWorkflowTest(unittest.TestCase):
                 "reject",
             )
 
+            self._write_review(run_root, "01_enrichment", "approve", "Scope looks right now.")
+            manifest = workflow.resume("reject-review", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
+
     def test_resume_proving_run_with_final_candidate_promotes_final_review(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)

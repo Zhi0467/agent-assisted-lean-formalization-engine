@@ -994,6 +994,15 @@ class FormalizationWorkflow:
         continue_decision: str,
         auto_approve: bool,
     ) -> ReviewDecision | None:
+        review_path = f"{stage_dir}/review.md"
+        if not auto_approve and store.exists(review_path):
+            decision = self._parse_review_file(store.read_text(review_path))
+            if decision is not None:
+                self._write_decision(store, stage_dir, decision)
+                if decision.decision == continue_decision:
+                    return decision
+                return None
+
         existing = self._load_decision(store, f"{stage_dir}/decision.json")
         if existing is not None:
             if existing.decision == continue_decision:
@@ -1013,16 +1022,7 @@ class FormalizationWorkflow:
             self._write_decision(store, stage_dir, decision)
             return decision
 
-        review_path = f"{stage_dir}/review.md"
-        if not store.exists(review_path):
-            return None
-        decision = self._parse_review_file(store.read_text(review_path))
-        if decision is None:
-            return None
-        self._write_decision(store, stage_dir, decision)
-        if decision.decision != continue_decision:
-            return None
-        return decision
+        return None
 
     def _write_decision(self, store: RunStore, stage_dir: str, decision: ReviewDecision) -> None:
         store.write_json(f"{stage_dir}/decision.json", decision)

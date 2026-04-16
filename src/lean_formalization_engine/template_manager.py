@@ -93,6 +93,10 @@ def _initialize_workspace_template(
             return []
         if not target_dir.is_dir():
             raise RuntimeError(f"`{target_dir}` exists but is not a directory.")
+        raise RuntimeError(
+            f"`{target_dir}` already exists but is not an eligible Terry template. "
+            "Fix or move that directory before running Terry so local template content is not overwritten."
+        )
     else:
         lake_executable = _resolve_lake(lake_path)
         if lake_executable is None:
@@ -121,11 +125,11 @@ def _initialize_workspace_template(
                 + (f"\n{details}" if details else "")
             ) from exc
 
-    shutil.rmtree(target_dir, ignore_errors=True)
     shutil.copytree(
         package_template_dir,
         target_dir,
         ignore=shutil.ignore_patterns(".git", ".lake", "build", "lake-manifest.json"),
+        dirs_exist_ok=True,
     )
     return command
 

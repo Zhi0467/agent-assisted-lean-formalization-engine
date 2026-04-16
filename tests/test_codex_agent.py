@@ -237,7 +237,7 @@ class CodexAgentTest(unittest.TestCase):
             self.assertTrue((resolution.template_dir / "FormalizationEngineWorkspace" / "Basic.lean").exists())
             self.assertEqual(resolution.command, [str(fake_lake), "new", "lean_workspace_template", "math"])
 
-    def test_template_resolution_overlays_existing_math_workspace(self) -> None:
+    def test_template_resolution_preserves_existing_ineligible_template(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         package_template_dir = project_root / "lean_workspace_template"
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -250,15 +250,13 @@ class CodexAgentTest(unittest.TestCase):
             )
             (target_dir / "stale.txt").write_text("stale", encoding="utf-8")
 
-            resolution = resolve_workspace_template(
-                temp_root,
-                package_template_dir,
-            )
+            with self.assertRaisesRegex(RuntimeError, "already exists"):
+                resolve_workspace_template(
+                    temp_root,
+                    package_template_dir,
+                )
 
-            self.assertEqual(resolution.origin, "initialized")
-            self.assertEqual(resolution.command, [])
-            self.assertTrue((resolution.template_dir / "FormalizationEngineWorkspace" / "Basic.lean").exists())
-            self.assertFalse((resolution.template_dir / "stale.txt").exists())
+            self.assertTrue((target_dir / "stale.txt").exists())
 
     def test_render_manifest_summary_mentions_checkpoint(self) -> None:
         repo_root = Path("/tmp/terry")
