@@ -16,12 +16,14 @@ from .models import (
     RepairContext,
     SourceRef,
     TheoremExtraction,
+    TheoremSpec,
 )
 
 ParsedOutput = TypeVar(
     "ParsedOutput",
     TheoremExtraction,
     EnrichmentReport,
+    TheoremSpec,
     FormalizationPlan,
     LeanDraft,
 )
@@ -84,13 +86,23 @@ class SubprocessFormalizationAgent:
         enrichment: EnrichmentReport,
         context_pack: ContextPack,
     ) -> tuple[FormalizationPlan, AgentTurn]:
+        theorem_spec = self._draft_legacy_theorem_spec(
+            source_ref,
+            source_text,
+            extraction,
+            enrichment,
+        )
         return self._invoke(
             stage="draft_formalization_plan",
             payload={
                 "source_ref": asdict(source_ref),
                 "source_text": source_text,
                 "extraction": asdict(extraction),
-                "theorem_spec": _legacy_theorem_spec_payload(extraction),
+                "theorem_spec": (
+                    asdict(theorem_spec)
+                    if theorem_spec is not None
+                    else _legacy_theorem_spec_payload(extraction)
+                ),
                 "enrichment": asdict(enrichment),
                 "context_pack": asdict(context_pack),
             },
@@ -164,6 +176,30 @@ class SubprocessFormalizationAgent:
             raw_response=raw_response,
         )
 
+    def _draft_legacy_theorem_spec(
+        self,
+        source_ref: SourceRef,
+        source_text: str,
+        extraction: TheoremExtraction,
+        enrichment: EnrichmentReport,
+    ) -> TheoremSpec | None:
+        try:
+            theorem_spec, _ = self._invoke(
+                stage="draft_theorem_spec",
+                payload={
+                    "source_ref": asdict(source_ref),
+                    "source_text": source_text,
+                    "extraction": asdict(extraction),
+                    "enrichment": asdict(enrichment),
+                },
+                response_type=TheoremSpec,
+            )
+        except RuntimeError as exc:
+            if "unsupported stage" in str(exc).lower():
+                return None
+            raise
+        return theorem_spec
+
 
 def _default_agent_name(command: list[str]) -> str:
     executable_name = Path(command[0]).name
@@ -192,15 +228,17 @@ def _legacy_theorem_spec_payload(extraction: TheoremExtraction) -> dict[str, obj
 def _infer_assumptions_and_conclusion(statement: str) -> tuple[list[str], str]:
     stripped = statement.strip().rstrip(".")
     lowered = stripped.lower()
-    for prefix in ("for every ", "for each ", "for any "):
+    for prefix in ("for every ", "for each ", "for any ", "for all ", "given "):
         if not lowered.startswith(prefix):
             continue
         remainder = stripped[len(prefix) :]
-        if "," not in remainder:
+        subject, conclusion = _split_subject_and_conclusion(remainder)
+        if subject is None or conclusion is None:
             break
-        subject, conclusion = remainder.split(",", 1)
         assumption = _subject_to_assumption(subject.strip())
-        return ([assumption] if assumption else []), conclusion.strip()
+        if assumption is not None:
+            return [assumption], conclusion.strip()
+        break
     return [], stripped
 
 
@@ -208,6 +246,10 @@ def _subject_to_assumption(subject: str) -> str | None:
     cleaned = subject.replace("`", "").strip()
     if not cleaned:
         return None
+    typed_match = re.fullmatch(r"\(?\s*([A-Za-z_]\w*)\s*:\s*([A-Za-z_][\w.]*)\s*\)?", cleaned)
+    if typed_match is not None:
+        variable, type_name = typed_match.groups()
+        return f"{variable} : {type_name}"
     tokens = cleaned.split()
     variable = tokens[-1]
     if not re.fullmatch(r"[A-Za-z_]\w*", variable):
@@ -230,6 +272,25 @@ def _descriptor_type(descriptor: str) -> str | None:
     if descriptor.endswith("proposition") or descriptor.endswith("propositions"):
         return "Prop"
     return None
+
+
+def _split_subject_and_conclusion(remainder: str) -> tuple[str | None, str | None]:
+    if "," in remainder:
+        subject, conclusion = remainder.split(",", 1)
+        return subject, conclusion
+
+    typed_separator = re.fullmatch(
+        r"(\(?\s*[A-Za-z_]\w*\s*:\s*[A-Za-z_][\w.]*\s*\)?)\s*:\s*(.+)",
+        remainder,
+    )
+    if typed_separator is not None:
+        return typed_separator.group(1), typed_separator.group(2)
+
+    if ":" in remainder:
+        subject, conclusion = remainder.split(":", 1)
+        return subject, conclusion
+
+    return None, None
 
 
 def _infer_symbols(

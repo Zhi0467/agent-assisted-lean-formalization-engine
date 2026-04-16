@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-04-16 09:35 UTC
+Last updated: 2026-04-16 13:00 UTC
 
 ## Current Status
 
@@ -19,9 +19,9 @@ current rewrite changes that contract:
 - backend choice is persisted in the manifest, so resumed runs cannot silently swap providers
 - template discovery is now part of the CLI contract rather than an implicit repo assumption
 
-Local unit coverage for the rewritten surface is green, but the branch has not yet been
-pushed through local review or Codex review. Until that review gate is clear, the rewrite
-items stay open in `docs/backlog.md`.
+Local unit coverage for the rewritten surface is green at `52/52`, but the branch has not
+yet cleared a fresh clean-shell local review rerun or moved onto a live Codex-reviewed PR.
+Until that review gate is clear, the rewrite items stay open in `docs/backlog.md`.
 
 ## Milestone 1 — Terry CLI Contract
 
@@ -44,6 +44,8 @@ Gate:
 - [2026-04-16 08:46 UTC] Refreshed the project docs around the Terry path and updated the examples/tests to exercise review files and `resume`, not hidden `approve-*` commands.
 - [2026-04-16 09:35 UTC] Re-ran the local unit suite on the rewrite surface: `PYTHONPATH=src python3 -m unittest discover -s tests` (`20` tests, all passing), plus a fresh-directory CLI smoke that still completed end to end.
 - [2026-04-16 09:35 UTC] The first local review pass surfaced two real rewrite regressions and both are now fixed: legacy paused runs now import their old artifact paths / plan schema into Terry honestly, and proof-loop `decision: retry` now really means one extra attempt. A second local review pass is running against that patched branch.
+- [2026-04-16 13:00 UTC] Three more local review rounds flushed out Terry migration and compatibility edges that only showed up on older runs: stale `latest_error` now clears after a successful retry, legacy command-backed runs preserve `--agent-command` in their resume instructions, untouched legacy spec-review runs now surface the real Terry review directory, and the restored old-provider `theorem_spec` alias now derives honest assumptions / conclusion / symbols from the extracted statement instead of placeholder fields.
+- [2026-04-16 13:00 UTC] Re-ran the branch-local suite on the patched Terry head: `PYTHONPATH=src python3 -m unittest discover -s tests` (`52` tests, all passing). A fresh clean-shell `scripts/review_project.sh agent-assisted-lean-formalization-engine --base main` rerun is now the remaining local gate before opening the PR.
 
 ## Milestone 2 — Real Proof Stress
 

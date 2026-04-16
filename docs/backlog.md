@@ -11,10 +11,14 @@ review coverage. Even the items that are already implemented locally remain on t
 - [ ] Clear or explicitly disposition the review findings before removing any rewrite items from this backlog.
 
 Current note:
-The first local review pass already surfaced two real Terry regressions and both are fixed
-on the active branch: legacy paused runs now import their old checkpoint artifacts into
-the Terry surface, and proof-loop `decision: retry` now grants exactly one extra attempt.
-A second review pass is still in flight, so the rewrite items below remain open.
+The local review gate kept surfacing compatibility regressions on the active Terry branch,
+and each one is now fixed on `murphy/terry-three-stage`: legacy paused runs migrate into
+the Terry checkpoint surface honestly, command-backed resumes preserve their
+`--agent-command` instructions, successful proof retries clear stale `latest_error`,
+legacy status views point at the real review directories, and the old subprocess-provider
+`theorem_spec` alias now carries honest assumptions / conclusion / symbols. The branch-local
+suite is currently `52/52`, and a fresh clean-shell review rerun is still in flight, so
+the rewrite items below remain open.
 
 ## Terry Rewrite Surface
 

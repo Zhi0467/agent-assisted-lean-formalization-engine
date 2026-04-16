@@ -31,6 +31,7 @@ ENRICHMENT_DIR = "01_enrichment"
 PLAN_DIR = "02_plan"
 PROOF_DIR = "03_proof"
 FINAL_DIR = "04_final"
+LEGACY_SPEC_DIR = "04_spec"
 EXTRACTION_TURN_DIR = f"{ENRICHMENT_DIR}/extraction_turn"
 ENRICHMENT_TURN_DIR = f"{ENRICHMENT_DIR}/enrichment_turn"
 
@@ -174,6 +175,39 @@ class FormalizationWorkflow:
             return self._prove_loop(store, plan, auto_approve=auto_approve)
 
         if manifest.current_stage == RunStage.AWAITING_PLAN_APPROVAL:
+            if self._legacy_spec_requires_review(store):
+                decision = self._resolve_checkpoint_decision(
+                    store,
+                    LEGACY_SPEC_DIR,
+                    continue_decision="approve",
+                    auto_approve=auto_approve,
+                )
+                if decision is None:
+                    if self._checkpoint_surface_missing(store, LEGACY_SPEC_DIR):
+                        return self._pause_for_legacy_spec_review(store, manifest)
+                    return manifest
+                store.append_log(
+                    "checkpoint_approved",
+                    "Legacy spec review approved; Terry will draft the merged plan checkpoint.",
+                    stage="plan",
+                    details={"notes": decision.notes},
+                )
+                plan = self._draft_plan(
+                    store,
+                    manifest.source,
+                    store.read_text("00_input/source.txt"),
+                    auto_approve,
+                    human_feedback=self._decision_guidance(decision),
+                )
+                if isinstance(plan, RunManifest):
+                    return plan
+                return self._prove_loop(
+                    store,
+                    plan,
+                    auto_approve=auto_approve,
+                    human_feedback=self._decision_guidance(decision),
+                )
+
             decision = self._resolve_checkpoint_decision(
                 store,
                 PLAN_DIR,
@@ -202,7 +236,7 @@ class FormalizationWorkflow:
                                 return plan
                             return self._prove_loop(store, plan, auto_approve=auto_approve)
                         if store.exists(LEGACY_SPEC_JSON):
-                            return manifest
+                            return self._pause_for_legacy_spec_review(store, manifest)
                         return self._pause_for_plan(store, manifest)
                     return self._pause_for_plan(store, manifest)
                 return manifest
@@ -640,6 +674,22 @@ class FormalizationWorkflow:
             title="Plan Approval",
             summary="Terry is waiting for the merged plan approval before starting the prove-and-repair loop.",
             artifact_paths=self._plan_artifact_paths(store),
+            continue_decision="approve",
+        )
+
+    def _pause_for_legacy_spec_review(self, store: RunStore, manifest: RunManifest) -> RunManifest:
+        return self._pause_for_checkpoint(
+            store,
+            manifest,
+            stage=RunStage.AWAITING_PLAN_APPROVAL,
+            stage_dir=LEGACY_SPEC_DIR,
+            title="Legacy Spec Review",
+            summary=(
+                "This run paused in the old theorem-spec checkpoint before Terry merged spec "
+                "and plan together. Review the legacy theorem spec, then approve it here so "
+                "Terry can draft the new `02_plan/` checkpoint."
+            ),
+            artifact_paths=[LEGACY_SPEC_JSON],
             continue_decision="approve",
         )
 
@@ -1257,6 +1307,13 @@ class FormalizationWorkflow:
             return True
         decision = self._load_decision(store, LEGACY_SPEC_DECISION)
         return decision is not None and decision.decision == "approve" and store.exists(LEGACY_SPEC_JSON)
+
+    def _legacy_spec_requires_review(self, store: RunStore) -> bool:
+        return (
+            self._plan_payload_path(store) is None
+            and store.exists(LEGACY_SPEC_JSON)
+            and not self._legacy_spec_is_approved(store)
+        )
 
     def _existing_path(self, store: RunStore, *candidates: str) -> str | None:
         for candidate in candidates:

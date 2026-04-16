@@ -90,6 +90,17 @@ class EnrichmentReport:
 
 
 @dataclass
+class TheoremSpec:
+    title: str
+    informal_statement: str
+    assumptions: list[str]
+    conclusion: str
+    symbols: list[str]
+    ambiguities: list[str]
+    paraphrase: str
+
+
+@dataclass
 class ContextPack:
     recommended_imports: list[str]
     local_examples: list[str]

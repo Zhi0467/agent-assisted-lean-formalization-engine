@@ -22,7 +22,8 @@ _STATUS_SURFACE_CANDIDATES = {
     RunStage.AWAITING_PLAN_APPROVAL: [
         ("02_plan/checkpoint.md", "02_plan/review.md"),
         ("06_plan/formalization_plan.json", "06_plan/decision.json"),
-        ("04_spec/theorem_spec.json", "04_spec/theorem_spec.json"),
+        ("04_spec/checkpoint.md", "04_spec/review.md"),
+        ("04_spec/theorem_spec.json", "04_spec/review.md"),
     ],
     RunStage.PROOF_BLOCKED: [
         ("03_proof/checkpoint.md", "03_proof/review.md"),
@@ -33,6 +34,28 @@ _STATUS_SURFACE_CANDIDATES = {
         ("10_final/final_report.md", "10_final/decision.json"),
     ],
 }
+
+
+class _MissingCommandAgent:
+    name = "command-backend-missing-command"
+
+    def _raise(self) -> None:
+        raise ValueError(
+            "This command-backed Terry run needs a provider command before Terry can continue. "
+            "Resume it with `--agent-command \"python3 path/to/provider.py\"`."
+        )
+
+    def draft_theorem_extraction(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        self._raise()
+
+    def draft_theorem_enrichment(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        self._raise()
+
+    def draft_formalization_plan(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        self._raise()
+
+    def draft_lean_file(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        self._raise()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -136,10 +159,7 @@ def build_agent(agent_config: AgentConfig, repo_root: Path):
     if agent_config.backend == "codex":
         return CodexCliFormalizationAgent(repo_root=repo_root, model=agent_config.codex_model)
     if not agent_config.command:
-        raise ValueError(
-            "This command-backed run predates Terry's persisted backend config, "
-            "so resume it with `--agent-command \"python3 path/to/provider.py\"`."
-        )
+        return _MissingCommandAgent()
     return SubprocessFormalizationAgent(agent_config.command, working_directory=repo_root)
 
 
@@ -231,8 +251,6 @@ def _resume_agent_config(
 
     if manifest.agent_config.backend != "command":
         raise ValueError("`--agent-command` is only valid for command-backed Terry runs.")
-    if manifest.agent_config.command is not None:
-        raise ValueError("This Terry run already has a persisted provider command. Resume without `--agent-command`.")
 
     return AgentConfig(
         backend="command",
