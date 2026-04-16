@@ -28,6 +28,9 @@ ParsedOutput = TypeVar(
     LeanDraft,
 )
 
+_LEGACY_IDENTIFIER_PATTERN = r"(?:[^\W\d]|_)\w*'*"
+_LEGACY_QUALIFIED_TYPE_PATTERN = rf"{_LEGACY_IDENTIFIER_PATTERN}(?:\.{_LEGACY_IDENTIFIER_PATTERN})*"
+
 
 class ProviderResponseError(ValueError):
     def __init__(
@@ -392,7 +395,10 @@ def _single_subject_to_assumptions(subject: str) -> list[str] | None:
     if not cleaned:
         return None
 
-    typed_match = re.fullmatch(r"\(?\s*(.+?)\s*:\s*([A-Za-z_][\w.]*)\s*\)?", cleaned)
+    typed_match = re.fullmatch(
+        rf"\(?\s*(.+?)\s*:\s*({_LEGACY_QUALIFIED_TYPE_PATTERN})\s*\)?",
+        cleaned,
+    )
     if typed_match is not None:
         variables_raw, type_name = typed_match.groups()
         assumptions = _descriptor_subject_to_assumptions(variables_raw, explicit_type=type_name)
@@ -429,7 +435,7 @@ def _split_variable_names(raw_variables: str) -> list[str]:
         for variable in re.split(r"\s*(?:,|\band\b)\s*|\s+", raw_variables.strip())
         if variable
     ]
-    if not variables or any(re.fullmatch(r"(?:[^\W\d]|_)\w*'*", variable) is None for variable in variables):
+    if not variables or any(re.fullmatch(_LEGACY_IDENTIFIER_PATTERN, variable) is None for variable in variables):
         return []
     return variables
 

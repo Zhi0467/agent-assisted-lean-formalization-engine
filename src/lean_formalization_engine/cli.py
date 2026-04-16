@@ -99,9 +99,9 @@ def build_parser() -> argparse.ArgumentParser:
     resume_parser.add_argument("run_id", nargs="?")
     resume_parser.add_argument("--run-id", dest="legacy_run_id", help=argparse.SUPPRESS)
     resume_parser.add_argument("--auto-approve", action="store_true")
-    resume_parser.add_argument(
-        "--agent-command",
-        help=(
+    _add_backend_arguments(
+        resume_parser,
+        command_help=(
             "Provider command for legacy command-backed runs that predate Terry's "
             "persisted backend config."
         ),
@@ -133,12 +133,14 @@ def _add_backend_arguments(
     *,
     suppress_help: bool = False,
     prefix: str = "",
+    command_help: str | None = None,
 ) -> None:
     help_text = argparse.SUPPRESS if suppress_help else None
     parser.add_argument(
         "--agent-command",
         dest=f"{prefix}agent_command",
         help=help_text
+        or command_help
         or (
             "Optional command that implements Terry turns over stdin/stdout. "
             "If omitted, Terry uses the default built-in backend."

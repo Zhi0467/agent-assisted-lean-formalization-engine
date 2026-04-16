@@ -1,13 +1,13 @@
 # Roadmap
 
-Last updated: 2026-04-16 20:12 UTC
+Last updated: 2026-04-16 22:12 UTC
 
 ## Current Status
 
-The repo is in the middle of a workflow rewrite on top of the new enrichment commit from
-`main`. The old surface mixed four human gates, hidden `approve-*` commands, and a CLI
-that still looked more like an internal scaffold than the intended Terry product. The
-current rewrite changes that contract:
+The Terry rewrite is now the repo's main workflow surface rather than an in-progress
+migration. The old surface mixed four human gates, hidden `approve-*` commands, and a
+CLI that still looked more like an internal scaffold than the intended Terry product.
+The current repo now centers that contract directly:
 
 - the installable CLI is now `terry`
 - the human path is `terry prove` plus `terry resume`
@@ -18,18 +18,21 @@ current rewrite changes that contract:
 - each run now has `logs/timeline.md` and `logs/workflow.jsonl`
 - backend choice is persisted in the manifest, so resumed runs cannot silently swap providers
 - template discovery is now part of the CLI contract rather than an implicit repo assumption
+- fresh-root bootstrap now also covers the known mathlib revision mismatch by falling
+  back to the packaged workspace template while logging the failed `lake` stderr into
+  structured workflow details
 
-Local unit coverage for the rewritten surface is now green at `90/90`. The direct local
-review gate on the real Terry worktree was clear on `1a7761e`, and a fresh-root Terry
-smoke then exposed one smaller follow-up bug in template bootstrap: on this machine,
-`lake new ... math` can fail because mathlib does not have revision `v4.29.1`, so Terry
-now falls back to the packaged workspace template instead of aborting the proof phase.
-That delta is covered by a fresh real Terry smoke plus dedicated template-resolution and
-CLI regressions. The open gate is still the same honest one: refresh the live PR `#3`
-review surface on the updated head, clear or disposition whatever comes back there, and
-only then take the rewrite off the backlog.
+Branch-local verification is now `92/92`. The direct local review gate on the real Terry
+worktree was already clear, and the last live GitHub Codex pass on PR `#3` only surfaced
+two smaller compatibility follow-ups on top of that same branch: the `resume`
+subcommand still hid backend/model overrides, and the legacy typed-binder fallback still
+rejected Unicode type names like `ℕ`. Both are fixed on the current head. Milestone 1 is
+therefore complete; the next honest work is Milestone 2 proof stress plus richer
+revision control.
 
 ## Milestone 1 — Terry CLI Contract
+
+Status: complete on the current head.
 
 Success criteria:
 
@@ -68,6 +71,8 @@ Gate:
 - [2026-04-16 19:42 UTC] Re-ran the full branch-local suite after the latest compatibility pass: `PYTHONPATH=src python3 -m unittest discover -s tests` (`87` tests, all passing). The latest direct local review on the real Terry worktree also came back clean, so the remaining open gate is the refreshed live PR review on the updated branch head rather than another local bug-hunt.
 - [2026-04-16 20:12 UTC] A fresh no-template Terry smoke on `examples/inputs/right_add_zero.md` exposed one more real bootstrap failure in the CLI contract: `lake new lean_workspace_template math` can reach the live mathlib clone and then die with `revision not found 'v4.29.1'`, which meant a fresh repo still failed before the proof loop even started. Terry now treats that specific mathlib-revision mismatch as a packaged-template fallback instead of a hard stop, logs the failed `lake` output into structured workflow details, and keeps the run moving in the same repo.
 - [2026-04-16 20:12 UTC] The first focused local review on that bootstrap delta then found two follow-ups and both are fixed now: non-recoverable `lake new` failures still raise immediately instead of limping into the proof loop, and multi-line `lake` diagnostics stay out of the one-line `logs/timeline.md` surface. The fallback path is now covered by a fresh Terry smoke plus dedicated template-resolution / CLI regressions, and the full branch-local suite is `90/90`.
+- [2026-04-16 22:12 UTC] The later live GitHub Codex pass on `1a7761e` surfaced two smaller compatibility gaps outside the bootstrap patch: `terry resume` still rejected `--agent-backend` / `--codex-model` after the subcommand, and the legacy typed-binder fallback still dropped assumptions for Unicode type names like `ℕ`. Both are fixed now with parser and theorem-spec regressions.
+- [2026-04-16 22:12 UTC] Re-ran the full branch-local suite after those last compatibility fixes: `PYTHONPATH=src python3 -m unittest discover -s tests` (`92` tests, all passing). The docs/backlog now treat the Terry rewrite gate as closed, so the next work starts at Milestone 2 rather than another review-only loop.
 
 ## Milestone 2 — Real Proof Stress
 

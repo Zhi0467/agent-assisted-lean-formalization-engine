@@ -10,7 +10,7 @@
 
 ## Workflow Shape
 
-Terry runs through four phases:
+Terry runs through five phases:
 
 1. `00_input/`
    Normalized source text plus provenance
@@ -107,7 +107,10 @@ Events include:
 - its Lean project includes `mathlib`
 
 If none is found, Terry runs `lake new lean_workspace_template math` with a long timeout
-and then overlays the shipped Terry workspace scaffold onto that new directory.
+and then overlays the shipped Terry workspace scaffold onto that new directory. If that
+bootstrap fails with the known mathlib revision mismatch (`revision not found 'v4.29.1'`),
+Terry falls back to the packaged workspace template, records the full `lake` stderr in
+the structured workflow log, and continues. Other `lake new` failures still stop the run.
 
 ## Backend Persistence
 

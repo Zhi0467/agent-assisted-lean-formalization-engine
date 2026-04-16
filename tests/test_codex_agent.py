@@ -1202,6 +1202,25 @@ class CodexAgentTest(unittest.TestCase):
                 self.assertEqual(args.command, command)
                 self.assertEqual(args.run_id, "legacy-run")
 
+    def test_build_parser_accepts_resume_backend_overrides_after_subcommand(self) -> None:
+        parser = build_parser()
+
+        args = parser.parse_args(
+            [
+                "resume",
+                "pending-run",
+                "--agent-backend",
+                "codex",
+                "--codex-model",
+                "gpt-new",
+            ]
+        )
+
+        self.assertEqual(args.command, "resume")
+        self.assertEqual(args.run_id, "pending-run")
+        self.assertEqual(args.agent_backend, "codex")
+        self.assertEqual(args.codex_model, "gpt-new")
+
     def test_legacy_run_command_remains_supported(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1559,6 +1578,22 @@ class CodexAgentTest(unittest.TestCase):
 
         self.assertEqual(payload["assumptions"], ["α : Type", "β : Type"])
         self.assertEqual(payload["conclusion"], "α = β")
+
+    def test_legacy_theorem_spec_payload_accepts_unicode_type_names(self) -> None:
+        payload = _legacy_theorem_spec_payload(
+            TheoremExtraction(
+                title="Zero add",
+                informal_statement="For every n : ℕ, n + 0 = n.",
+                definitions=["Nat"],
+                lemmas=["Nat.add_zero"],
+                propositions=[],
+                dependencies=["Nat.add_zero"],
+                notes=[],
+            )
+        )
+
+        self.assertEqual(payload["assumptions"], ["n : ℕ"])
+        self.assertEqual(payload["conclusion"], "n + 0 = n")
 
     def test_legacy_theorem_spec_payload_accepts_qualified_binders(self) -> None:
         payload = _legacy_theorem_spec_payload(
@@ -2228,10 +2263,10 @@ class CodexAgentTest(unittest.TestCase):
                     "lean_formalization_engine.cli",
                     "--repo-root",
                     str(repo_root),
-                    "--codex-model",
-                    "gpt-new",
                     "resume",
                     "codex-pending",
+                    "--codex-model",
+                    "gpt-new",
                 ],
                 cwd=project_root,
                 env={**os.environ, "PYTHONPATH": "src"},

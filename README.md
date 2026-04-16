@@ -10,7 +10,7 @@ review file for the active checkpoint, and continue with `terry resume`.
 - `src/lean_formalization_engine/` holds the engine, CLI, template resolver, and Lean runner.
 - `examples/` holds theorem inputs plus runnable demo scripts for the demo, command, and Codex backends.
 - `artifacts/runs/<run_id>/` is the system of record for each run: checkpoints, proof attempts, final artifacts, and logs.
-- `lean_workspace_template/` is the Terry workspace scaffold. The CLI auto-discovers it at depth 1, and initializes one with `lake new ... math` if none is present.
+- `lean_workspace_template/` is the Terry workspace scaffold. The CLI auto-discovers it at depth 1, initializes one with `lake new ... math` if none is present, and falls back to the packaged scaffold for the known mathlib revision-mismatch bootstrap failure.
 - `docs/` holds the durable workflow contract, backlog, roadmap, and walkthroughs.
 
 ## Install

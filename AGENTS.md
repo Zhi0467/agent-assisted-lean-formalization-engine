@@ -1,8 +1,8 @@
 # Project: Agent-Assisted Lean Formalization Engine
 
 CLI-first engine for turning theorem sources into compiling Lean 4 code with explicit
-human checkpoints. Current focus: land the new `terry` workflow on top of `main`, then
-clear local review and Codex review on the rewritten three-checkpoint surface.
+human checkpoints. Current focus: stress Terry on a non-demo theorem that needs a real
+repair turn, then make enrichment/plan revision richer than approval-only review files.
 
 ## Key Docs
 
