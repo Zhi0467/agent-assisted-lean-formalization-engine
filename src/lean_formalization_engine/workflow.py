@@ -177,6 +177,25 @@ class FormalizationWorkflow:
             )
             if decision is None:
                 if self._checkpoint_surface_missing(store, PLAN_DIR):
+                    if (
+                        self._existing_path(
+                            store,
+                            f"{PLAN_DIR}/formalization_plan.json",
+                            LEGACY_PLAN_APPROVED_JSON,
+                            LEGACY_PLAN_JSON,
+                        )
+                        is None
+                        and self._existing_path(store, LEGACY_SPEC_APPROVED_JSON, LEGACY_SPEC_JSON) is not None
+                    ):
+                        plan = self._draft_plan(
+                            store,
+                            manifest.source,
+                            store.read_text("00_input/source.txt"),
+                            auto_approve,
+                        )
+                        if isinstance(plan, RunManifest):
+                            return plan
+                        return self._prove_loop(store, plan, auto_approve=auto_approve)
                     return self._pause_for_plan(store, manifest)
                 return manifest
             store.append_log(
@@ -671,7 +690,7 @@ class FormalizationWorkflow:
         resume_command = self._resume_command(manifest.run_id)
 
         existing_decision = self._load_decision(store, f"{stage_dir}/decision.json")
-        if existing_decision is None or existing_decision.decision == "pending":
+        if existing_decision is None or existing_decision.decision in {"pending", continue_decision}:
             self._write_decision(
                 store,
                 stage_dir,
@@ -998,9 +1017,11 @@ class FormalizationWorkflow:
         if not store.exists(review_path):
             return None
         decision = self._parse_review_file(store.read_text(review_path))
-        if decision is None or decision.decision != continue_decision:
+        if decision is None:
             return None
         self._write_decision(store, stage_dir, decision)
+        if decision.decision != continue_decision:
+            return None
         return decision
 
     def _write_decision(self, store: RunStore, stage_dir: str, decision: ReviewDecision) -> None:
@@ -1041,13 +1062,9 @@ class FormalizationWorkflow:
     def _load_manifest(self, store: RunStore) -> RunManifest:
         payload = store.read_json("manifest.json")
         stage_value = payload["current_stage"]
-        if stage_value == "awaiting_spec_review":
-            raise RuntimeError(
-                "This run predates Terry's merged plan checkpoint and cannot be resumed automatically. "
-                "Start a fresh Terry run from the same source."
-            )
         stage_aliases = {
             "awaiting_enrichment_review": RunStage.AWAITING_ENRICHMENT_APPROVAL,
+            "awaiting_spec_review": RunStage.AWAITING_PLAN_APPROVAL,
             "awaiting_plan_review": RunStage.AWAITING_PLAN_APPROVAL,
             "repairing": RunStage.PROVING,
             "awaiting_stall_review": RunStage.PROOF_BLOCKED,

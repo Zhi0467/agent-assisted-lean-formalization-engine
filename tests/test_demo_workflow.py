@@ -553,6 +553,39 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
             self.assertEqual(manifest.attempt_count, 2)
 
+    def test_rejected_review_file_decision_is_persisted(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        template_dir = project_root / "lean_workspace_template"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            fake_lake = self._write_fake_lake(temp_root)
+            source_path = temp_root / "input.md"
+            source_path.write_text(
+                "For every natural number n, adding zero on the left gives back n.\n",
+                encoding="utf-8",
+            )
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
+            )
+
+            manifest = workflow.prove(source_path=source_path, run_id="reject-review", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+
+            run_root = temp_root / "artifacts" / "runs" / "reject-review"
+            self._write_review(run_root, "01_enrichment", "reject", "Scope is still wrong.")
+            manifest = workflow.resume("reject-review", auto_approve=False)
+
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+            self.assertEqual(
+                RunStore(temp_root / "artifacts", "reject-review").read_json("01_enrichment/decision.json")[
+                    "decision"
+                ],
+                "reject",
+            )
+
     def test_resume_proving_run_with_final_candidate_promotes_final_review(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -691,6 +724,11 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertEqual(manifest.attempt_count, 2)
             self.assertEqual(runner.attempts, [1, 2])
 
+            manifest = workflow.resume("one-more-attempt", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
+            self.assertEqual(manifest.attempt_count, 2)
+            self.assertEqual(runner.attempts, [1, 2])
+
     def test_resume_repair_loop_reuses_last_compile_result(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         template_dir = project_root / "lean_workspace_template"
@@ -798,6 +836,84 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
             self.assertEqual(manifest.attempt_count, 1)
             self.assertTrue((run_root / "03_proof" / "checkpoint.md").exists())
+
+    def test_resume_legacy_spec_review_builds_merged_plan_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            run_root = temp_root / "artifacts" / "runs" / "legacy-spec"
+            run_root.mkdir(parents=True)
+            (run_root / "00_input").mkdir(parents=True, exist_ok=True)
+            (run_root / "00_input" / "source.txt").write_text(
+                "For every natural number n, adding zero on the left gives back n.\n",
+                encoding="utf-8",
+            )
+            (run_root / "manifest.json").write_text(
+                """{
+  "run_id": "legacy-spec",
+  "source": {"path": "input.md", "kind": "markdown"},
+  "agent_name": "repair_resume_agent",
+  "created_at": "2026-04-16T00:00:00Z",
+  "updated_at": "2026-04-16T00:00:00Z",
+  "current_stage": "awaiting_spec_review"
+}
+""",
+                encoding="utf-8",
+            )
+            store = RunStore(temp_root / "artifacts", "legacy-spec")
+            store.write_json(
+                "02_extraction/theorem_extraction.json",
+                {
+                    "title": "Zero add",
+                    "informal_statement": "For every natural number n, 0 + n = n.",
+                    "definitions": ["Nat"],
+                    "lemmas": ["Nat.zero_add"],
+                    "propositions": [],
+                    "dependencies": ["Nat.zero_add"],
+                    "notes": [],
+                },
+            )
+            store.write_json(
+                "03_enrichment/enrichment_report.approved.json",
+                {
+                    "self_contained": True,
+                    "satisfied_prerequisites": ["Nat.zero_add exists."],
+                    "missing_prerequisites": [],
+                    "required_plan_additions": [],
+                    "recommended_scope": "Keep the theorem over Nat.",
+                    "difficulty_assessment": "easy",
+                    "open_questions": [],
+                    "next_steps": ["Approve the merged plan."],
+                    "human_handoff": "Everything needed is already present.",
+                },
+            )
+            store.write_json(
+                "04_spec/theorem_spec.json",
+                {
+                    "title": "Zero add",
+                    "informal_statement": "For every natural number n, 0 + n = n.",
+                    "assumptions": ["n : Nat"],
+                    "conclusion": "0 + n = n",
+                    "symbols": ["0", "+", "Nat"],
+                    "ambiguities": [],
+                    "paraphrase": "Zero on the left does not change a natural number.",
+                },
+            )
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=SequencedLeanRunner(["compile_failed"]),
+                max_attempts=1,
+            )
+
+            status = workflow.status("legacy-spec")
+            self.assertEqual(status.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
+
+            manifest = workflow.resume("legacy-spec", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
+            self.assertTrue((run_root / "02_plan" / "formalization_plan.json").exists())
+            self.assertTrue((run_root / "02_plan" / "checkpoint.md").exists())
 
     def test_resume_legacy_final_review_uses_old_candidate_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
