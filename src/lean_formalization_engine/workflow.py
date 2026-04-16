@@ -167,6 +167,15 @@ class FormalizationWorkflow:
             return self._prove_loop(store, plan, auto_approve=auto_approve)
 
         if manifest.current_stage == RunStage.PROVING:
+            if self._final_candidate_path(store) is not None:
+                if self._resolve_checkpoint_decision(
+                    store,
+                    FINAL_DIR,
+                    continue_decision="approve",
+                    auto_approve=auto_approve,
+                ):
+                    return self._complete_from_candidate(store, manifest)
+                return self._pause_for_final(store, manifest)
             plan = self._load_plan(store)
             return self._prove_loop(store, plan, auto_approve=auto_approve)
 
@@ -890,9 +899,10 @@ class FormalizationWorkflow:
                 "",
                 "decision: pending",
                 "",
+                f"Change `decision: pending` to `{continue_decision}` when you want Terry to continue.",
+                "Leave the `Notes:` section blank unless you want Terry to receive actual reviewer guidance.",
+                "",
                 "Notes:",
-                f"- Replace `pending` with `{continue_decision}` when you want Terry to continue.",
-                "- Write any review notes below. Terry records them in `decision.json` when resumed.",
                 "",
             ]
         )

@@ -83,39 +83,39 @@ def _initialize_workspace_template(
     timeout_seconds: int,
 ) -> list[str]:
     search_root.mkdir(parents=True, exist_ok=True)
+    command: list[str] = []
     if target_dir.exists():
         if _is_eligible_template(target_dir):
             return []
-        raise RuntimeError(
-            f"`{target_dir}` already exists but is not an eligible mathlib-backed Terry template."
-        )
+        if not target_dir.is_dir():
+            raise RuntimeError(f"`{target_dir}` exists but is not a directory.")
+    else:
+        lake_executable = _resolve_lake(lake_path)
+        if lake_executable is None:
+            raise RuntimeError(
+                "Could not initialize `lean_workspace_template`: `lake` is not available on PATH."
+            )
 
-    lake_executable = _resolve_lake(lake_path)
-    if lake_executable is None:
-        raise RuntimeError(
-            "Could not initialize `lean_workspace_template`: `lake` is not available on PATH."
-        )
-
-    command = [lake_executable, "new", target_dir.name, "math"]
-    try:
-        subprocess.run(
-            command,
-            cwd=search_root,
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=timeout_seconds,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(
-            "Timed out while running `lake new ... math` for `lean_workspace_template`."
-        ) from exc
-    except subprocess.CalledProcessError as exc:
-        details = "\n".join(part for part in [exc.stdout, exc.stderr] if part).strip()
-        raise RuntimeError(
-            "Failed to initialize `lean_workspace_template` with `lake new ... math`."
-            + (f"\n{details}" if details else "")
-        ) from exc
+        command = [lake_executable, "new", target_dir.name, "math"]
+        try:
+            subprocess.run(
+                command,
+                cwd=search_root,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                "Timed out while running `lake new ... math` for `lean_workspace_template`."
+            ) from exc
+        except subprocess.CalledProcessError as exc:
+            details = "\n".join(part for part in [exc.stdout, exc.stderr] if part).strip()
+            raise RuntimeError(
+                "Failed to initialize `lean_workspace_template` with `lake new ... math`."
+                + (f"\n{details}" if details else "")
+            ) from exc
 
     shutil.rmtree(target_dir, ignore_errors=True)
     shutil.copytree(

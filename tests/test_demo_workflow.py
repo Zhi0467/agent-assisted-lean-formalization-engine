@@ -386,6 +386,26 @@ class DemoWorkflowTest(unittest.TestCase):
                 "enrichment",
             )
 
+    def test_review_template_keeps_notes_empty_without_feedback(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        template_dir = project_root / "lean_workspace_template"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=LeanRunner(template_dir=template_dir),
+            )
+
+            review_text = workflow._review_template("Proof Loop Blocked", "retry")
+            parsed = workflow._parse_review_file(
+                review_text.replace("decision: pending", "decision: retry")
+            )
+
+            assert parsed is not None
+            self.assertEqual(parsed.notes, "")
+
     def test_proof_blocked_requires_retry_decision(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         template_dir = project_root / "lean_workspace_template"
@@ -414,6 +434,47 @@ class DemoWorkflowTest(unittest.TestCase):
             manifest = workflow.resume("proof-blocked", auto_approve=True)
             self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
             self.assertEqual(manifest.attempt_count, 2)
+
+    def test_resume_proving_run_with_final_candidate_promotes_final_review(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            run_root = temp_root / "artifacts" / "runs" / "queued-final"
+            run_root.mkdir(parents=True)
+            store = RunStore(temp_root / "artifacts", "queued-final")
+            store.write_json(
+                "manifest.json",
+                {
+                    "run_id": "queued-final",
+                    "source": {"path": "input.md", "kind": "markdown"},
+                    "agent_name": "repair_resume_agent",
+                    "agent_config": {"backend": "demo", "command": None, "codex_model": None},
+                    "template_dir": str(temp_root / "lean_workspace_template"),
+                    "created_at": "2026-04-16T00:00:00Z",
+                    "updated_at": "2026-04-16T00:00:00Z",
+                    "current_stage": "proving",
+                    "attempt_count": 1,
+                },
+            )
+            store.write_text(
+                "04_final/final_candidate.lean",
+                "import FormalizationEngineWorkspace.Basic\n",
+            )
+            store.write_text(
+                "04_final/final_report.md",
+                "Candidate compiled already.\n",
+            )
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RepairResumeAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=SequencedLeanRunner(["compile_failed"]),
+            )
+            manifest = workflow.resume("queued-final", auto_approve=False)
+
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_FINAL_APPROVAL)
+            self.assertEqual(manifest.attempt_count, 1)
+            self.assertTrue((run_root / "04_final" / "review.md").exists())
 
     def test_retry_decision_allows_exactly_one_more_attempt(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
