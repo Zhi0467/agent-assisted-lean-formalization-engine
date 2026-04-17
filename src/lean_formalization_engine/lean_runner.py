@@ -512,8 +512,9 @@ class LeanRunner:
         in_require_block = False
         for line in lakefile_text.splitlines():
             stripped = line.strip()
-            if stripped.startswith("[[") and stripped.endswith("]]"):
-                in_require_block = stripped == "[[require]]"
+            block_match = re.match(r"^\[\[\s*([^\]]+?)\s*\]\]\s*(?:#.*)?$", stripped)
+            if block_match:
+                in_require_block = block_match.group(1) == "require"
                 continue
             if not in_require_block:
                 continue

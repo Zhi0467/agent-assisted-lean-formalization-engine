@@ -1059,7 +1059,7 @@ class DemoWorkflowTest(unittest.TestCase):
                         "version = \"0.1.0\"",
                         "defaultTargets = [\"FormalizationEngineWorkspace\"]",
                         "",
-                        "[[require]]",
+                        "[[require]] # pinned",
                         "name = 'mathlib' # pinned",
                         "",
                         "[[lean_lib]]",
