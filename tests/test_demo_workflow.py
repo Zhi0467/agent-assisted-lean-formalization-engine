@@ -781,6 +781,20 @@ class DemoWorkflowTest(unittest.TestCase):
             )
             vendored_build.parent.mkdir(parents=True, exist_ok=True)
             vendored_build.write_text("stale", encoding="utf-8")
+            nested_vendored_build = (
+                temp_root
+                / "lean_workspace_template"
+                / ".lake"
+                / "packages"
+                / "mathlib"
+                / ".lake"
+                / "packages"
+                / "aux"
+                / "build"
+                / "Nested.olean"
+            )
+            nested_vendored_build.parent.mkdir(parents=True, exist_ok=True)
+            nested_vendored_build.write_text("stale", encoding="utf-8")
             runner = LeanRunner(
                 temp_root / "lean_workspace_template",
                 repo_root=temp_root,
@@ -837,6 +851,19 @@ class DemoWorkflowTest(unittest.TestCase):
                     / "mathlib"
                     / "build"
                     / "Vendored.olean"
+                ).exists()
+            )
+            self.assertFalse(
+                (
+                    shared_workspace
+                    / ".lake"
+                    / "packages"
+                    / "mathlib"
+                    / ".lake"
+                    / "packages"
+                    / "aux"
+                    / "build"
+                    / "Nested.olean"
                 ).exists()
             )
 
@@ -1065,6 +1092,102 @@ class DemoWorkflowTest(unittest.TestCase):
                 ["lake update", "lake build FormalizationEngineWorkspace"],
             )
             self.assertFalse(stale_marker.exists())
+
+    def test_lean_runner_rebuilds_when_git_backed_vendored_ignore_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            mathlib_dir = temp_root / "lean_workspace_template" / ".lake" / "packages" / "mathlib"
+            mathlib_dir.mkdir(parents=True, exist_ok=True)
+            tracked_file = mathlib_dir / "Marker.lean"
+            tracked_file.write_text("tracked\n", encoding="utf-8")
+            ignored_file = mathlib_dir / "Generated.lean"
+            ignored_file.write_text("first\n", encoding="utf-8")
+            (mathlib_dir / ".gitignore").write_text("Generated.lean\n", encoding="utf-8")
+            (mathlib_dir / "lakefile.toml").write_text(
+                "\n".join(
+                    [
+                        "name = \"mathlib\"",
+                        "version = \"0.1.0\"",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "init"], cwd=mathlib_dir, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=mathlib_dir, check=True, capture_output=True, text=True)
+            subprocess.run(
+                ["git", "config", "user.email", "test@example.com"],
+                cwd=mathlib_dir,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                ["git", "add", "Marker.lean", ".gitignore", "lakefile.toml"],
+                cwd=mathlib_dir,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(["git", "commit", "-m", "init"], cwd=mathlib_dir, check=True, capture_output=True, text=True)
+            fake_lake = self._write_fake_lake(temp_root)
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            first_store = RunStore(temp_root / "artifacts", "git-vendored-ignore-a")
+            first_store.ensure_new()
+            first_store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem git_vendored_ignore_a (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+            first_result = runner.compile_candidate(first_store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(first_result.passed)
+
+            shared_workspace = temp_root / ".terry" / "lean_workspace"
+            stale_marker = shared_workspace / "stale-git-vendored-ignore.txt"
+            stale_marker.write_text("remove me", encoding="utf-8")
+            ignored_file.write_text("second\n", encoding="utf-8")
+
+            second_store = RunStore(temp_root / "artifacts", "git-vendored-ignore-b")
+            second_store.ensure_new()
+            second_store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem git_vendored_ignore_b (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+            second_result = runner.compile_candidate(second_store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(second_result.passed)
+            self.assertEqual(
+                second_result.command,
+                ["lake update", "lake build FormalizationEngineWorkspace"],
+            )
+            self.assertFalse(stale_marker.exists())
+            self.assertEqual(
+                (shared_workspace / ".lake" / "packages" / "mathlib" / "Generated.lean").read_text(encoding="utf-8"),
+                "second\n",
+            )
 
     def test_lean_runner_rebuilds_when_dirty_git_vendored_file_changes_again(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

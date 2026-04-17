@@ -314,6 +314,14 @@ class LeanRunner:
             return True
         if len(parts) >= 4 and parts[0] == ".lake" and parts[1] == "packages" and parts[3] == "build":
             return True
+        if any(
+            part == ".lake"
+            and index + 3 < len(parts)
+            and parts[index + 1] == "packages"
+            and parts[index + 3] == "build"
+            for index, part in enumerate(parts[:-3])
+        ):
+            return True
         return any(part == ".lake" and parts[index + 1] == "build" for index, part in enumerate(parts[:-1]))
 
     def _copy_template_ignore(self, directory: str, names: list[str]) -> set[str]:
@@ -328,7 +336,7 @@ class LeanRunner:
         git_dir = package_dir / ".git"
         if git_dir.exists():
             git_status = subprocess.run(
-                ["git", "-C", str(package_dir), "status", "--porcelain=2", "--branch"],
+                ["git", "-C", str(package_dir), "status", "--porcelain=2", "--branch", "--ignored=matching"],
                 capture_output=True,
                 text=True,
                 check=False,
