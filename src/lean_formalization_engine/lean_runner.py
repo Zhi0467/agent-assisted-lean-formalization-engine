@@ -352,12 +352,14 @@ class LeanRunner:
                 if self._ignore_template_path(full_relative_path):
                     continue
                 path = root_path / filename
-                stat = path.stat()
                 digest.update(relative_path.as_posix().encode("utf-8"))
                 digest.update(b"\0")
-                digest.update(str(stat.st_mtime_ns).encode("utf-8"))
-                digest.update(b"\0")
-                digest.update(str(stat.st_size).encode("utf-8"))
+                with path.open("rb") as handle:
+                    while True:
+                        chunk = handle.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        digest.update(chunk)
                 digest.update(b"\0")
         return digest.hexdigest()
 
@@ -440,7 +442,7 @@ class LeanRunner:
         lake_path: str,
     ) -> subprocess.CompletedProcess[str] | None:
         manifest_path = workspace / "lake-manifest.json"
-        if manifest_path.exists() or self._vendored_packages_ready(workspace):
+        if self._workspace_dependencies_ready(workspace, manifest_path.exists()):
             return None
         return subprocess.run(
             [lake_path, "update"],
@@ -450,13 +452,27 @@ class LeanRunner:
             check=False,
         )
 
-    def _vendored_packages_ready(self, workspace: Path) -> bool:
+    def _workspace_dependencies_ready(self, workspace: Path, manifest_exists: bool) -> bool:
+        required_package_names = self._required_package_names(workspace)
+        if required_package_names is None:
+            return manifest_exists
+        if not required_package_names:
+            return True
+        return self._vendored_packages_ready(workspace, required_package_names=required_package_names)
+
+    def _vendored_packages_ready(
+        self,
+        workspace: Path,
+        *,
+        required_package_names: set[str] | None = None,
+    ) -> bool:
         vendored_packages_path = workspace / ".lake" / "packages"
         if not vendored_packages_path.exists():
             return False
-        required_package_names = self._required_package_names(workspace)
         if required_package_names is None:
-            return False
+            required_package_names = self._required_package_names(workspace)
+            if required_package_names is None:
+                return False
         pending = list(required_package_names)
         seen: set[str] = set()
         while pending:
