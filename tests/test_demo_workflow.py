@@ -1927,6 +1927,61 @@ class DemoWorkflowTest(unittest.TestCase):
                 ["lake-transitive update", "lake-transitive build FormalizationEngineWorkspace"],
             )
 
+    def test_lean_runner_adds_shared_cache_to_local_git_exclude(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            subprocess.run(["git", "init"], cwd=temp_root, check=True, capture_output=True, text=True)
+            (temp_root / ".gitignore").write_text(
+                "\n".join(
+                    [
+                        "artifacts/",
+                        "lean_workspace_template/",
+                        "lake*",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "add", ".gitignore"], cwd=temp_root, check=True, capture_output=True, text=True)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            fake_lake = self._write_fake_lake(temp_root)
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            store = RunStore(temp_root / "artifacts", "git-exclude")
+            store.ensure_new()
+            store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem git_exclude (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+
+            result = runner.compile_candidate(store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(result.passed)
+            exclude_text = (temp_root / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+            self.assertIn(".terry/", exclude_text)
+            status = subprocess.run(
+                ["git", "status", "--short"],
+                cwd=temp_root,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertNotIn(".terry/", status.stdout)
+
     def test_lean_runner_rebuilds_shared_workspace_when_lake_changes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -2136,6 +2191,56 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertFalse(failures)
             self.assertIn("saw A", results["race-a"])
             self.assertIn("saw B", results["race-b"])
+
+    def test_lean_runner_falls_back_when_flock_is_unsupported(self) -> None:
+        class UnsupportedFcntl:
+            LOCK_EX = 1
+            LOCK_UN = 2
+
+            @staticmethod
+            def flock(_fd: int, operation: int) -> None:
+                if operation == UnsupportedFcntl.LOCK_EX:
+                    raise OSError("operation not supported")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            fake_lake = self._write_fake_lake(temp_root)
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            original_fcntl = lean_runner_module.fcntl
+            original_msvcrt = lean_runner_module.msvcrt
+            lean_runner_module.fcntl = UnsupportedFcntl()
+            lean_runner_module.msvcrt = None
+            try:
+                store = RunStore(temp_root / "artifacts", "unsupported-flock")
+                store.ensure_new()
+                candidate_relative_path = "03_proof/attempts/attempt_0001/candidate.lean"
+                store.write_text(
+                    candidate_relative_path,
+                    "\n".join(
+                        [
+                            "import FormalizationEngineWorkspace.Basic",
+                            "",
+                            "theorem unsupported_flock (n : Nat) : 0 + n = n := by",
+                            "  simpa using Nat.zero_add n",
+                            "",
+                        ]
+                    ),
+                )
+                result = runner.compile_candidate(store, candidate_relative_path, 1)
+            finally:
+                lean_runner_module.fcntl = original_fcntl
+                lean_runner_module.msvcrt = original_msvcrt
+
+            self.assertTrue(result.passed)
 
     def test_resume_reuses_existing_plan_handoff_after_enrichment_approval(self) -> None:
         class PlanCountingAgent:

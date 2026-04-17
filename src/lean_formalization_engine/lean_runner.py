@@ -223,6 +223,7 @@ class LeanRunner:
         )
 
     def _prepare_workspace(self, fingerprint: dict[str, str]) -> tuple[Path, bool]:
+        self._ensure_repo_git_exclude()
         workspace = self._workspace_path()
         if workspace.exists() and self._workspace_ready(workspace) and self._read_workspace_metadata() == fingerprint:
             return workspace, False
@@ -254,6 +255,39 @@ class LeanRunner:
 
     def _workspace_lock_path(self) -> Path:
         return self.repo_root / ".terry" / "lean_workspace.lock"
+
+    def _git_exclude_path(self) -> Path | None:
+        git_path = self.repo_root / ".git"
+        if git_path.is_dir():
+            return git_path / "info" / "exclude"
+        if not git_path.is_file():
+            return None
+        try:
+            first_line = git_path.read_text(encoding="utf-8").splitlines()[0]
+        except (IndexError, OSError):
+            return None
+        prefix = "gitdir:"
+        if not first_line.startswith(prefix):
+            return None
+        git_dir = Path(first_line[len(prefix) :].strip())
+        if not git_dir.is_absolute():
+            git_dir = (self.repo_root / git_dir).resolve()
+        return git_dir / "info" / "exclude"
+
+    def _ensure_repo_git_exclude(self) -> None:
+        exclude_path = self._git_exclude_path()
+        if exclude_path is None:
+            return
+        try:
+            existing = exclude_path.read_text(encoding="utf-8") if exclude_path.exists() else ""
+        except OSError:
+            return
+        existing_entries = {line.strip() for line in existing.splitlines()}
+        if {".terry/", ".terry", "/.terry/", "/.terry"} & existing_entries:
+            return
+        exclude_path.parent.mkdir(parents=True, exist_ok=True)
+        prefix = "" if not existing or existing.endswith("\n") else "\n"
+        exclude_path.write_text(f"{existing}{prefix}.terry/\n", encoding="utf-8")
 
     def _read_workspace_metadata(self) -> dict[str, str] | None:
         metadata_path = self._workspace_metadata_path()
@@ -700,21 +734,31 @@ class LeanRunner:
         thread_lock = _thread_lock_for(lock_path)
         with thread_lock:
             with lock_path.open("a+", encoding="utf-8") as handle:
+                posix_lock_acquired = False
+                windows_lock_acquired = False
                 if fcntl is not None:
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                    try:
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                        posix_lock_acquired = True
+                    except OSError:
+                        posix_lock_acquired = False
                 elif msvcrt is not None:
                     handle.seek(0)
                     if handle.tell() == 0:
                         handle.write("0")
                         handle.flush()
                     handle.seek(0)
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                    try:
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                        windows_lock_acquired = True
+                    except OSError:
+                        windows_lock_acquired = False
                 try:
                     yield
                 finally:
-                    if fcntl is not None:
+                    if posix_lock_acquired and fcntl is not None:
                         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-                    elif msvcrt is not None:
+                    elif windows_lock_acquired and msvcrt is not None:
                         handle.seek(0)
                         msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
 
