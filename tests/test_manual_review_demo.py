@@ -3,47 +3,36 @@ from __future__ import annotations
 import unittest
 
 from examples.run_codex_manual_review_demo import (
-    validate_enrichment_report,
+    validate_enrichment_handoff,
     validate_final_candidate,
-    validate_formalization_plan,
-    validate_theorem_spec,
+    validate_plan_handoff,
 )
 
 
 class ManualReviewDemoValidationTest(unittest.TestCase):
-    def test_validate_enrichment_accepts_self_contained_right_add_zero(self) -> None:
-        validate_enrichment_report(
-            {
-                "self_contained": True,
-                "missing_prerequisites": [],
-            }
+    def test_validate_enrichment_handoff_accepts_self_contained_case(self) -> None:
+        validate_enrichment_handoff(
+            "# Enrichment Handoff\n\nThe theorem is self-contained over Nat.\nMissing prerequisites: none.\n"
         )
 
-    def test_validate_theorem_spec_accepts_right_add_zero(self) -> None:
-        validate_theorem_spec(
-            {
-                "conclusion": "forall n : Nat, n + 0 = n",
-                "assumptions": ["n : Nat"],
-                "symbols": ["n", "+", "0"],
-                "ambiguities": [],
-            }
-        )
-
-    def test_validate_formalization_plan_rejects_wrong_target(self) -> None:
-        with self.assertRaisesRegex(RuntimeError, "target statement"):
-            validate_formalization_plan(
-                {
-                    "theorem_name": "right_add_zero_nat",
-                    "imports": ["FormalizationEngineWorkspace.Basic"],
-                    "proof_sketch": ["Use Nat.add_zero."],
-                    "target_statement": "theorem wrong (n : Nat) : n = n",
-                }
+    def test_validate_plan_handoff_rejects_wrong_target(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "right-add-zero target"):
+            validate_plan_handoff(
+                "\n".join(
+                    [
+                        "# Plan Handoff",
+                        "",
+                        "Proposed theorem name: `right_add_zero_nat`",
+                        "Target statement: `theorem wrong (n : Nat) : n = n`",
+                        "Imports: `FormalizationEngineWorkspace.Basic`",
+                        "Proof route: use `Nat.add_zero`.",
+                    ]
+                )
             )
 
-    def test_validate_final_candidate_rejects_missing_nat_add_zero(self) -> None:
-        with self.assertRaisesRegex(RuntimeError, "Nat.add_zero"):
+    def test_validate_final_candidate_rejects_missing_target(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "right-add-zero"):
             validate_final_candidate(
-                "import FormalizationEngineWorkspace.Basic\n\n"
-                "theorem right_add_zero_nat (n : Nat) : n + 0 = n := by\n"
+                "theorem right_add_zero_nat (n : Nat) : n = n := by\n"
                 "  rfl\n"
             )

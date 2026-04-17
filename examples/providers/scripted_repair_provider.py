@@ -2,111 +2,57 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
 
-def _extraction_response(request: dict[str, object]) -> dict[str, object]:
-    normalized_text = str(request["normalized_text"]).strip()
-    parsed_output = {
-        "title": "Zero-add on natural numbers",
-        "informal_statement": normalized_text,
-        "definitions": [
-            "Nat: the variable ranges over natural numbers.",
-            "Left addition by zero: the target expression is `0 + n`.",
-        ],
-        "lemmas": [
-            "Nat.zero_add: proves the target theorem directly for natural numbers."
-        ],
-        "propositions": [],
-        "dependencies": [
-            "definition: Nat -- needed to type the quantified variable.",
-            "notation: `0 + n` -- needed to state the theorem.",
-            "lemma: Nat.zero_add -- sufficient to complete the proof.",
-        ],
-        "notes": ["The example already fits standard natural-number infrastructure."],
-    }
-    return {
-        "prompt": "Extract the theorem package and prerequisite dependency chain from the theorem source.",
-        "raw_response": json.dumps(parsed_output, indent=2, sort_keys=True),
-        "parsed_output": parsed_output,
-    }
+def _resolve(request: dict[str, object], relative_path: str) -> Path:
+    return Path(str(request["repo_root"])) / relative_path
 
 
-def _enrichment_response(request: dict[str, object]) -> dict[str, object]:
-    parsed_output = {
-        "self_contained": True,
-        "satisfied_prerequisites": [
-            "Natural numbers and addition are already available in Lean/mathlib.",
-            "`Nat.zero_add` is already available for the proof."
-        ],
-        "missing_prerequisites": [],
-        "required_plan_additions": [],
-        "recommended_scope": "Keep the theorem over `Nat` and reuse the existing core lemma.",
-        "difficulty_assessment": "easy",
-        "open_questions": [],
-        "next_steps": [
-            "Approve the enrichment handoff.",
-            "Draft the theorem spec.",
-            "Use `Nat.zero_add` in the Lean plan."
-        ],
-        "human_handoff": (
-            "The extracted theorem is already self-contained for Lean. "
-            "All required prerequisites are present in the standard natural-number API, "
-            "so the formalization plan does not need extra definitions."
-        ),
-    }
-    return {
-        "prompt": "Check whether the extracted theorem package is self-contained and summarize what is missing.",
-        "raw_response": json.dumps(parsed_output, indent=2, sort_keys=True),
-        "parsed_output": parsed_output,
-    }
+def _write_enrichment(request: dict[str, object]) -> str:
+    output_dir = _resolve(request, str(request["output_dir"]))
+    handoff = "\n".join(
+        [
+            "# Enrichment Handoff",
+            "",
+            "The theorem is already self-contained for Lean over `Nat`.",
+            "No prerequisites are missing, and the plan can stay focused on the theorem itself.",
+            "",
+            "Recommended scope: keep the theorem over `Nat` and reuse the existing core lemma.",
+            "",
+        ]
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "handoff.md").write_text(handoff, encoding="utf-8")
+    return handoff
 
 
-def _spec_response(request: dict[str, object]) -> dict[str, object]:
-    extraction = request["extraction"]
-    parsed_output = {
-        "title": extraction["title"],
-        "informal_statement": extraction["informal_statement"],
-        "assumptions": ["n : Nat"],
-        "conclusion": "0 + n = n",
-        "symbols": ["0", "+", "Nat"],
-        "ambiguities": [],
-        "paraphrase": "For every natural number n, adding zero on the left returns n.",
-    }
-    return {
-        "prompt": "Extract a theorem specification from the normalized theorem source.",
-        "raw_response": json.dumps(parsed_output, indent=2, sort_keys=True),
-        "parsed_output": parsed_output,
-    }
+def _write_plan(request: dict[str, object]) -> str:
+    output_dir = _resolve(request, str(request["output_dir"]))
+    handoff = "\n".join(
+        [
+            "# Plan Handoff",
+            "",
+            "Keep the theorem over natural numbers and formalize it directly in the local Terry workspace.",
+            "",
+            "Proposed theorem name: `zero_add_provider_demo`",
+            "Target statement: `theorem zero_add_provider_demo (n : Nat) : 0 + n = n`",
+            "Imports: `FormalizationEngineWorkspace.Basic`",
+            "Proof route: use `Nat.zero_add`.",
+            "",
+        ]
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "handoff.md").write_text(handoff, encoding="utf-8")
+    return handoff
 
 
-def _plan_response(request: dict[str, object]) -> dict[str, object]:
-    theorem_spec = request["theorem_spec"]
-    enrichment = request["enrichment"]
-    parsed_output = {
-        "theorem_name": "zero_add_provider_demo",
-        "imports": ["FormalizationEngineWorkspace.Basic"],
-        "prerequisites_to_formalize": enrichment["required_plan_additions"],
-        "helper_definitions": [],
-        "target_statement": "theorem zero_add_provider_demo (n : Nat) : 0 + n = n",
-        "proof_sketch": [
-            f"Formalize the approved theorem titled {theorem_spec['title']}.",
-            "Use the local basic workspace module.",
-            "Repair once compiler or quality feedback arrives.",
-        ],
-    }
-    return {
-        "prompt": "Produce a Lean-facing plan for the approved theorem specification.",
-        "raw_response": json.dumps(parsed_output, indent=2, sort_keys=True),
-        "parsed_output": parsed_output,
-    }
+def _write_candidate(request: dict[str, object]) -> str:
+    output_dir = _resolve(request, str(request["output_dir"]))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    previous_compile = request.get("latest_compile_result_path")
 
-
-def _draft_response(request: dict[str, object]) -> dict[str, object]:
-    plan = request["plan"]
-    repair_context = request["repair_context"]
-    previous_result = repair_context["previous_result"]
-
-    if previous_result is None:
+    if previous_compile is None:
         content = "\n".join(
             [
                 "import FormalizationEngineWorkspace.Basic",
@@ -116,13 +62,10 @@ def _draft_response(request: dict[str, object]) -> dict[str, object]:
                 "",
             ]
         )
-        rationale = "Start with a skeletal proof so the repair path has concrete feedback."
     else:
-        diagnostics = previous_result.get("diagnostics", [])
-        if not previous_result.get("contains_sorry"):
-            raise RuntimeError(
-                "The scripted repair provider expected the first failure to come from `sorry`."
-            )
+        compile_payload = json.loads(_resolve(request, str(previous_compile)).read_text(encoding="utf-8"))
+        if not compile_payload.get("contains_sorry"):
+            raise RuntimeError("The scripted repair provider expected the first failure to come from `sorry`.")
         content = "\n".join(
             [
                 "import FormalizationEngineWorkspace.Basic",
@@ -132,47 +75,34 @@ def _draft_response(request: dict[str, object]) -> dict[str, object]:
                 "",
             ]
         )
-        rationale = (
-            "Repair the draft using the previous compile result. "
-            f"Observed diagnostics: {diagnostics}"
-        )
 
-    parsed_output = {
-        "theorem_name": plan["theorem_name"],
-        "module_name": "FormalizationEngineWorkspace.Generated",
-        "imports": plan["imports"],
-        "content": content,
-        "rationale": rationale,
-    }
-    return {
-        "prompt": (
-            "Generate a Lean file from the approved plan.\n"
-            f"Attempt: {repair_context['current_attempt']}/{repair_context['max_attempts']}\n"
-            f"Attempts remaining: {repair_context['attempts_remaining']}\n"
-        ),
-        "raw_response": content,
-        "parsed_output": parsed_output,
-    }
+    (output_dir / "candidate.lean").write_text(content, encoding="utf-8")
+    return content
 
 
 def main() -> int:
     request = json.load(sys.stdin)
     stage = request.get("stage")
 
-    if stage == "draft_theorem_extraction":
-        response = _extraction_response(request)
-    elif stage == "draft_theorem_enrichment":
-        response = _enrichment_response(request)
-    elif stage == "draft_theorem_spec":
-        response = _spec_response(request)
-    elif stage == "draft_formalization_plan":
-        response = _plan_response(request)
-    elif stage == "draft_lean_file":
-        response = _draft_response(request)
+    if stage == "enrichment":
+        raw_response = _write_enrichment(request)
+        prompt = "Write the enrichment handoff under the requested output directory."
+    elif stage == "plan":
+        raw_response = _write_plan(request)
+        prompt = "Write the plan handoff under the requested output directory."
+    elif stage == "proof":
+        raw_response = _write_candidate(request)
+        prompt = "Write the Lean candidate under the requested proof-attempt directory."
     else:
         raise RuntimeError(f"Unsupported stage: {stage}")
 
-    json.dump(response, sys.stdout)
+    json.dump(
+        {
+            "prompt": prompt,
+            "raw_response": raw_response,
+        },
+        sys.stdout,
+    )
     return 0
 
 

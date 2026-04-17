@@ -34,22 +34,34 @@ class SourceKind(str, Enum):
 
 class RunStage(str, Enum):
     CREATED = "created"
-    AWAITING_ENRICHMENT_REVIEW = "awaiting_enrichment_review"
-    AWAITING_SPEC_REVIEW = "awaiting_spec_review"
-    AWAITING_PLAN_REVIEW = "awaiting_plan_review"
-    REPAIRING = "repairing"
-    AWAITING_FINAL_REVIEW = "awaiting_final_review"
-    AWAITING_STALL_REVIEW = "awaiting_stall_review"
+    AWAITING_ENRICHMENT_APPROVAL = "awaiting_enrichment_approval"
+    AWAITING_PLAN_APPROVAL = "awaiting_plan_approval"
+    PROVING = "proving"
+    PROOF_BLOCKED = "proof_blocked"
+    AWAITING_FINAL_APPROVAL = "awaiting_final_approval"
+    LEGACY_AWAITING_ENRICHMENT_REVIEW = "awaiting_enrichment_review"
+    LEGACY_AWAITING_SPEC_REVIEW = "awaiting_spec_review"
+    LEGACY_AWAITING_PLAN_REVIEW = "awaiting_plan_review"
+    LEGACY_REPAIRING = "repairing"
+    LEGACY_AWAITING_STALL_REVIEW = "awaiting_stall_review"
+    LEGACY_AWAITING_FINAL_REVIEW = "awaiting_final_review"
     COMPLETED = "completed"
     FAILED = "failed"
 
 
-DEFAULT_WORKFLOW_VERSION = "0.2.0"
+class BackendStage(str, Enum):
+    ENRICHMENT = "enrichment"
+    PLAN = "plan"
+    PROOF = "proof"
+
+
+DEFAULT_WORKFLOW_VERSION = "0.4.0"
 DEFAULT_WORKFLOW_TAGS = [
-    "mathlib-template",
-    "pre-spec-extraction",
-    "enrichment-handoff",
-    "bounded-repair-loop",
+    "three-checkpoint",
+    "review-files",
+    "terry-cli",
+    "bounded-prove-loop",
+    "backend-owned-stage-files",
 ]
 
 
@@ -67,64 +79,19 @@ class IngestedSource:
 
 
 @dataclass
-class TheoremExtraction:
-    title: str
-    informal_statement: str
-    definitions: list[str]
-    lemmas: list[str]
-    propositions: list[str]
-    dependencies: list[str]
-    notes: list[str]
-
-
-@dataclass
-class EnrichmentReport:
-    self_contained: bool
-    satisfied_prerequisites: list[str]
-    missing_prerequisites: list[str]
-    required_plan_additions: list[str]
-    recommended_scope: str
-    difficulty_assessment: str
-    open_questions: list[str]
-    next_steps: list[str]
-    human_handoff: str
-
-
-@dataclass
-class TheoremSpec:
-    title: str
-    informal_statement: str
-    assumptions: list[str]
-    conclusion: str
-    symbols: list[str]
-    ambiguities: list[str]
-    paraphrase: str
-
-
-@dataclass
-class ContextPack:
-    recommended_imports: list[str]
-    local_examples: list[str]
-    notes: list[str]
-
-
-@dataclass
-class FormalizationPlan:
-    theorem_name: str
-    imports: list[str]
-    prerequisites_to_formalize: list[str]
-    helper_definitions: list[str]
-    target_statement: str
-    proof_sketch: list[str]
-
-
-@dataclass
-class LeanDraft:
-    theorem_name: str
-    module_name: str
-    imports: list[str]
-    content: str
-    rationale: str
+class StageRequest:
+    stage: BackendStage
+    run_id: str
+    repo_root: str
+    run_dir: str
+    output_dir: str
+    input_paths: dict[str, str]
+    required_outputs: list[str]
+    review_notes_path: str | None = None
+    latest_compile_result_path: str | None = None
+    previous_attempt_dir: str | None = None
+    attempt: int | None = None
+    max_attempts: int | None = None
 
 
 @dataclass
@@ -152,20 +119,17 @@ class CompileAttempt:
 
 
 @dataclass
-class RepairContext:
-    current_attempt: int
-    max_attempts: int
-    prior_attempts: int
-    attempts_remaining: int
-    previous_draft: LeanDraft | None
-    previous_result: CompileAttempt | None
+class ReviewDecision:
+    decision: str
+    updated_at: str
+    notes: str = ""
 
 
 @dataclass
-class HumanDecision:
-    approved: bool
-    updated_at: str
-    notes: str = ""
+class AgentConfig:
+    backend: str
+    command: list[str] | None = None
+    codex_model: str | None = None
 
 
 @dataclass
@@ -173,13 +137,14 @@ class RunManifest:
     run_id: str
     source: SourceRef
     agent_name: str
+    agent_config: AgentConfig
+    template_dir: str
     created_at: str
     updated_at: str
     current_stage: RunStage
+    lake_path: str | None = None
     workflow_version: str = DEFAULT_WORKFLOW_VERSION
-    workflow_tags: list[str] = field(
-        default_factory=lambda: list(DEFAULT_WORKFLOW_TAGS)
-    )
+    workflow_tags: list[str] = field(default_factory=lambda: list(DEFAULT_WORKFLOW_TAGS))
     attempt_count: int = 0
     latest_error: str | None = None
     final_output_path: str | None = None

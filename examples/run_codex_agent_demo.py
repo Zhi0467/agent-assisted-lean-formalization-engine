@@ -4,6 +4,7 @@ import shutil
 from pathlib import Path
 
 from lean_formalization_engine.codex_agent import CodexCliFormalizationAgent
+from lean_formalization_engine.models import AgentConfig
 from lean_formalization_engine.workflow import FormalizationWorkflow
 
 
@@ -17,8 +18,9 @@ def main() -> None:
     workflow = FormalizationWorkflow(
         repo_root=repo_root,
         agent=CodexCliFormalizationAgent(repo_root=repo_root),
+        agent_config=AgentConfig(backend="codex"),
     )
-    manifest = workflow.run(
+    manifest = workflow.prove(
         source_path=repo_root / "examples" / "inputs" / "zero_add.md",
         run_id=run_id,
         auto_approve=True,
