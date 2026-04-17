@@ -335,13 +335,16 @@ class LeanRunner:
     def _vendored_package_signature(self, package_dir: Path) -> str:
         git_dir = package_dir / ".git"
         if git_dir.exists():
-            git_status = subprocess.run(
-                ["git", "-C", str(package_dir), "status", "--porcelain=2", "--branch", "--ignored=matching"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if git_status.returncode == 0:
+            try:
+                git_status = subprocess.run(
+                    ["git", "-C", str(package_dir), "status", "--porcelain=2", "--branch", "--ignored=matching"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            except OSError:
+                git_status = None
+            if git_status is not None and git_status.returncode == 0:
                 digest = hashlib.sha256()
                 digest.update(git_status.stdout.encode("utf-8"))
                 digest.update(git_status.stderr.encode("utf-8"))
@@ -458,7 +461,7 @@ class LeanRunner:
     ) -> subprocess.CompletedProcess[str] | None:
         manifest_path = workspace / "lake-manifest.json"
         bootstrap_marker = self._dependency_bootstrap_marker(workspace)
-        if self._workspace_dependencies_ready(workspace, bootstrap_marker.exists()):
+        if self._workspace_dependencies_ready(workspace, bootstrap_marker.exists(), manifest_path.exists()):
             return None
         result = subprocess.run(
             [lake_path, "update"],
@@ -477,16 +480,24 @@ class LeanRunner:
     def _dependency_bootstrap_marker(self, workspace: Path) -> Path:
         return workspace / ".terry-dependencies-ready"
 
-    def _workspace_dependencies_ready(self, workspace: Path, bootstrap_ready: bool) -> bool:
+    def _workspace_dependencies_ready(
+        self,
+        workspace: Path,
+        bootstrap_ready: bool,
+        manifest_exists: bool,
+    ) -> bool:
         required_packages = self._required_packages(workspace)
         if required_packages is None:
-            return bootstrap_ready
+            return bootstrap_ready or manifest_exists
         if not required_packages:
             return True
         if not self._path_dependencies_ready(workspace, required_packages):
             return False
         if any(requirement.path is None for requirement in required_packages):
-            return bootstrap_ready
+            if bootstrap_ready:
+                return True
+            vendored_packages_path = workspace / ".lake" / "packages"
+            return manifest_exists and not vendored_packages_path.exists()
         return True
 
     def _required_packages(self, workspace: Path) -> list[PackageRequirement] | None:
