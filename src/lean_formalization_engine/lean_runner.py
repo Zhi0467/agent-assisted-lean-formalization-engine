@@ -457,7 +457,8 @@ class LeanRunner:
         lake_path: str,
     ) -> subprocess.CompletedProcess[str] | None:
         manifest_path = workspace / "lake-manifest.json"
-        if self._workspace_dependencies_ready(workspace, manifest_path.exists()):
+        bootstrap_marker = self._dependency_bootstrap_marker(workspace)
+        if self._workspace_dependencies_ready(workspace, bootstrap_marker.exists()):
             return None
         result = subprocess.run(
             [lake_path, "update"],
@@ -466,20 +467,26 @@ class LeanRunner:
             text=True,
             check=False,
         )
-        if result.returncode != 0:
+        if result.returncode == 0:
+            bootstrap_marker.write_text("ready\n", encoding="utf-8")
+        else:
             manifest_path.unlink(missing_ok=True)
+            bootstrap_marker.unlink(missing_ok=True)
         return result
 
-    def _workspace_dependencies_ready(self, workspace: Path, manifest_exists: bool) -> bool:
+    def _dependency_bootstrap_marker(self, workspace: Path) -> Path:
+        return workspace / ".terry-dependencies-ready"
+
+    def _workspace_dependencies_ready(self, workspace: Path, bootstrap_ready: bool) -> bool:
         required_packages = self._required_packages(workspace)
         if required_packages is None:
-            return manifest_exists
+            return bootstrap_ready
         if not required_packages:
             return True
         if not self._path_dependencies_ready(workspace, required_packages):
             return False
         if any(requirement.path is None for requirement in required_packages):
-            return manifest_exists
+            return bootstrap_ready
         return True
 
     def _required_packages(self, workspace: Path) -> list[PackageRequirement] | None:

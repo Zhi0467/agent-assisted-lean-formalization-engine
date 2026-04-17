@@ -1006,6 +1006,81 @@ class DemoWorkflowTest(unittest.TestCase):
                 ["lake-retry update", "lake-retry build FormalizationEngineWorkspace"],
             )
 
+    def test_lean_runner_repairs_manifest_backed_incomplete_vendored_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            (temp_root / "lean_workspace_template" / "lake-manifest.json").write_text("{}", encoding="utf-8")
+            vendored = temp_root / "lean_workspace_template" / ".lake" / "packages" / "mathlib"
+            vendored.mkdir(parents=True, exist_ok=True)
+            (vendored / "README.md").write_text("incomplete\n", encoding="utf-8")
+            fake_lake = temp_root / "lake-manifest-repair"
+            fake_lake.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env python3",
+                        "import pathlib",
+                        "import sys",
+                        "",
+                        "def main() -> int:",
+                        "    args = sys.argv[1:]",
+                        "    cwd = pathlib.Path.cwd()",
+                        "    if args[:1] == ['--version']:",
+                        "        print('lake-manifest-repair')",
+                        "        return 0",
+                        "    if args[:1] == ['update']:",
+                        "        pkg = cwd / '.lake' / 'packages' / 'mathlib'",
+                        "        pkg.mkdir(parents=True, exist_ok=True)",
+                        "        (pkg / 'Pkg.lean').write_text('-- repaired\\n', encoding='utf-8')",
+                        "        (pkg / 'lakefile.toml').write_text('name = \"mathlib\"\\n', encoding='utf-8')",
+                        "        (cwd / 'lake-manifest.json').write_text('{}', encoding='utf-8')",
+                        "        return 0",
+                        "    if args[:2] == ['build', 'FormalizationEngineWorkspace']:",
+                        "        if not (cwd / '.lake' / 'packages' / 'mathlib' / 'Pkg.lean').exists():",
+                        "            print('mathlib incomplete', file=sys.stderr)",
+                        "            return 1",
+                        "        return 0",
+                        "    return 1",
+                        "",
+                        "if __name__ == '__main__':",
+                        "    raise SystemExit(main())",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_lake.chmod(0o755)
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            store = RunStore(temp_root / "artifacts", "manifest-backed-vendored")
+            store.ensure_new()
+            store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem manifest_backed_vendored (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+
+            result = runner.compile_candidate(store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(result.passed)
+            self.assertEqual(
+                result.command,
+                ["lake-manifest-repair update", "lake-manifest-repair build FormalizationEngineWorkspace"],
+            )
+
     def test_lean_runner_rebuilds_when_git_backed_vendored_package_is_dirty(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
