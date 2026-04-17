@@ -1823,6 +1823,110 @@ class DemoWorkflowTest(unittest.TestCase):
                 ["lake-multiline-path-only build FormalizationEngineWorkspace"],
             )
 
+    def test_lean_runner_updates_for_transitive_external_dependencies_of_local_path_packages(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            (temp_root / "lean_workspace_template" / "lakefile.toml").write_text(
+                "\n".join(
+                    [
+                        "name = \"FormalizationEngineWorkspace\"",
+                        "version = \"0.1.0\"",
+                        "defaultTargets = [\"FormalizationEngineWorkspace\"]",
+                        "",
+                        "[[require]]",
+                        "name = \"aux\"",
+                        "path = \"Packages/aux\"",
+                        "",
+                        "[[lean_lib]]",
+                        "name = \"FormalizationEngineWorkspace\"",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            aux_dir = temp_root / "lean_workspace_template" / "Packages" / "aux"
+            aux_dir.mkdir(parents=True, exist_ok=True)
+            (aux_dir / "Aux.lean").write_text("-- local path dependency\n", encoding="utf-8")
+            (aux_dir / "lakefile.toml").write_text(
+                "\n".join(
+                    [
+                        "name = \"aux\"",
+                        "",
+                        "[[require]]",
+                        "name = \"mathlib\"",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_lake = temp_root / "lake-transitive"
+            fake_lake.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env python3",
+                        "import pathlib",
+                        "import sys",
+                        "",
+                        "def main() -> int:",
+                        "    args = sys.argv[1:]",
+                        "    if args[:1] == ['--version']:",
+                        "        print('lake-transitive')",
+                        "        return 0",
+                        "    if args[:1] == ['update']:",
+                        "        cwd = pathlib.Path.cwd()",
+                        "        (cwd / 'lake-manifest.json').write_text('{}', encoding='utf-8')",
+                        "        pkg = cwd / '.lake' / 'packages' / 'mathlib'",
+                        "        pkg.mkdir(parents=True, exist_ok=True)",
+                        "        (pkg / 'Pkg.lean').write_text('-- dep\\n', encoding='utf-8')",
+                        "        return 0",
+                        "    if args[:2] == ['build', 'FormalizationEngineWorkspace']:",
+                        "        cwd = pathlib.Path.cwd()",
+                        "        if not (cwd / '.lake' / 'packages' / 'mathlib').exists():",
+                        "            print('missing transitive dep', file=sys.stderr)",
+                        "            return 1",
+                        "        return 0",
+                        "    return 1",
+                        "",
+                        "if __name__ == '__main__':",
+                        "    raise SystemExit(main())",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_lake.chmod(0o755)
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            store = RunStore(temp_root / "artifacts", "transitive-path-dependency")
+            store.ensure_new()
+            store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem transitive_path_dependency (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+
+            result = runner.compile_candidate(store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(result.passed)
+            self.assertEqual(
+                result.command,
+                ["lake-transitive update", "lake-transitive build FormalizationEngineWorkspace"],
+            )
+
     def test_lean_runner_rebuilds_shared_workspace_when_lake_changes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)

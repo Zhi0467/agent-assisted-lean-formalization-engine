@@ -70,6 +70,13 @@ class PackageRequirement:
     path: str | None = None
 
 
+@dataclass(frozen=True)
+class DependencyState:
+    path_dependencies_ready: bool
+    has_external_dependency: bool
+    requirements_known: bool
+
+
 class LeanRunner:
     def __init__(self, template_dir: Path, repo_root: Path | None = None, lake_path: str | None = None):
         self.template_dir = template_dir
@@ -486,19 +493,62 @@ class LeanRunner:
         bootstrap_ready: bool,
         manifest_exists: bool,
     ) -> bool:
-        required_packages = self._required_packages(workspace)
-        if required_packages is None:
+        dependency_state = self._dependency_state(workspace)
+        if not dependency_state.requirements_known:
             return bootstrap_ready or manifest_exists
-        if not required_packages:
-            return True
-        if not self._path_dependencies_ready(workspace, required_packages):
+        if not dependency_state.path_dependencies_ready:
             return False
-        if any(requirement.path is None for requirement in required_packages):
+        if dependency_state.has_external_dependency:
             if bootstrap_ready:
                 return True
             vendored_packages_path = workspace / ".lake" / "packages"
             return manifest_exists and not vendored_packages_path.exists()
         return True
+
+    def _dependency_state(self, workspace: Path, seen: set[Path] | None = None) -> DependencyState:
+        resolved_workspace = workspace.resolve()
+        if seen is not None and resolved_workspace in seen:
+            return DependencyState(
+                path_dependencies_ready=True,
+                has_external_dependency=False,
+                requirements_known=True,
+            )
+
+        required_packages = self._required_packages(workspace)
+        if required_packages is None:
+            return DependencyState(
+                path_dependencies_ready=True,
+                has_external_dependency=False,
+                requirements_known=False,
+            )
+        if not required_packages:
+            return DependencyState(
+                path_dependencies_ready=True,
+                has_external_dependency=False,
+                requirements_known=True,
+            )
+
+        next_seen = (seen or set()) | {resolved_workspace}
+        path_dependencies_ready = True
+        has_external_dependency = False
+        requirements_known = True
+        for requirement in required_packages:
+            package_dir = self._resolve_package_dir(workspace, requirement)
+            if package_dir is None:
+                has_external_dependency = True
+                continue
+            if not self._package_has_sources(package_dir):
+                path_dependencies_ready = False
+                continue
+            nested_state = self._dependency_state(package_dir, next_seen)
+            path_dependencies_ready = path_dependencies_ready and nested_state.path_dependencies_ready
+            has_external_dependency = has_external_dependency or nested_state.has_external_dependency
+            requirements_known = requirements_known and nested_state.requirements_known
+        return DependencyState(
+            path_dependencies_ready=path_dependencies_ready,
+            has_external_dependency=has_external_dependency,
+            requirements_known=requirements_known,
+        )
 
     def _required_packages(self, workspace: Path) -> list[PackageRequirement] | None:
         toml_lakefile_path = workspace / "lakefile.toml"
@@ -602,16 +652,13 @@ class LeanRunner:
             package_requirements.append(PackageRequirement(name=pending_path_requirement))
         return package_requirements
 
-    def _path_dependencies_ready(self, workspace: Path, required_packages: list[PackageRequirement]) -> bool:
-        for requirement in required_packages:
-            if requirement.path is None:
-                continue
-            package_dir = Path(requirement.path)
-            if not package_dir.is_absolute():
-                package_dir = workspace / package_dir
-            if not self._package_has_sources(package_dir):
-                return False
-        return True
+    def _resolve_package_dir(self, workspace: Path, requirement: PackageRequirement) -> Path | None:
+        if requirement.path is None:
+            return None
+        package_dir = Path(requirement.path)
+        if not package_dir.is_absolute():
+            package_dir = workspace / package_dir
+        return package_dir
 
     def _vendored_package_has_sources(self, package_dir: Path) -> bool:
         return self._package_has_sources(package_dir)
