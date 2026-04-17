@@ -142,17 +142,19 @@ directory is ignored by Git and persists across runs in the same repo, so the fi
 `lake build` can warm `.lake` once and later Terry runs reuse it instead of cloning
 mathlib into a fresh run-local copy every time.
 
-If the shared workspace does not have a `lake-manifest.json` yet, Terry runs
-`lake update` there once before the first build so later runs can reuse the same
-dependency manifest instead of recloning through a missing-manifest cold start.
+If the shared workspace already has a `lake-manifest.json`, Terry treats that as the
+successful external-dependency bootstrap point and reuses the warmed cache on later
+runs. On a cold rebuild Terry only skips `lake update` when the template's dependencies
+are purely local path dependencies that Terry can verify directly on disk; otherwise it
+reruns `lake update` and records the new manifest before compiling.
 
 Before each compile Terry overwrites only `FormalizationEngineWorkspace/Generated.lean`
 and clears that module's old build outputs, which forces the current theorem to rebuild
 while keeping the warmed dependency state. If `lean_workspace_template/`, vendored
 `.lake/` contents inside that template, or the actual toolchain behind `lake` changes,
-Terry rebuilds `.terry/lean_workspace/` before the next compile. If a rebuilt template
-already carries its own `lake-manifest.json` or vendored `.lake/packages/` state, Terry
-reuses that pinned dependency state instead of immediately forcing `lake update`.
+Terry rebuilds `.terry/lean_workspace/` before the next compile. If `lake update` fails
+while creating that rebuilt workspace, Terry drops the partial manifest so the next run
+retries the bootstrap instead of trusting a poisoned cache state.
 
 ## Backend Persistence
 

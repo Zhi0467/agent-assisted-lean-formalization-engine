@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import threading
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 try:
@@ -61,6 +62,12 @@ _VENDORED_METADATA_NAMES = {
     "lakefile.toml",
     "lean-toolchain",
 }
+
+
+@dataclass(frozen=True)
+class PackageRequirement:
+    name: str
+    path: str | None = None
 
 
 class LeanRunner:
@@ -444,52 +451,30 @@ class LeanRunner:
         manifest_path = workspace / "lake-manifest.json"
         if self._workspace_dependencies_ready(workspace, manifest_path.exists()):
             return None
-        return subprocess.run(
+        result = subprocess.run(
             [lake_path, "update"],
             cwd=workspace,
             capture_output=True,
             text=True,
             check=False,
         )
+        if result.returncode != 0:
+            manifest_path.unlink(missing_ok=True)
+        return result
 
     def _workspace_dependencies_ready(self, workspace: Path, manifest_exists: bool) -> bool:
-        required_package_names = self._required_package_names(workspace)
-        if required_package_names is None:
+        required_packages = self._required_packages(workspace)
+        if required_packages is None:
             return manifest_exists
-        if not required_package_names:
+        if not required_packages:
             return True
-        return self._vendored_packages_ready(workspace, required_package_names=required_package_names)
-
-    def _vendored_packages_ready(
-        self,
-        workspace: Path,
-        *,
-        required_package_names: set[str] | None = None,
-    ) -> bool:
-        vendored_packages_path = workspace / ".lake" / "packages"
-        if not vendored_packages_path.exists():
+        if not self._path_dependencies_ready(workspace, required_packages):
             return False
-        if required_package_names is None:
-            required_package_names = self._required_package_names(workspace)
-            if required_package_names is None:
-                return False
-        pending = list(required_package_names)
-        seen: set[str] = set()
-        while pending:
-            package_name = pending.pop()
-            if package_name in seen:
-                continue
-            seen.add(package_name)
-            package_dir = vendored_packages_path / package_name
-            if not self._vendored_package_has_sources(package_dir):
-                return False
-            transitive_required = self._required_package_names(package_dir)
-            if transitive_required is None:
-                return False
-            pending.extend(name for name in transitive_required if name not in seen)
+        if any(requirement.path is None for requirement in required_packages):
+            return manifest_exists
         return True
 
-    def _required_package_names(self, workspace: Path) -> set[str] | None:
+    def _required_packages(self, workspace: Path) -> list[PackageRequirement] | None:
         toml_lakefile_path = workspace / "lakefile.toml"
         if toml_lakefile_path.exists():
             try:
@@ -504,15 +489,17 @@ class LeanRunner:
                 if isinstance(payload, dict):
                     require_entries = payload.get("require", [])
                     if isinstance(require_entries, list):
-                        package_names = {
-                            name
+                        return [
+                            PackageRequirement(
+                                name=name,
+                                path=entry.get("path") if isinstance(entry.get("path"), str) and entry.get("path") else None,
+                            )
                             for entry in require_entries
                             if isinstance(entry, dict)
                             for name in [entry.get("name")]
                             if isinstance(name, str) and name
-                        }
-                        return package_names
-            return self._parse_required_package_names_from_lakefile_toml(lakefile_text)
+                        ]
+            return self._parse_required_packages_from_lakefile_toml(lakefile_text)
 
         lean_lakefile_path = workspace / "lakefile.lean"
         if lean_lakefile_path.exists():
@@ -520,50 +507,89 @@ class LeanRunner:
                 lakefile_text = lean_lakefile_path.read_text(encoding="utf-8")
             except OSError:
                 return None
-            return self._parse_required_package_names_from_lakefile_lean(lakefile_text)
+            return self._parse_required_packages_from_lakefile_lean(lakefile_text)
         return None
 
-    def _parse_required_package_names_from_lakefile_toml(self, lakefile_text: str) -> set[str]:
-        package_names: set[str] = set()
+    def _required_package_names(self, workspace: Path) -> set[str] | None:
+        required_packages = self._required_packages(workspace)
+        if required_packages is None:
+            return None
+        return {requirement.name for requirement in required_packages if requirement.path is None}
+
+    def _parse_required_packages_from_lakefile_toml(self, lakefile_text: str) -> list[PackageRequirement]:
+        package_requirements: list[PackageRequirement] = []
         in_require_block = False
+        current_entry: dict[str, str] = {}
         for line in lakefile_text.splitlines():
             stripped = line.strip()
             block_match = re.match(r"^\[\[\s*([^\]]+?)\s*\]\]\s*(?:#.*)?$", stripped)
             if block_match:
+                if in_require_block and current_entry.get("name"):
+                    package_requirements.append(
+                        PackageRequirement(name=current_entry["name"], path=current_entry.get("path"))
+                    )
+                current_entry = {}
                 in_require_block = block_match.group(1) == "require"
                 continue
             if not in_require_block:
                 continue
-            match = re.match(r"""^name\s*=\s*(["'])([^"']+)\1\s*(?:#.*)?$""", stripped)
+            match = re.match(r"""^(name|path)\s*=\s*(["'])([^"']+)\2\s*(?:#.*)?$""", stripped)
             if match:
-                package_names.add(match.group(2))
-        return package_names
+                current_entry[match.group(1)] = match.group(3)
+        if in_require_block and current_entry.get("name"):
+            package_requirements.append(PackageRequirement(name=current_entry["name"], path=current_entry.get("path")))
+        return package_requirements
 
-    def _parse_required_package_names_from_lakefile_lean(self, lakefile_text: str) -> set[str]:
-        package_names: set[str] = set()
+    def _parse_required_packages_from_lakefile_lean(self, lakefile_text: str) -> list[PackageRequirement]:
+        package_requirements: list[PackageRequirement] = []
         for line in lakefile_text.splitlines():
+            path_match = re.match(r"""^\s*require\s+([A-Za-z_][A-Za-z0-9_']*)\s+from\s+(["'])([^"']+)\2""", line)
+            if path_match:
+                package_requirements.append(PackageRequirement(name=path_match.group(1), path=path_match.group(3)))
+                continue
             match = re.match(r"^\s*require\s+([A-Za-z_][A-Za-z0-9_']*)\b", line)
             if match:
-                package_names.add(match.group(1))
-        return package_names
+                package_requirements.append(PackageRequirement(name=match.group(1)))
+        return package_requirements
+
+    def _path_dependencies_ready(self, workspace: Path, required_packages: list[PackageRequirement]) -> bool:
+        for requirement in required_packages:
+            if requirement.path is None:
+                continue
+            package_dir = Path(requirement.path)
+            if not package_dir.is_absolute():
+                package_dir = workspace / package_dir
+            if not self._package_has_sources(package_dir):
+                return False
+        return True
 
     def _vendored_package_has_sources(self, package_dir: Path) -> bool:
+        return self._package_has_sources(package_dir)
+
+    def _package_has_sources(self, package_dir: Path) -> bool:
         if not package_dir.exists() or not package_dir.is_dir():
             return False
         for root, dirnames, filenames in os.walk(package_dir):
             root_path = Path(root)
             root_relative = root_path.relative_to(package_dir)
-            dirnames[:] = sorted(
-                dirname
-                for dirname in dirnames
-                if not self._ignore_template_path(Path(".lake") / "packages" / package_dir.name / root_relative / dirname)
-            )
+            dirnames[:] = sorted(dirname for dirname in dirnames if not self._ignore_package_path(root_relative / dirname))
             for filename in sorted(filenames):
                 relative_path = root_relative / filename
-                full_relative_path = Path(".lake") / "packages" / package_dir.name / relative_path
-                if not self._ignore_template_path(full_relative_path) and self._is_vendored_source_path(relative_path):
+                if not self._ignore_package_path(relative_path) and self._is_vendored_source_path(relative_path):
                     return True
         return False
+
+    def _ignore_package_path(self, relative_path: Path) -> bool:
+        parts = relative_path.parts
+        if ".git" in parts:
+            return True
+        if relative_path.name == ".DS_Store":
+            return True
+        if parts and parts[0] == "build":
+            return True
+        if len(parts) >= 2 and parts[0] == ".lake" and parts[1] == "build":
+            return True
+        return any(part == ".lake" and parts[index + 1] == "build" for index, part in enumerate(parts[:-1]))
 
     def _is_vendored_source_path(self, relative_path: Path) -> bool:
         if relative_path.name in _VENDORED_METADATA_NAMES:

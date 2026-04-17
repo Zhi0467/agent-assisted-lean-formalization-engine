@@ -50,9 +50,11 @@ Terry pauses at three human checkpoints:
 2. plan approval: mathematical meaning plus Lean theorem statement and proof plan
 3. final approval: the compiling Lean candidate
 
-The first real Lean compile in a repo can still be slow because it warms mathlib into
-`.terry/lean_workspace/`. Later Terry runs in that same repo reuse the cache instead of
-starting from a fresh copied workspace each time.
+The first real Lean compile in a repo can still be slow because it establishes the
+shared `.terry/lean_workspace/` cache and its `lake-manifest.json`. Later Terry runs in
+that same repo reuse the warmed cache instead of starting from a fresh copied workspace
+each time. Cold templates only skip `lake update` when their dependencies are purely
+local path dependencies that Terry can verify on disk.
 
 At each pause Terry writes:
 
