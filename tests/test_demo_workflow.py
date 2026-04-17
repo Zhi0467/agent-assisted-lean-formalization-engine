@@ -1045,6 +1045,60 @@ class DemoWorkflowTest(unittest.TestCase):
                 ["lake update", "lake build FormalizationEngineWorkspace"],
             )
 
+    def test_lean_runner_updates_when_toml_require_uses_comment_or_single_quotes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            (temp_root / "lean_workspace_template" / "lakefile.toml").write_text(
+                "\n".join(
+                    [
+                        "name = \"FormalizationEngineWorkspace\"",
+                        "version = \"0.1.0\"",
+                        "defaultTargets = [\"FormalizationEngineWorkspace\"]",
+                        "",
+                        "[[require]]",
+                        "name = 'mathlib' # pinned",
+                        "",
+                        "[[lean_lib]]",
+                        "name = \"FormalizationEngineWorkspace\"",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (temp_root / "lean_workspace_template" / ".lake" / "packages").mkdir(parents=True, exist_ok=True)
+            fake_lake = self._write_fake_lake(temp_root)
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            store = RunStore(temp_root / "artifacts", "quoted-toml-vendored")
+            store.ensure_new()
+            store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem quoted_toml_vendored (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+
+            result = runner.compile_candidate(store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(result.passed)
+            self.assertEqual(
+                result.command,
+                ["lake update", "lake build FormalizationEngineWorkspace"],
+            )
+
     def test_lean_runner_rebuilds_shared_workspace_when_lake_changes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)

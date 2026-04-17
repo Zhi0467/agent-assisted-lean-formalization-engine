@@ -517,9 +517,9 @@ class LeanRunner:
                 continue
             if not in_require_block:
                 continue
-            match = re.match(r'^name\s*=\s*"([^"]+)"\s*$', stripped)
+            match = re.match(r"""^name\s*=\s*(["'])([^"']+)\1\s*(?:#.*)?$""", stripped)
             if match:
-                package_names.add(match.group(1))
+                package_names.add(match.group(2))
         return package_names
 
     def _parse_required_package_names_from_lakefile_lean(self, lakefile_text: str) -> set[str]:
