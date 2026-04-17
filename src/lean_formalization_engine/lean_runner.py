@@ -5,7 +5,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from .models import CompileAttempt, LeanDraft
+from .models import CompileAttempt
 from .storage import RunStore
 
 
@@ -14,10 +14,17 @@ class LeanRunner:
         self.template_dir = template_dir
         self.lake_path = lake_path
 
-    def compile_draft(self, store: RunStore, draft: LeanDraft, attempt: int) -> CompileAttempt:
+    def compile_candidate(
+        self,
+        store: RunStore,
+        candidate_relative_path: str,
+        attempt: int,
+    ) -> CompileAttempt:
         workspace = self._prepare_workspace(store)
+        candidate_path = store.path(candidate_relative_path)
+        content = candidate_path.read_text(encoding="utf-8")
         generated_path = workspace / "FormalizationEngineWorkspace" / "Generated.lean"
-        generated_path.write_text(draft.content, encoding="utf-8")
+        generated_path.write_text(content, encoding="utf-8")
 
         lake_path = self._resolve_lake()
         display_command = [
@@ -35,7 +42,7 @@ class LeanRunner:
                 diagnostics=["Missing `lake` executable."],
                 fast_check_passed=False,
                 build_passed=False,
-                contains_sorry="sorry" in draft.content,
+                contains_sorry="sorry" in content,
                 missing_toolchain=True,
                 quality_gate_passed=False,
                 passed=False,
@@ -51,7 +58,7 @@ class LeanRunner:
             check=False,
         )
 
-        contains_sorry = "sorry" in draft.content
+        contains_sorry = "sorry" in content
         fast_check_passed = build_result.returncode == 0
         build_passed = build_result.returncode == 0
         quality_gate_passed = not contains_sorry

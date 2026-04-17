@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+import os
+import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,304 +14,160 @@ from lean_formalization_engine.lean_runner import LeanRunner
 from lean_formalization_engine.models import (
     AgentConfig,
     AgentTurn,
+    BackendStage,
     CompileAttempt,
-    ContextPack,
-    EnrichmentReport,
-    FormalizationPlan,
-    LeanDraft,
-    RepairContext,
+    RunManifest,
     RunStage,
+    SourceKind,
     SourceRef,
-    TheoremExtraction,
+    StageRequest,
 )
 from lean_formalization_engine.storage import RunStore
+from lean_formalization_engine.subprocess_agent import SubprocessFormalizationAgent
 from lean_formalization_engine.workflow import FormalizationWorkflow
 
 
-class RepairResumeAgent:
-    name = "repair_resume_agent"
-
-    def draft_theorem_extraction(
-        self,
-        source_ref: SourceRef,
-        source_text: str,
-        normalized_text: str,
-    ) -> tuple[TheoremExtraction, AgentTurn]:
-        extraction = TheoremExtraction(
-            title="Zero add",
-            informal_statement=normalized_text.strip(),
-            definitions=["Nat"],
-            lemmas=["Nat.zero_add"],
-            propositions=[],
-            dependencies=["Nat.zero_add"],
-            notes=[],
-        )
-        return extraction, AgentTurn(request_payload={}, prompt="extraction", raw_response="extraction")
-
-    def draft_theorem_enrichment(
-        self,
-        source_ref: SourceRef,
-        source_text: str,
-        extraction: TheoremExtraction,
-        extraction_markdown: str,
-    ) -> tuple[EnrichmentReport, AgentTurn]:
-        enrichment = EnrichmentReport(
-            self_contained=True,
-            satisfied_prerequisites=["Nat.zero_add exists."],
-            missing_prerequisites=[],
-            required_plan_additions=[],
-            recommended_scope="Keep the theorem over Nat.",
-            difficulty_assessment="easy",
-            open_questions=[],
-            next_steps=["Approve enrichment."],
-            human_handoff="Everything needed is already present.",
-        )
-        return enrichment, AgentTurn(request_payload={}, prompt="enrichment", raw_response="enrichment")
-
-    def draft_formalization_plan(
-        self,
-        source_ref: SourceRef,
-        source_text: str,
-        extraction: TheoremExtraction,
-        enrichment: EnrichmentReport,
-        context_pack: ContextPack,
-    ) -> tuple[FormalizationPlan, AgentTurn]:
-        plan = FormalizationPlan(
-            title="Zero add",
-            informal_statement=extraction.informal_statement,
-            assumptions=["n : Nat"],
-            conclusion="0 + n = n",
-            symbols=["0", "+", "Nat"],
-            ambiguities=[],
-            paraphrase="Zero on the left does not change a natural number.",
-            theorem_name="zero_add_resume",
-            imports=["FormalizationEngineWorkspace.Basic"],
-            prerequisites_to_formalize=[],
-            helper_definitions=[],
-            target_statement="theorem zero_add_resume (n : Nat) : 0 + n = n",
-            proof_sketch=["Use the existing `Nat.zero_add` lemma."],
-            human_summary="The theorem stays exactly over Nat and uses Nat.zero_add.",
-        )
-        return plan, AgentTurn(request_payload={}, prompt="plan", raw_response="plan")
-
-    def draft_lean_file(
-        self,
-        plan: FormalizationPlan,
-        repair_context: RepairContext,
-    ) -> tuple[LeanDraft, AgentTurn]:
-        if repair_context.current_attempt == 1:
-            content = (
-                "import FormalizationEngineWorkspace.Basic\n\n"
-                "theorem zero_add_resume (n : Nat) : 0 + n = n := by\n"
-                "  sorry\n"
-            )
-        else:
-            assert repair_context.previous_draft is not None
-            assert "sorry" in repair_context.previous_draft.content
-            assert repair_context.previous_result is not None
-            assert repair_context.previous_result.attempt == 1
-            assert repair_context.previous_result.contains_sorry
-            content = (
-                "import FormalizationEngineWorkspace.Basic\n\n"
-                "theorem zero_add_resume (n : Nat) : 0 + n = n := by\n"
-                "  simpa using Nat.zero_add n\n"
-            )
-        draft = LeanDraft(
-            theorem_name="zero_add_resume",
-            module_name="FormalizationEngineWorkspace.Generated",
-            imports=["FormalizationEngineWorkspace.Basic"],
-            content=content,
-            rationale=f"attempt {repair_context.current_attempt}",
-        )
-        return draft, AgentTurn(
-            request_payload={"attempt": repair_context.current_attempt},
-            prompt="draft",
-            raw_response="draft",
-        )
-
-
-class CrashBeforeRepairAgent(RepairResumeAgent):
-    name = "crash_before_repair_agent"
-
-    def draft_lean_file(
-        self,
-        plan: FormalizationPlan,
-        repair_context: RepairContext,
-    ) -> tuple[LeanDraft, AgentTurn]:
-        if repair_context.current_attempt == 2:
-            raise RuntimeError("simulated crash before second attempt")
-        return super().draft_lean_file(plan, repair_context)
-
-
-class SequencedLeanRunner:
-    def __init__(self, outcomes: list[str]):
-        self.outcomes = outcomes
+class ContentCheckingLeanRunner:
+    def __init__(self) -> None:
         self.attempts: list[int] = []
-        self.template_dir = Path("/tmp/legacy-template")
+        self.template_dir = Path("/tmp/unused-template")
         self.lake_path: str | None = None
 
-    def compile_draft(self, store: RunStore, draft: LeanDraft, attempt: int) -> CompileAttempt:
+    def compile_candidate(self, store: RunStore, candidate_relative_path: str, attempt: int) -> CompileAttempt:
         self.attempts.append(attempt)
-        outcome = self.outcomes[attempt - 1]
-        contains_sorry = "sorry" in draft.content
-        diagnostics = [outcome.replace("_", " ")]
-
-        if outcome == "missing_toolchain":
-            return CompileAttempt(
-                attempt=attempt,
-                command=["lake build FormalizationEngineWorkspace"],
-                stdout="",
-                stderr="lake missing",
-                returncode=127,
-                diagnostics=diagnostics,
-                fast_check_passed=False,
-                build_passed=False,
-                contains_sorry=contains_sorry,
-                missing_toolchain=True,
-                quality_gate_passed=not contains_sorry,
-                passed=False,
-                status="toolchain_missing",
-            )
-
-        if outcome == "passed":
-            return CompileAttempt(
-                attempt=attempt,
-                command=["lake build FormalizationEngineWorkspace"],
-                stdout="ok",
-                stderr="",
-                returncode=0,
-                diagnostics=[],
-                fast_check_passed=True,
-                build_passed=True,
-                contains_sorry=contains_sorry,
-                missing_toolchain=False,
-                quality_gate_passed=not contains_sorry,
-                passed=not contains_sorry,
-                status="passed" if not contains_sorry else "compile_failed",
-            )
-
+        content = store.read_text(candidate_relative_path)
+        contains_sorry = "sorry" in content
+        passed = not contains_sorry
         return CompileAttempt(
             attempt=attempt,
             command=["lake build FormalizationEngineWorkspace"],
-            stdout="",
-            stderr="compile failed",
-            returncode=1,
-            diagnostics=diagnostics,
-            fast_check_passed=False,
-            build_passed=False,
+            stdout="" if contains_sorry else "ok",
+            stderr="found sorry" if contains_sorry else "",
+            returncode=1 if contains_sorry else 0,
+            diagnostics=["found sorry"] if contains_sorry else [],
+            fast_check_passed=passed,
+            build_passed=passed,
             contains_sorry=contains_sorry,
             missing_toolchain=False,
             quality_gate_passed=not contains_sorry,
-            passed=False,
-            status="compile_failed",
+            passed=passed,
+            status="compile_failed" if contains_sorry else "passed",
         )
 
 
-class EnrichmentFeedbackAgent(RepairResumeAgent):
-    name = "enrichment_feedback_agent"
+class RecordingRepairAgent:
+    name = "recording_repair_agent"
 
     def __init__(self) -> None:
-        self.context_notes: list[str] | None = None
+        self.requests: list[StageRequest] = []
 
-    def draft_formalization_plan(
-        self,
-        source_ref: SourceRef,
-        source_text: str,
-        extraction: TheoremExtraction,
-        enrichment: EnrichmentReport,
-        context_pack: ContextPack,
-    ) -> tuple[FormalizationPlan, AgentTurn]:
-        self.context_notes = list(context_pack.notes)
-        return super().draft_formalization_plan(
-            source_ref,
-            source_text,
-            extraction,
-            enrichment,
-            context_pack,
-        )
+    def run_stage(self, request: StageRequest) -> AgentTurn:
+        self.requests.append(request)
+        output_dir = Path(request.repo_root) / request.output_dir
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-
-class PlanFeedbackAgent(RepairResumeAgent):
-    name = "plan_feedback_agent"
-
-    def __init__(self) -> None:
-        self.seen_human_feedback: str | None = None
-        self.seen_feedback_by_attempt: list[str | None] = []
-
-    def draft_lean_file(
-        self,
-        plan: FormalizationPlan,
-        repair_context: RepairContext,
-    ) -> tuple[LeanDraft, AgentTurn]:
-        self.seen_feedback_by_attempt.append(repair_context.human_feedback)
-        if repair_context.current_attempt == 1:
-            self.seen_human_feedback = repair_context.human_feedback
-            draft = LeanDraft(
-                theorem_name="zero_add_resume",
-                module_name="FormalizationEngineWorkspace.Generated",
-                imports=["FormalizationEngineWorkspace.Basic"],
-                content=(
-                    "import FormalizationEngineWorkspace.Basic\n\n"
-                    "theorem zero_add_resume (n : Nat) : 0 + n = n := by\n"
-                    "  simpa using Nat.zero_add n\n"
-                ),
-                rationale="guided first attempt",
+        if request.stage == BackendStage.ENRICHMENT:
+            content = "# Enrichment Handoff\n\nSelf-contained over Nat.\n"
+            (output_dir / "handoff.md").write_text(content, encoding="utf-8")
+        elif request.stage == BackendStage.PLAN:
+            content = "\n".join(
+                [
+                    "# Plan Handoff",
+                    "",
+                    "Proposed theorem name: `recorded_zero_add`",
+                    "Target statement: `theorem recorded_zero_add (n : Nat) : 0 + n = n`",
+                    "Proof route: use `Nat.zero_add`.",
+                    "",
+                ]
             )
-            return draft, AgentTurn(request_payload={}, prompt="draft", raw_response="draft")
-        return super().draft_lean_file(plan, repair_context)
+            (output_dir / "handoff.md").write_text(content, encoding="utf-8")
+        elif request.stage == BackendStage.PROOF:
+            proof_retry = request.review_notes_path is not None and request.review_notes_path.endswith(
+                "03_proof/review.md"
+            )
+            if not proof_retry:
+                content = "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem recorded_zero_add (n : Nat) : 0 + n = n := by",
+                        "  sorry",
+                        "",
+                    ]
+                )
+            else:
+                content = "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem recorded_zero_add (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                )
+            (output_dir / "candidate.lean").write_text(content, encoding="utf-8")
+        else:
+            raise ValueError(f"Unsupported stage {request.stage.value}")
+
+        return AgentTurn(
+            request_payload={"stage": request.stage.value},
+            prompt=f"{request.stage.value} prompt",
+            raw_response=f"{request.stage.value} response",
+        )
 
 
-class RepairFeedbackAgent(RepairResumeAgent):
-    name = "repair_feedback_agent"
+class AlwaysSorryAgent:
+    name = "always_sorry_agent"
 
-    def __init__(self) -> None:
-        self.seen_feedback_by_attempt: list[str | None] = []
+    def run_stage(self, request: StageRequest) -> AgentTurn:
+        output_dir = Path(request.repo_root) / request.output_dir
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-    def draft_lean_file(
-        self,
-        plan: FormalizationPlan,
-        repair_context: RepairContext,
-    ) -> tuple[LeanDraft, AgentTurn]:
-        self.seen_feedback_by_attempt.append(repair_context.human_feedback)
-        return super().draft_lean_file(plan, repair_context)
+        if request.stage == BackendStage.ENRICHMENT:
+            (output_dir / "handoff.md").write_text("# Enrichment Handoff\n\nStill scoped over Nat.\n", encoding="utf-8")
+        elif request.stage == BackendStage.PLAN:
+            (output_dir / "handoff.md").write_text(
+                "\n".join(
+                    [
+                        "# Plan Handoff",
+                        "",
+                        "Target statement: `theorem stuck_zero_add (n : Nat) : 0 + n = n`",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+        elif request.stage == BackendStage.PROOF:
+            (output_dir / "candidate.lean").write_text(
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem stuck_zero_add (n : Nat) : 0 + n = n := by",
+                        "  sorry",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+        else:
+            raise ValueError(f"Unsupported stage {request.stage.value}")
+
+        return AgentTurn(
+            request_payload={"stage": request.stage.value},
+            prompt=f"{request.stage.value} prompt",
+            raw_response=f"{request.stage.value} response",
+        )
+
+
+class BrokenAgent:
+    name = "broken_agent"
+
+    def run_stage(self, request: StageRequest) -> AgentTurn:
+        return AgentTurn(request_payload={"stage": request.stage.value}, prompt="broken", raw_response="broken")
 
 
 class DemoWorkflowTest(unittest.TestCase):
-    def _write_fake_lake(self, directory: Path) -> Path:
-        fake_lake = directory / "lake"
-        fake_lake.write_text(
-            "\n".join(
-                [
-                    "#!/usr/bin/env python3",
-                    "import pathlib",
-                    "import sys",
-                    "",
-                    "def main() -> int:",
-                    "    args = sys.argv[1:]",
-                    "    if args[:2] == ['build', 'FormalizationEngineWorkspace']:",
-                    "        generated = pathlib.Path.cwd() / 'FormalizationEngineWorkspace' / 'Generated.lean'",
-                    "        content = generated.read_text(encoding='utf-8')",
-                    "        if 'sorry' in content:",
-                    "            print('found sorry', file=sys.stderr)",
-                    "            return 1",
-                    "        return 0",
-                    "    if args[:3] == ['new', 'lean_workspace_template', 'math']:",
-                    "        target = pathlib.Path.cwd() / 'lean_workspace_template'",
-                    "        target.mkdir(parents=True, exist_ok=True)",
-                    "        return 0",
-                    "    print(f'unexpected args: {args}', file=sys.stderr)",
-                    "    return 1",
-                    "",
-                    "if __name__ == '__main__':",
-                    "    raise SystemExit(main())",
-                ]
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        fake_lake.chmod(0o755)
-        return fake_lake
-
     def _write_review(self, run_root: Path, stage_dir: str, decision: str, notes: str) -> None:
         (run_root / stage_dir / "review.md").write_text(
             "\n".join(
@@ -323,1422 +184,979 @@ class DemoWorkflowTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def test_demo_workflow_completes_with_fake_lake(self) -> None:
-        project_root = Path(__file__).resolve().parents[1]
-        template_dir = project_root / "lean_workspace_template"
+    def _write_fake_lake(self, directory: Path) -> Path:
+        fake_lake = directory / "lake"
+        workspace_template = (
+            Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+        )
+        fake_lake.write_text(
+            "\n".join(
+                [
+                    "#!/usr/bin/env python3",
+                    "import pathlib",
+                    "import shutil",
+                    "import sys",
+                    "",
+                    f"WORKSPACE_TEMPLATE = pathlib.Path({str(workspace_template)!r})",
+                    "",
+                    "def main() -> int:",
+                    "    args = sys.argv[1:]",
+                    "    if args[:2] == ['build', 'FormalizationEngineWorkspace']:",
+                    "        generated = pathlib.Path.cwd() / 'FormalizationEngineWorkspace' / 'Generated.lean'",
+                    "        content = generated.read_text(encoding='utf-8')",
+                    "        if 'sorry' in content:",
+                    "            print('found sorry', file=sys.stderr)",
+                    "            return 1",
+                    "        return 0",
+                    "    if args[:3] == ['new', 'lean_workspace_template', 'math']:",
+                    "        target = pathlib.Path.cwd() / 'lean_workspace_template'",
+                    "        if target.exists():",
+                    "            shutil.rmtree(target)",
+                    "        shutil.copytree(WORKSPACE_TEMPLATE, target)",
+                    "        return 0",
+                    "    print(f'unexpected args: {args}', file=sys.stderr)",
+                    "    return 1",
+                    "",
+                    "if __name__ == '__main__':",
+                    "    raise SystemExit(main())",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        fake_lake.chmod(0o755)
+        return fake_lake
+
+    def test_demo_workflow_completes_without_old_payload_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
-            fake_lake = self._write_fake_lake(temp_root)
             source_path = temp_root / "input.md"
-            source_path.write_text(
-                "For every natural number n, adding zero on the left gives back n.\n"
-                "Target statement: 0 + n = n.\n",
-                encoding="utf-8",
-            )
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
 
             workflow = FormalizationWorkflow(
                 repo_root=temp_root,
                 agent=DemoFormalizationAgent(),
                 agent_config=AgentConfig(backend="demo"),
-                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
+                lean_runner=ContentCheckingLeanRunner(),
             )
             manifest = workflow.prove(source_path=source_path, run_id="demo-test", auto_approve=True)
 
             self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
             self.assertEqual(manifest.final_output_path, "04_final/final.lean")
-            final_output = temp_root / "artifacts" / "runs" / "demo-test" / "04_final" / "final.lean"
-            self.assertTrue(final_output.exists())
-            self.assertIn("zero_add_demo", final_output.read_text(encoding="utf-8"))
+            run_root = temp_root / "artifacts" / "runs" / "demo-test"
+            self.assertTrue((run_root / "01_enrichment" / "handoff.md").exists())
+            self.assertTrue((run_root / "02_plan" / "handoff.md").exists())
+            self.assertFalse((run_root / "01_enrichment" / "enrichment_report.json").exists())
+            self.assertFalse((run_root / "02_plan" / "formalization_plan.json").exists())
 
     def test_manual_review_path_uses_review_files(self) -> None:
-        project_root = Path(__file__).resolve().parents[1]
-        template_dir = project_root / "lean_workspace_template"
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
-            fake_lake = self._write_fake_lake(temp_root)
             source_path = temp_root / "input.md"
-            source_path.write_text(
-                "For every natural number n, adding zero on the left gives back n.\n"
-                "Target statement: 0 + n = n.\n",
-                encoding="utf-8",
-            )
+            source_path.write_text("For every natural number n, n + 0 = n.\n", encoding="utf-8")
+
             workflow = FormalizationWorkflow(
                 repo_root=temp_root,
                 agent=DemoFormalizationAgent(),
                 agent_config=AgentConfig(backend="demo"),
-                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
+                lean_runner=ContentCheckingLeanRunner(),
             )
-
-            manifest = workflow.prove(source_path=source_path, run_id="manual-review", auto_approve=False)
-            run_root = temp_root / "artifacts" / "runs" / "manual-review"
+            manifest = workflow.prove(source_path=source_path, run_id="manual-demo", auto_approve=False)
             self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+
+            run_root = temp_root / "artifacts" / "runs" / "manual-demo"
             self.assertTrue((run_root / "01_enrichment" / "checkpoint.md").exists())
             self.assertTrue((run_root / "01_enrichment" / "review.md").exists())
 
-            self._write_review(run_root, "01_enrichment", "approve", "Scope and prerequisites look right.")
-            manifest = workflow.resume("manual-review", auto_approve=False)
+            self._write_review(
+                run_root,
+                "01_enrichment",
+                "approve",
+                "The theorem is ready for planning.",
+            )
+            manifest = workflow.resume("manual-demo", auto_approve=False)
             self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
 
-            self._write_review(run_root, "02_plan", "approve", "The theorem statement and proof route are right.")
-            manifest = workflow.resume("manual-review", auto_approve=False)
+            self._write_review(
+                run_root,
+                "02_plan",
+                "approve",
+                "The theorem statement and proof route are correct.",
+            )
+            manifest = workflow.resume("manual-demo", auto_approve=False)
             self.assertEqual(manifest.current_stage, RunStage.AWAITING_FINAL_APPROVAL)
 
-            self._write_review(run_root, "04_final", "approve", "The compiling Lean file matches the plan.")
-            manifest = workflow.resume("manual-review", auto_approve=False)
+            self._write_review(
+                run_root,
+                "04_final",
+                "approve",
+                "The compiling Lean file is acceptable.",
+            )
+            manifest = workflow.resume("manual-demo", auto_approve=False)
             self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
 
-    def test_checkpoint_resume_command_preserves_repo_root_and_lake_path(self) -> None:
-        project_root = Path(__file__).resolve().parents[1]
-        template_dir = project_root / "lean_workspace_template"
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            fake_lake = self._write_fake_lake(temp_root)
-            source_path = temp_root / "input.md"
-            source_path.write_text(
-                "For every natural number n, adding zero on the left gives back n.\n",
-                encoding="utf-8",
-            )
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
-            )
-
-            manifest = workflow.prove(source_path=source_path, run_id="resume-context", auto_approve=False)
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
-
-            checkpoint_text = (
-                temp_root
-                / "artifacts"
-                / "runs"
-                / "resume-context"
-                / "01_enrichment"
-                / "checkpoint.md"
-            ).read_text(encoding="utf-8")
-            self.assertIn(
-                (
-                    "terry --repo-root "
-                    f"{temp_root.resolve()} --lake-path {fake_lake.resolve()} resume resume-context"
-                ),
-                checkpoint_text,
-            )
-
-    def test_extraction_turn_artifacts_are_preserved(self) -> None:
-        project_root = Path(__file__).resolve().parents[1]
-        template_dir = project_root / "lean_workspace_template"
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            fake_lake = self._write_fake_lake(temp_root)
-            source_path = temp_root / "input.md"
-            source_path.write_text(
-                "For every natural number n, adding zero on the left gives back n.\n",
-                encoding="utf-8",
-            )
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
-            )
-
-            manifest = workflow.prove(source_path=source_path, run_id="turn-artifacts", auto_approve=False)
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
-
-            run_root = temp_root / "artifacts" / "runs" / "turn-artifacts" / "01_enrichment"
-            self.assertEqual(
-                (run_root / "extraction_turn" / "prompt.md").read_text(encoding="utf-8"),
-                "extraction",
-            )
-            self.assertEqual(
-                (run_root / "enrichment_turn" / "prompt.md").read_text(encoding="utf-8"),
-                "enrichment",
-            )
-
-    def test_review_template_keeps_notes_empty_without_feedback(self) -> None:
-        project_root = Path(__file__).resolve().parents[1]
-        template_dir = project_root / "lean_workspace_template"
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=LeanRunner(template_dir=template_dir),
-            )
-
-            review_text = workflow._review_template("Proof Loop Blocked", "retry")
-            parsed = workflow._parse_review_file(
-                review_text.replace("decision: pending", "decision: retry")
-            )
-
-            assert parsed is not None
-            self.assertEqual(parsed.notes, "")
-
-    def test_enrichment_review_notes_flow_into_plan_context(self) -> None:
-        project_root = Path(__file__).resolve().parents[1]
-        template_dir = project_root / "lean_workspace_template"
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            fake_lake = self._write_fake_lake(temp_root)
-            source_path = temp_root / "input.md"
-            source_path.write_text(
-                "For every natural number n, adding zero on the left gives back n.\n",
-                encoding="utf-8",
-            )
-            agent = EnrichmentFeedbackAgent()
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=agent,
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
-            )
-
-            manifest = workflow.prove(source_path=source_path, run_id="enrichment-feedback", auto_approve=False)
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
-
-            run_root = temp_root / "artifacts" / "runs" / "enrichment-feedback"
-            self._write_review(run_root, "01_enrichment", "approve", "Need to keep the scope fully over Nat.")
-            manifest = workflow.resume("enrichment-feedback", auto_approve=False)
-
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
-            assert agent.context_notes is not None
-            self.assertIn(
-                "Reviewer guidance from the enrichment checkpoint: Need to keep the scope fully over Nat.",
-                agent.context_notes,
-            )
-
-    def test_plan_review_notes_flow_into_prove_loop(self) -> None:
-        project_root = Path(__file__).resolve().parents[1]
-        template_dir = project_root / "lean_workspace_template"
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            fake_lake = self._write_fake_lake(temp_root)
-            source_path = temp_root / "input.md"
-            source_path.write_text(
-                "For every natural number n, adding zero on the left gives back n.\n",
-                encoding="utf-8",
-            )
-            agent = PlanFeedbackAgent()
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=agent,
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
-            )
-
-            manifest = workflow.prove(source_path=source_path, run_id="plan-feedback", auto_approve=False)
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
-            run_root = temp_root / "artifacts" / "runs" / "plan-feedback"
-
-            self._write_review(run_root, "01_enrichment", "approve", "")
-            manifest = workflow.resume("plan-feedback", auto_approve=False)
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
-
-            self._write_review(run_root, "02_plan", "approve", "Use the direct Nat.zero_add route.")
-            manifest = workflow.resume("plan-feedback", auto_approve=False)
-
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_FINAL_APPROVAL)
-            self.assertEqual(agent.seen_human_feedback, "Use the direct Nat.zero_add route.")
-            self.assertEqual(agent.seen_feedback_by_attempt, ["Use the direct Nat.zero_add route."])
-
-    def test_plan_review_guidance_reaches_every_proof_attempt(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            agent = RepairFeedbackAgent()
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=agent,
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=SequencedLeanRunner(["compile_failed", "passed"]),
-                max_attempts=2,
-            )
-            source_path = temp_root / "input.md"
-            source_path.write_text(
-                "For every natural number n, adding zero on the left gives back n.\n",
-                encoding="utf-8",
-            )
-
-            manifest = workflow.prove(source_path=source_path, run_id="plan-feedback-retry", auto_approve=False)
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
-            run_root = temp_root / "artifacts" / "runs" / "plan-feedback-retry"
-
-            self._write_review(run_root, "01_enrichment", "approve", "")
-            manifest = workflow.resume("plan-feedback-retry", auto_approve=False)
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
-
-            self._write_review(run_root, "02_plan", "approve", "Use the direct Nat.zero_add route.")
-            manifest = workflow.resume("plan-feedback-retry", auto_approve=False)
-
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_FINAL_APPROVAL)
-            self.assertEqual(
-                agent.seen_feedback_by_attempt,
-                ["Use the direct Nat.zero_add route.", "Use the direct Nat.zero_add route."],
-            )
-
-    def test_proof_blocked_requires_retry_decision(self) -> None:
-        project_root = Path(__file__).resolve().parents[1]
-        template_dir = project_root / "lean_workspace_template"
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            fake_lake = self._write_fake_lake(temp_root)
-            source_path = temp_root / "input.md"
-            source_path.write_text(
-                "For every natural number n, adding zero on the left gives back n.\n",
-                encoding="utf-8",
-            )
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
-                max_attempts=1,
-            )
-
-            manifest = workflow.prove(source_path=source_path, run_id="proof-blocked", auto_approve=True)
-            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
-            run_root = temp_root / "artifacts" / "runs" / "proof-blocked"
-            self.assertTrue((run_root / "03_proof" / "blocker.md").exists())
-
-            self._write_review(run_root, "03_proof", "retry", "Take one more attempt with the same plan.")
-            manifest = workflow.resume("proof-blocked", auto_approve=True)
-            self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
-            self.assertEqual(manifest.attempt_count, 2)
-
-    def test_rejected_review_file_decision_is_persisted(self) -> None:
-        project_root = Path(__file__).resolve().parents[1]
-        template_dir = project_root / "lean_workspace_template"
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            fake_lake = self._write_fake_lake(temp_root)
-            source_path = temp_root / "input.md"
-            source_path.write_text(
-                "For every natural number n, adding zero on the left gives back n.\n",
-                encoding="utf-8",
-            )
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
-            )
-
-            manifest = workflow.prove(source_path=source_path, run_id="reject-review", auto_approve=False)
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
-
-            run_root = temp_root / "artifacts" / "runs" / "reject-review"
-            self._write_review(run_root, "01_enrichment", "reject", "Scope is still wrong.")
-            manifest = workflow.resume("reject-review", auto_approve=False)
-
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
-            self.assertEqual(
-                RunStore(temp_root / "artifacts", "reject-review").read_json("01_enrichment/decision.json")[
-                    "decision"
-                ],
-                "reject",
-            )
-
-            self._write_review(run_root, "01_enrichment", "approve", "Scope looks right now.")
-            manifest = workflow.resume("reject-review", auto_approve=False)
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
-
-    def test_auto_approve_still_respects_rejected_review_file(self) -> None:
-        project_root = Path(__file__).resolve().parents[1]
-        template_dir = project_root / "lean_workspace_template"
+    def test_resume_rejects_backend_switch_for_paused_run(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
             source_path = temp_root / "input.md"
-            source_path.write_text(
-                "For every natural number n, adding zero on the left gives back n.\n",
-                encoding="utf-8",
-            )
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=LeanRunner(template_dir=template_dir, lake_path="/definitely/missing/lake"),
-            )
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
 
-            manifest = workflow.prove(source_path=source_path, run_id="reject-auto-approve", auto_approve=False)
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
-
-            run_root = temp_root / "artifacts" / "runs" / "reject-auto-approve"
-            self._write_review(run_root, "01_enrichment", "reject", "Need changes first.")
-            manifest = workflow.resume("reject-auto-approve", auto_approve=True)
-
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
-            self.assertEqual(
-                RunStore(temp_root / "artifacts", "reject-auto-approve").read_json("01_enrichment/decision.json")[
-                    "decision"
-                ],
-                "reject",
-            )
-
-    def test_invalid_review_file_decision_raises(self) -> None:
-        project_root = Path(__file__).resolve().parents[1]
-        template_dir = project_root / "lean_workspace_template"
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            source_path = temp_root / "input.md"
-            source_path.write_text(
-                "For every natural number n, adding zero on the left gives back n.\n",
-                encoding="utf-8",
-            )
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=LeanRunner(template_dir=template_dir, lake_path="/definitely/missing/lake"),
-            )
-
-            manifest = workflow.prove(source_path=source_path, run_id="invalid-review", auto_approve=False)
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
-
-            run_root = temp_root / "artifacts" / "runs" / "invalid-review"
-            self._write_review(run_root, "01_enrichment", "approved", "Typo.")
-
-            with self.assertRaisesRegex(ValueError, "Unsupported review decision"):
-                workflow.resume("invalid-review", auto_approve=False)
-
-    def test_successful_retry_clears_latest_error_before_final_review(self) -> None:
-        project_root = Path(__file__).resolve().parents[1]
-        template_dir = project_root / "lean_workspace_template"
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            fake_lake = self._write_fake_lake(temp_root)
-            source_path = temp_root / "input.md"
-            source_path.write_text(
-                "For every natural number n, adding zero on the left gives back n.\n",
-                encoding="utf-8",
-            )
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
-            )
-
-            manifest = workflow.prove(source_path=source_path, run_id="clear-latest-error", auto_approve=False)
-            run_root = temp_root / "artifacts" / "runs" / "clear-latest-error"
-            self._write_review(run_root, "01_enrichment", "approve", "Looks good.")
-            manifest = workflow.resume("clear-latest-error", auto_approve=False)
-            self._write_review(run_root, "02_plan", "approve", "Proceed to proof.")
-            manifest = workflow.resume("clear-latest-error", auto_approve=False)
-
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_FINAL_APPROVAL)
-            self.assertIsNone(manifest.latest_error)
-
-    def test_resume_proving_run_with_final_candidate_promotes_final_review(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            run_root = temp_root / "artifacts" / "runs" / "queued-final"
-            run_root.mkdir(parents=True)
-            store = RunStore(temp_root / "artifacts", "queued-final")
-            store.write_json(
-                "manifest.json",
-                {
-                    "run_id": "queued-final",
-                    "source": {"path": "input.md", "kind": "markdown"},
-                    "agent_name": "repair_resume_agent",
-                    "agent_config": {"backend": "demo", "command": None, "codex_model": None},
-                    "template_dir": str(temp_root / "lean_workspace_template"),
-                    "created_at": "2026-04-16T00:00:00Z",
-                    "updated_at": "2026-04-16T00:00:00Z",
-                    "current_stage": "proving",
-                    "attempt_count": 1,
-                },
-            )
-            store.write_text(
-                "04_final/final_candidate.lean",
-                "import FormalizationEngineWorkspace.Basic\n",
-            )
-            store.write_text(
-                "04_final/final_report.md",
-                "Candidate compiled already.\n",
-            )
-
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=SequencedLeanRunner(["compile_failed"]),
-            )
-            manifest = workflow.resume("queued-final", auto_approve=False)
-
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_FINAL_APPROVAL)
-            self.assertEqual(manifest.attempt_count, 1)
-            self.assertTrue((run_root / "04_final" / "review.md").exists())
-
-    def test_resume_override_updates_manifest_lake_path(self) -> None:
-        project_root = Path(__file__).resolve().parents[1]
-        template_dir = project_root / "lean_workspace_template"
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            fake_lake = self._write_fake_lake(temp_root)
-            source_path = temp_root / "input.md"
-            source_path.write_text(
-                "For every natural number n, adding zero on the left gives back n.\n",
-                encoding="utf-8",
-            )
-            blocked_workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=LeanRunner(template_dir=template_dir, lake_path="/definitely/missing/lake"),
-                max_attempts=1,
-            )
-            manifest = blocked_workflow.prove(source_path=source_path, run_id="lake-override", auto_approve=True)
-            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
-
-            run_root = temp_root / "artifacts" / "runs" / "lake-override"
-            self._write_review(run_root, "03_proof", "retry", "")
-
-            resumed_workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
-                max_attempts=1,
-            )
-            resumed_workflow.resume("lake-override", auto_approve=False)
-
-            persisted_manifest = RunStore(temp_root / "artifacts", "lake-override").read_json("manifest.json")
-            self.assertEqual(persisted_manifest["lake_path"], str(fake_lake.resolve()))
-
-    def test_resume_without_override_keeps_manifest_lake_path(self) -> None:
-        project_root = Path(__file__).resolve().parents[1]
-        template_dir = project_root / "lean_workspace_template"
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            fake_lake = self._write_fake_lake(temp_root)
-            source_path = temp_root / "input.md"
-            source_path.write_text(
-                "For every natural number n, adding zero on the left gives back n.\n",
-                encoding="utf-8",
-            )
-            initial_workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
-            )
-            manifest = initial_workflow.prove(source_path=source_path, run_id="lake-sticky", auto_approve=False)
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
-
-            resumed_workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=LeanRunner(template_dir=template_dir),
-            )
-            manifest = resumed_workflow.resume("lake-sticky", auto_approve=False)
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
-
-            persisted_manifest = RunStore(temp_root / "artifacts", "lake-sticky").read_json("manifest.json")
-            self.assertEqual(persisted_manifest["lake_path"], str(fake_lake.resolve()))
-
-    def test_retry_decision_allows_exactly_one_more_attempt(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            source_path = temp_root / "input.md"
-            source_path.write_text(
-                "For every natural number n, adding zero on the left gives back n.\n",
-                encoding="utf-8",
-            )
-            runner = SequencedLeanRunner(["missing_toolchain", "compile_failed", "compile_failed"])
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=runner,
-                max_attempts=3,
-            )
-
-            manifest = workflow.prove(source_path=source_path, run_id="one-more-attempt", auto_approve=True)
-            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
-            self.assertEqual(manifest.attempt_count, 1)
-
-            run_root = temp_root / "artifacts" / "runs" / "one-more-attempt"
-            self._write_review(run_root, "03_proof", "retry", "Toolchain is back; take one more shot.")
-            manifest = workflow.resume("one-more-attempt", auto_approve=False)
-
-            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
-            self.assertEqual(manifest.attempt_count, 2)
-            self.assertEqual(runner.attempts, [1, 2])
-
-            manifest = workflow.resume("one-more-attempt", auto_approve=False)
-            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
-            self.assertEqual(manifest.attempt_count, 2)
-            self.assertEqual(runner.attempts, [1, 2])
-
-    def test_resume_repair_loop_reuses_last_compile_result(self) -> None:
-        project_root = Path(__file__).resolve().parents[1]
-        template_dir = project_root / "lean_workspace_template"
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            fake_lake = self._write_fake_lake(temp_root)
-            source_path = temp_root / "input.md"
-            source_path.write_text(
-                "For every natural number n, adding zero on the left gives back n.\n",
-                encoding="utf-8",
-            )
-
-            crashing_workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=CrashBeforeRepairAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
-            )
-            with self.assertRaisesRegex(RuntimeError, "simulated crash"):
-                crashing_workflow.prove(
-                    source_path=source_path,
-                    run_id="repair-resume",
-                    auto_approve=True,
-                )
-
-            manifest = crashing_workflow.status("repair-resume")
-            self.assertEqual(manifest.current_stage, RunStage.PROVING)
-            self.assertEqual(manifest.attempt_count, 1)
-
-            resumed_workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
-            )
-            manifest = resumed_workflow.resume("repair-resume", auto_approve=True)
-
-            self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
-            self.assertEqual(manifest.attempt_count, 2)
-
-    def test_resume_legacy_plan_review_imports_old_spec_and_plan(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            run_root = temp_root / "artifacts" / "runs" / "legacy-plan"
-            run_root.mkdir(parents=True)
-            (run_root / "00_input").mkdir(parents=True, exist_ok=True)
-            (run_root / "00_input" / "source.txt").write_text(
-                "For every natural number n, adding zero on the left gives back n.\n",
-                encoding="utf-8",
-            )
-            (run_root / "manifest.json").write_text(
-                """{
-  "run_id": "legacy-plan",
-  "source": {"path": "input.md", "kind": "markdown"},
-  "agent_name": "repair_resume_agent",
-  "created_at": "2026-04-16T00:00:00Z",
-  "updated_at": "2026-04-16T00:00:00Z",
-  "current_stage": "awaiting_plan_review"
-}
-""",
-                encoding="utf-8",
-            )
-            store = RunStore(temp_root / "artifacts", "legacy-plan")
-            store.write_json(
-                "04_spec/theorem_spec.approved.json",
-                {
-                    "title": "Zero add",
-                    "informal_statement": "For every natural number n, 0 + n = n.",
-                    "assumptions": ["n : Nat"],
-                    "conclusion": "0 + n = n",
-                    "symbols": ["0", "+", "Nat"],
-                    "ambiguities": [],
-                    "paraphrase": "Zero on the left does not change a natural number.",
-                },
-            )
-            store.write_json(
-                "05_context/context_pack.json",
-                {
-                    "recommended_imports": ["FormalizationEngineWorkspace.Basic"],
-                    "local_examples": ["examples/inputs/zero_add.md"],
-                    "notes": ["Use Nat.zero_add."],
-                },
-            )
-            store.write_json(
-                "06_plan/formalization_plan.json",
-                {
-                    "theorem_name": "zero_add_legacy",
-                    "imports": ["FormalizationEngineWorkspace.Basic"],
-                    "prerequisites_to_formalize": [],
-                    "helper_definitions": [],
-                    "target_statement": "theorem zero_add_legacy (n : Nat) : 0 + n = n",
-                    "proof_sketch": ["Use the existing `Nat.zero_add` lemma."],
-                },
-            )
-
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=SequencedLeanRunner(["compile_failed", "compile_failed"]),
-                max_attempts=1,
-            )
-            manifest = workflow.resume("legacy-plan", auto_approve=True)
-
-            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
-            self.assertEqual(manifest.attempt_count, 1)
-            self.assertTrue((run_root / "03_proof" / "checkpoint.md").exists())
-
-    def test_resume_legacy_enrichment_review_honors_existing_decision(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            run_root = temp_root / "artifacts" / "runs" / "legacy-enrichment"
-            run_root.mkdir(parents=True)
-            (run_root / "00_input").mkdir(parents=True, exist_ok=True)
-            (run_root / "00_input" / "source.txt").write_text(
-                "For every natural number n, adding zero on the left gives back n.\n",
-                encoding="utf-8",
-            )
-            (run_root / "manifest.json").write_text(
-                """{
-  "run_id": "legacy-enrichment",
-  "source": {"path": "input.md", "kind": "markdown"},
-  "agent_name": "repair_resume_agent",
-  "created_at": "2026-04-16T00:00:00Z",
-  "updated_at": "2026-04-16T00:00:00Z",
-  "current_stage": "awaiting_enrichment_review"
-}
-""",
-                encoding="utf-8",
-            )
-            store = RunStore(temp_root / "artifacts", "legacy-enrichment")
-            store.write_json(
-                "02_extraction/theorem_extraction.json",
-                {
-                    "title": "Zero add",
-                    "informal_statement": "For every natural number n, 0 + n = n.",
-                    "definitions": ["Nat"],
-                    "lemmas": ["Nat.zero_add"],
-                    "propositions": [],
-                    "dependencies": ["Nat.zero_add"],
-                    "notes": [],
-                },
-            )
-            store.write_json(
-                "03_enrichment/enrichment_report.json",
-                {
-                    "self_contained": True,
-                    "satisfied_prerequisites": ["Nat.zero_add exists."],
-                    "missing_prerequisites": [],
-                    "required_plan_additions": [],
-                    "recommended_scope": "Keep the theorem over Nat.",
-                    "difficulty_assessment": "easy",
-                    "open_questions": [],
-                    "next_steps": ["Approve the merged plan."],
-                    "human_handoff": "Everything needed is already present.",
-                },
-            )
-            store.write_json(
-                "03_enrichment/decision.json",
-                {
-                    "approved": True,
-                    "updated_at": "2026-04-16T00:01:00Z",
-                    "notes": "approved legacy enrichment",
-                },
-            )
-
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=SequencedLeanRunner(["compile_failed", "compile_failed"]),
-                max_attempts=1,
-            )
-            manifest = workflow.resume("legacy-enrichment", auto_approve=False)
-
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
-            self.assertTrue((run_root / "02_plan" / "checkpoint.md").exists())
-
-    def test_resume_legacy_plan_review_honors_existing_decision(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            run_root = temp_root / "artifacts" / "runs" / "legacy-plan-review"
-            run_root.mkdir(parents=True)
-            (run_root / "00_input").mkdir(parents=True, exist_ok=True)
-            (run_root / "00_input" / "source.txt").write_text(
-                "For every natural number n, adding zero on the left gives back n.\n",
-                encoding="utf-8",
-            )
-            (run_root / "manifest.json").write_text(
-                """{
-  "run_id": "legacy-plan-review",
-  "source": {"path": "input.md", "kind": "markdown"},
-  "agent_name": "repair_resume_agent",
-  "created_at": "2026-04-16T00:00:00Z",
-  "updated_at": "2026-04-16T00:00:00Z",
-  "current_stage": "awaiting_plan_review"
-}
-""",
-                encoding="utf-8",
-            )
-            store = RunStore(temp_root / "artifacts", "legacy-plan-review")
-            store.write_json(
-                "04_spec/theorem_spec.approved.json",
-                {
-                    "title": "Zero add",
-                    "informal_statement": "For every natural number n, 0 + n = n.",
-                    "assumptions": ["n : Nat"],
-                    "conclusion": "0 + n = n",
-                    "symbols": ["0", "+", "Nat"],
-                    "ambiguities": [],
-                    "paraphrase": "Zero on the left does not change a natural number.",
-                },
-            )
-            store.write_json(
-                "05_context/context_pack.json",
-                {
-                    "recommended_imports": ["FormalizationEngineWorkspace.Basic"],
-                    "local_examples": ["examples/inputs/zero_add.md"],
-                    "notes": ["Use Nat.zero_add."],
-                },
-            )
-            store.write_json(
-                "06_plan/formalization_plan.json",
-                {
-                    "theorem_name": "zero_add_legacy",
-                    "imports": ["FormalizationEngineWorkspace.Basic"],
-                    "prerequisites_to_formalize": [],
-                    "helper_definitions": [],
-                    "target_statement": "theorem zero_add_legacy (n : Nat) : 0 + n = n",
-                    "proof_sketch": ["Use the existing `Nat.zero_add` lemma."],
-                },
-            )
-            store.write_json(
-                "06_plan/decision.json",
-                {
-                    "approved": True,
-                    "updated_at": "2026-04-16T00:01:00Z",
-                    "notes": "approved legacy plan",
-                },
-            )
-
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=SequencedLeanRunner(["compile_failed", "compile_failed", "compile_failed"]),
-                max_attempts=1,
-            )
-            manifest = workflow.resume("legacy-plan-review", auto_approve=False)
-
-            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
-            self.assertEqual(manifest.attempt_count, 1)
-
-    def test_resume_legacy_spec_review_builds_merged_plan_checkpoint(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            run_root = temp_root / "artifacts" / "runs" / "legacy-spec"
-            run_root.mkdir(parents=True)
-            (run_root / "00_input").mkdir(parents=True, exist_ok=True)
-            (run_root / "00_input" / "source.txt").write_text(
-                "For every natural number n, adding zero on the left gives back n.\n",
-                encoding="utf-8",
-            )
-            (run_root / "manifest.json").write_text(
-                """{
-  "run_id": "legacy-spec",
-  "source": {"path": "input.md", "kind": "markdown"},
-  "agent_name": "repair_resume_agent",
-  "created_at": "2026-04-16T00:00:00Z",
-  "updated_at": "2026-04-16T00:00:00Z",
-  "current_stage": "awaiting_spec_review"
-}
-""",
-                encoding="utf-8",
-            )
-            store = RunStore(temp_root / "artifacts", "legacy-spec")
-            store.write_json(
-                "02_extraction/theorem_extraction.json",
-                {
-                    "title": "Zero add",
-                    "informal_statement": "For every natural number n, 0 + n = n.",
-                    "definitions": ["Nat"],
-                    "lemmas": ["Nat.zero_add"],
-                    "propositions": [],
-                    "dependencies": ["Nat.zero_add"],
-                    "notes": [],
-                },
-            )
-            store.write_json(
-                "03_enrichment/enrichment_report.approved.json",
-                {
-                    "self_contained": True,
-                    "satisfied_prerequisites": ["Nat.zero_add exists."],
-                    "missing_prerequisites": [],
-                    "required_plan_additions": [],
-                    "recommended_scope": "Keep the theorem over Nat.",
-                    "difficulty_assessment": "easy",
-                    "open_questions": [],
-                    "next_steps": ["Approve the merged plan."],
-                    "human_handoff": "Everything needed is already present.",
-                },
-            )
-            store.write_json(
-                "04_spec/theorem_spec.approved.json",
-                {
-                    "title": "Zero add",
-                    "informal_statement": "For every natural number n, 0 + n = n.",
-                    "assumptions": ["n : Nat"],
-                    "conclusion": "0 + n = n",
-                    "symbols": ["0", "+", "Nat"],
-                    "ambiguities": [],
-                    "paraphrase": "Zero on the left does not change a natural number.",
-                },
-            )
-
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=SequencedLeanRunner(["compile_failed"]),
-                max_attempts=1,
-            )
-
-            status = workflow.status("legacy-spec")
-            self.assertEqual(status.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
-
-            manifest = workflow.resume("legacy-spec", auto_approve=False)
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
-            self.assertTrue((run_root / "02_plan" / "formalization_plan.json").exists())
-            self.assertTrue((run_root / "02_plan" / "checkpoint.md").exists())
-
-    def test_resume_legacy_spec_review_does_not_promote_rejected_spec(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            run_root = temp_root / "artifacts" / "runs" / "legacy-spec-rejected"
-            run_root.mkdir(parents=True)
-            (run_root / "00_input").mkdir(parents=True, exist_ok=True)
-            (run_root / "00_input" / "source.txt").write_text(
-                "For every natural number n, adding zero on the left gives back n.\n",
-                encoding="utf-8",
-            )
-            (run_root / "manifest.json").write_text(
-                """{
-  "run_id": "legacy-spec-rejected",
-  "source": {"path": "input.md", "kind": "markdown"},
-  "agent_name": "repair_resume_agent",
-  "created_at": "2026-04-16T00:00:00Z",
-  "updated_at": "2026-04-16T00:00:00Z",
-  "current_stage": "awaiting_spec_review"
-}
-""",
-                encoding="utf-8",
-            )
-            store = RunStore(temp_root / "artifacts", "legacy-spec-rejected")
-            store.write_json(
-                "04_spec/theorem_spec.json",
-                {
-                    "title": "Zero add",
-                    "informal_statement": "For every natural number n, 0 + n = n.",
-                    "assumptions": ["n : Nat"],
-                    "conclusion": "0 + n = n",
-                    "symbols": ["0", "+", "Nat"],
-                    "ambiguities": [],
-                    "paraphrase": "Zero on the left does not change a natural number.",
-                },
-            )
-            store.write_json(
-                "04_spec/decision.json",
-                {
-                    "approved": False,
-                    "updated_at": "2026-04-16T00:01:00Z",
-                    "notes": "spec rejected",
-                },
-            )
-
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=SequencedLeanRunner(["compile_failed"]),
-                max_attempts=1,
-            )
-
-            manifest = workflow.resume("legacy-spec-rejected", auto_approve=False)
-
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
-            self.assertFalse((run_root / "02_plan" / "formalization_plan.json").exists())
-            self.assertFalse((run_root / "02_plan" / "checkpoint.md").exists())
-
-    def test_resume_legacy_spec_review_creates_actionable_review_surface(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            run_root = temp_root / "artifacts" / "runs" / "legacy-spec-pending"
-            run_root.mkdir(parents=True)
-            (run_root / "00_input").mkdir(parents=True, exist_ok=True)
-            (run_root / "00_input" / "source.txt").write_text(
-                "For every natural number n, adding zero on the left gives back n.\n",
-                encoding="utf-8",
-            )
-            (run_root / "manifest.json").write_text(
-                """{
-  "run_id": "legacy-spec-pending",
-  "source": {"path": "input.md", "kind": "markdown"},
-  "agent_name": "repair_resume_agent",
-  "created_at": "2026-04-16T00:00:00Z",
-  "updated_at": "2026-04-16T00:00:00Z",
-  "current_stage": "awaiting_spec_review"
-}
-""",
-                encoding="utf-8",
-            )
-            store = RunStore(temp_root / "artifacts", "legacy-spec-pending")
-            store.write_json(
-                "02_extraction/theorem_extraction.json",
-                {
-                    "title": "Zero add",
-                    "informal_statement": "For every natural number n, 0 + n = n.",
-                    "definitions": ["Nat"],
-                    "lemmas": ["Nat.zero_add"],
-                    "propositions": [],
-                    "dependencies": ["Nat.zero_add"],
-                    "notes": [],
-                },
-            )
-            store.write_json(
-                "03_enrichment/enrichment_report.approved.json",
-                {
-                    "self_contained": True,
-                    "satisfied_prerequisites": ["Nat.zero_add exists."],
-                    "missing_prerequisites": [],
-                    "required_plan_additions": [],
-                    "recommended_scope": "Keep the theorem over Nat.",
-                    "difficulty_assessment": "easy",
-                    "open_questions": [],
-                    "next_steps": ["Approve the merged plan."],
-                    "human_handoff": "Everything needed is already present.",
-                },
-            )
-            store.write_json(
-                "04_spec/theorem_spec.json",
-                {
-                    "title": "Zero add",
-                    "informal_statement": "For every natural number n, 0 + n = n.",
-                    "assumptions": ["n : Nat"],
-                    "conclusion": "0 + n = n",
-                    "symbols": ["0", "+", "Nat"],
-                    "ambiguities": [],
-                    "paraphrase": "Zero on the left does not change a natural number.",
-                },
-            )
-
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=SequencedLeanRunner(["compile_failed"]),
-                max_attempts=1,
-            )
-
-            manifest = workflow.resume("legacy-spec-pending", auto_approve=False)
-
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
-            self.assertTrue((run_root / "04_spec" / "checkpoint.md").exists())
-            self.assertTrue((run_root / "04_spec" / "review.md").exists())
-            self.assertFalse((run_root / "02_plan" / "formalization_plan.json").exists())
-
-            (run_root / "04_spec" / "review.md").write_text(
-                "# Legacy spec review\n\ndecision: approve\n\nNotes:\nLooks good.\n",
-                encoding="utf-8",
-            )
-
-            manifest = workflow.resume("legacy-spec-pending", auto_approve=False)
-
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
-            self.assertTrue((run_root / "02_plan" / "formalization_plan.json").exists())
-            self.assertTrue((run_root / "02_plan" / "checkpoint.md").exists())
-
-    def test_resume_legacy_final_review_uses_old_candidate_path(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            run_root = temp_root / "artifacts" / "runs" / "legacy-final"
-            run_root.mkdir(parents=True)
-            (run_root / "manifest.json").write_text(
-                """{
-  "run_id": "legacy-final",
-  "source": {"path": "input.md", "kind": "markdown"},
-  "agent_name": "repair_resume_agent",
-  "created_at": "2026-04-16T00:00:00Z",
-  "updated_at": "2026-04-16T00:00:00Z",
-  "current_stage": "awaiting_final_review",
-  "attempt_count": 1
-}
-""",
-                encoding="utf-8",
-            )
-            store = RunStore(temp_root / "artifacts", "legacy-final")
-            store.write_text(
-                "10_final/final_candidate.lean",
-                "import FormalizationEngineWorkspace.Basic\n",
-            )
-            store.write_text(
-                "10_final/final_report.md",
-                "Legacy final report.\n",
-            )
-
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=SequencedLeanRunner(["passed"]),
-            )
-            manifest = workflow.resume("legacy-final", auto_approve=True)
-
-            self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
-            self.assertEqual(manifest.final_output_path, "04_final/final.lean")
-            self.assertTrue((run_root / "04_final" / "final.lean").exists())
-
-    def test_resume_legacy_rejected_final_review_stays_paused(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            run_root = temp_root / "artifacts" / "runs" / "legacy-final-reject"
-            run_root.mkdir(parents=True)
-            (run_root / "manifest.json").write_text(
-                """{
-  "run_id": "legacy-final-reject",
-  "source": {"path": "input.md", "kind": "markdown"},
-  "agent_name": "repair_resume_agent",
-  "created_at": "2026-04-16T00:00:00Z",
-  "updated_at": "2026-04-16T00:00:00Z",
-  "current_stage": "awaiting_final_review",
-  "attempt_count": 1
-}
-""",
-                encoding="utf-8",
-            )
-            store = RunStore(temp_root / "artifacts", "legacy-final-reject")
-            store.write_text(
-                "10_final/final_candidate.lean",
-                "import FormalizationEngineWorkspace.Basic\n",
-            )
-            store.write_json(
-                "10_final/decision.json",
-                {
-                    "approved": False,
-                    "updated_at": "2026-04-16T00:01:00Z",
-                    "notes": "Needs changes.",
-                },
-            )
-
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=SequencedLeanRunner(["passed"]),
-            )
-            manifest = workflow.resume("legacy-final-reject", auto_approve=False)
-
-            self.assertEqual(manifest.current_stage, RunStage.AWAITING_FINAL_APPROVAL)
-            self.assertIsNone(manifest.final_output_path)
-            self.assertFalse((run_root / "04_final" / "final.lean").exists())
-            self.assertEqual(
-                store.read_json("04_final/decision.json")["decision"],
-                "reject",
-            )
-
-    def test_resume_legacy_rejected_stall_review_stays_blocked(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            run_root = temp_root / "artifacts" / "runs" / "legacy-stall-reject"
-            run_root.mkdir(parents=True)
-            (run_root / "manifest.json").write_text(
-                """{
-  "run_id": "legacy-stall-reject",
-  "source": {"path": "input.md", "kind": "markdown"},
-  "agent_name": "repair_resume_agent",
-  "created_at": "2026-04-16T00:00:00Z",
-  "updated_at": "2026-04-16T00:00:00Z",
-  "current_stage": "awaiting_stall_review",
-  "attempt_count": 1
-}
-""",
-                encoding="utf-8",
-            )
-            store = RunStore(temp_root / "artifacts", "legacy-stall-reject")
-            store.write_text("09_review/stall_report.md", "Still blocked.\n")
-            store.write_json(
-                "09_review/decision.json",
-                {
-                    "approved": False,
-                    "updated_at": "2026-04-16T00:01:00Z",
-                    "notes": "Do not retry yet.",
-                },
-            )
-
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=SequencedLeanRunner(["passed"]),
-            )
-            manifest = workflow.resume("legacy-stall-reject", auto_approve=False)
-
-            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
-            self.assertEqual(manifest.attempt_count, 1)
-            self.assertEqual(
-                store.read_json("03_proof/decision.json")["decision"],
-                "reject",
-            )
-
-    def test_resume_legacy_stall_retry_approval_is_one_shot(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            run_root = temp_root / "artifacts" / "runs" / "legacy-stall-once"
-            run_root.mkdir(parents=True)
-            (run_root / "manifest.json").write_text(
-                """{
-  "run_id": "legacy-stall-once",
-  "source": {"path": "input.md", "kind": "markdown"},
-  "agent_name": "repair_resume_agent",
-  "created_at": "2026-04-16T00:00:00Z",
-  "updated_at": "2026-04-16T00:02:00Z",
-  "current_stage": "awaiting_stall_review",
-  "attempt_count": 1
-}
-""",
-                encoding="utf-8",
-            )
-            store = RunStore(temp_root / "artifacts", "legacy-stall-once")
-            store.write_text("09_review/stall_report.md", "Still blocked.\n")
-            store.write_json(
-                "09_review/decision.json",
-                {
-                    "approved": True,
-                    "updated_at": "2026-04-16T00:01:00Z",
-                    "notes": "Retry now.",
-                },
-            )
-
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=SequencedLeanRunner(["passed"]),
-            )
-            manifest = workflow.resume("legacy-stall-once", auto_approve=False)
-
-            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
-            self.assertEqual(manifest.attempt_count, 1)
-            self.assertEqual(
-                store.read_text("03_proof/blocker.md"),
-                "# Proof Loop Blocked\n\nStill blocked.\n",
-            )
-
-    def test_resume_legacy_stall_retry_accepts_same_second_approval(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            run_root = temp_root / "artifacts" / "runs" / "legacy-stall-same-second"
-            run_root.mkdir(parents=True)
-            (run_root / "manifest.json").write_text(
-                """{
-  "run_id": "legacy-stall-same-second",
-  "source": {"path": "input.md", "kind": "markdown"},
-  "agent_name": "repair_resume_agent",
-  "created_at": "2026-04-16T00:00:00Z",
-  "updated_at": "2026-04-16T00:01:00Z",
-  "current_stage": "awaiting_stall_review",
-  "attempt_count": 1
-}
-""",
-                encoding="utf-8",
-            )
-            store = RunStore(temp_root / "artifacts", "legacy-stall-same-second")
-            store.write_json(
-                "04_spec/theorem_spec.json",
-                {
-                    "title": "t",
-                    "informal_statement": "True",
-                    "assumptions": [],
-                    "conclusion": "True",
-                    "symbols": [],
-                    "ambiguities": [],
-                    "paraphrase": "True",
-                },
-            )
-            store.write_json(
-                "06_plan/formalization_plan.json",
-                {
-                    "theorem_name": "t",
-                    "imports": ["FormalizationEngineWorkspace.Basic"],
-                    "prerequisites_to_formalize": [],
-                    "helper_definitions": [],
-                    "target_statement": "theorem t : True",
-                    "proof_sketch": ["x"],
-                },
-            )
-            store.write_json(
-                "08_compile/attempt_0001/result.json",
-                {
-                    "attempt": 1,
-                    "command": ["lake build FormalizationEngineWorkspace"],
-                    "stdout": "",
-                    "stderr": "compile failed",
-                    "returncode": 1,
-                    "diagnostics": ["compile failed"],
-                    "fast_check_passed": False,
-                    "build_passed": False,
-                    "contains_sorry": True,
-                    "missing_toolchain": False,
-                    "quality_gate_passed": False,
-                    "passed": False,
-                    "status": "compile_failed",
-                },
-            )
-            store.write_json(
-                "07_draft/attempt_0001/parsed_output.json",
-                {
-                    "theorem_name": "t",
-                    "module_name": "FormalizationEngineWorkspace.Generated",
-                    "imports": ["FormalizationEngineWorkspace.Basic"],
-                    "content": (
-                        "import FormalizationEngineWorkspace.Basic\n\n"
-                        "theorem t : True := by\n"
-                        "  sorry\n"
-                    ),
-                    "rationale": "legacy first attempt",
-                },
-            )
-            store.write_json(
-                "09_review/decision.json",
-                {
-                    "approved": True,
-                    "updated_at": "2026-04-16T00:01:00Z",
-                    "notes": "retry now",
-                },
-            )
-
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=SequencedLeanRunner(["compile_failed", "compile_failed", "compile_failed"]),
-                max_attempts=1,
-            )
-            manifest = workflow.resume("legacy-stall-same-second", auto_approve=False)
-
-            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
-            self.assertEqual(manifest.attempt_count, 2)
-
-    def test_resume_legacy_stall_retry_keeps_new_blocker_reason(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            run_root = temp_root / "artifacts" / "runs" / "legacy-stall"
-            run_root.mkdir(parents=True)
-            (run_root / "manifest.json").write_text(
-                """{
-  "run_id": "legacy-stall",
-  "source": {"path": "input.md", "kind": "markdown"},
-  "agent_name": "repair_resume_agent",
-  "created_at": "2026-04-16T00:00:00Z",
-  "updated_at": "2026-04-16T00:00:00Z",
-  "current_stage": "awaiting_stall_review",
-  "attempt_count": 1
-}
-""",
-                encoding="utf-8",
-            )
-            store = RunStore(temp_root / "artifacts", "legacy-stall")
-            store.write_json(
-                "04_spec/theorem_spec.json",
-                {
-                    "title": "t",
-                    "informal_statement": "True",
-                    "assumptions": [],
-                    "conclusion": "True",
-                    "symbols": [],
-                    "ambiguities": [],
-                    "paraphrase": "True",
-                },
-            )
-            store.write_json(
-                "06_plan/formalization_plan.json",
-                {
-                    "theorem_name": "t",
-                    "imports": ["FormalizationEngineWorkspace.Basic"],
-                    "prerequisites_to_formalize": [],
-                    "helper_definitions": [],
-                    "target_statement": "theorem t : True",
-                    "proof_sketch": ["x"],
-                },
-            )
-            store.write_json(
-                "08_compile/attempt_0001/result.json",
-                {
-                    "attempt": 1,
-                    "command": ["lake build FormalizationEngineWorkspace"],
-                    "stdout": "",
-                    "stderr": "compile failed",
-                    "returncode": 1,
-                    "diagnostics": ["compile failed"],
-                    "fast_check_passed": False,
-                    "build_passed": False,
-                    "contains_sorry": True,
-                    "missing_toolchain": False,
-                    "quality_gate_passed": False,
-                    "passed": False,
-                    "status": "compile_failed",
-                },
-            )
-            store.write_json(
-                "07_draft/attempt_0001/parsed_output.json",
-                {
-                    "theorem_name": "t",
-                    "module_name": "FormalizationEngineWorkspace.Generated",
-                    "imports": ["FormalizationEngineWorkspace.Basic"],
-                    "content": (
-                        "import FormalizationEngineWorkspace.Basic\n\n"
-                        "theorem t : True := by\n"
-                        "  sorry\n"
-                    ),
-                    "rationale": "legacy first attempt",
-                },
-            )
-            store.write_text("09_review/stall_report.md", "OLD STALL REPORT\n")
-            store.write_json(
-                "09_review/decision.json",
-                {
-                    "approved": True,
-                    "updated_at": "2026-04-16T00:01:00Z",
-                    "notes": "retry now",
-                },
-            )
-
-            workflow = FormalizationWorkflow(
-                repo_root=temp_root,
-                agent=RepairResumeAgent(),
-                agent_config=AgentConfig(backend="demo"),
-                lean_runner=SequencedLeanRunner(["compile_failed", "compile_failed", "compile_failed"]),
-                max_attempts=1,
-            )
-            manifest = workflow.resume("legacy-stall", auto_approve=False)
-
-            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
-            self.assertEqual(manifest.attempt_count, 2)
-            blocker_text = store.read_text("03_proof/blocker.md")
-            self.assertIn("retry cap", blocker_text)
-            self.assertNotIn("OLD STALL REPORT", blocker_text)
-
-    def test_logs_capture_checkpoints_and_proof_events(self) -> None:
-        project_root = Path(__file__).resolve().parents[1]
-        template_dir = project_root / "lean_workspace_template"
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_root = Path(temp_dir)
-            fake_lake = self._write_fake_lake(temp_root)
-            source_path = temp_root / "input.md"
-            source_path.write_text(
-                "For every natural number n, adding zero on the left gives back n.\n",
-                encoding="utf-8",
-            )
             workflow = FormalizationWorkflow(
                 repo_root=temp_root,
                 agent=DemoFormalizationAgent(),
                 agent_config=AgentConfig(backend="demo"),
-                lean_runner=LeanRunner(template_dir=template_dir, lake_path=str(fake_lake)),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+            manifest = workflow.prove(source_path=source_path, run_id="stable-backend", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+
+            provider_script = Path(__file__).resolve().parents[1] / "examples" / "providers" / "scripted_repair_provider.py"
+            command = [sys.executable, str(provider_script)]
+            wrong_backend_workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=SubprocessFormalizationAgent(command),
+                agent_config=AgentConfig(backend="command", command=command),
+                lean_runner=ContentCheckingLeanRunner(),
             )
 
-            manifest = workflow.prove(source_path=source_path, run_id="logging", auto_approve=False)
+            with self.assertRaisesRegex(ValueError, "keep the backend recorded in the manifest"):
+                wrong_backend_workflow.resume("stable-backend", auto_approve=False)
+
+            manifest = workflow.status("stable-backend")
+            self.assertEqual(manifest.agent_config.backend, "demo")
+
+    def test_resume_keeps_packaged_template_after_missing_lake_stall(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+
+            blocked_workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=DemoFormalizationAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=LeanRunner(temp_root / "lean_workspace_template", lake_path="missing-lake"),
+            )
+            manifest = blocked_workflow.prove(source_path=source_path, run_id="stall-demo", auto_approve=True)
+            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
+            self.assertEqual(Path(manifest.template_dir), packaged_template)
+
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            fake_lake = self._write_fake_lake(temp_root)
+
+            resumed_workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=DemoFormalizationAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=LeanRunner(Path(manifest.template_dir), lake_path=str(fake_lake)),
+            )
+            manifest = resumed_workflow.resume("stall-demo", auto_approve=True)
+            self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
+            self.assertEqual(Path(manifest.template_dir), packaged_template)
+
+    def test_resume_reuses_existing_plan_handoff_after_enrichment_approval(self) -> None:
+        class PlanCountingAgent:
+            name = "plan_counting_agent"
+
+            def __init__(self) -> None:
+                self.plan_calls = 0
+
+            def run_stage(self, request: StageRequest) -> AgentTurn:
+                if request.stage == BackendStage.PLAN:
+                    self.plan_calls += 1
+                raise AssertionError("Resume should reuse the existing plan handoff instead of rerunning the backend.")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            run_root = temp_root / "artifacts" / "runs" / "reused-plan"
+            (run_root / "00_input").mkdir(parents=True, exist_ok=True)
+            (run_root / "01_enrichment").mkdir(parents=True, exist_ok=True)
+            (run_root / "02_plan").mkdir(parents=True, exist_ok=True)
+            (run_root / "00_input" / "source.txt").write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            (run_root / "00_input" / "normalized.md").write_text(
+                "For every natural number n, 0 + n = n.\n",
+                encoding="utf-8",
+            )
+            (run_root / "00_input" / "provenance.json").write_text("{}", encoding="utf-8")
+            (run_root / "01_enrichment" / "review.md").write_text(
+                "# Enrichment Review\n\ndecision: approve\n\nNotes:\n\n",
+                encoding="utf-8",
+            )
+            (run_root / "02_plan" / "handoff.md").write_text("# Existing Plan Handoff\n", encoding="utf-8")
+            (run_root / "02_plan" / "request.json").write_text('{"stage": "plan"}', encoding="utf-8")
+            (run_root / "02_plan" / "prompt.md").write_text("plan prompt", encoding="utf-8")
+            (run_root / "02_plan" / "response.txt").write_text("plan response", encoding="utf-8")
+            (run_root / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "reused-plan",
+                        "source": {"path": "input.md", "kind": "markdown"},
+                        "agent_name": "plan_counting_agent",
+                        "agent_config": {"backend": "demo"},
+                        "template_dir": str((temp_root / "lean_workspace_template").resolve()),
+                        "created_at": "2026-04-16T00:00:00Z",
+                        "updated_at": "2026-04-16T00:00:00Z",
+                        "current_stage": "awaiting_enrichment_approval",
+                        "attempt_count": 0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            agent = PlanCountingAgent()
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=agent,
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+            manifest = workflow.resume("reused-plan", auto_approve=False)
+
+            self.assertEqual(agent.plan_calls, 0)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
+            self.assertEqual((run_root / "02_plan" / "handoff.md").read_text(encoding="utf-8"), "# Existing Plan Handoff\n")
+            self.assertTrue((run_root / "02_plan" / "checkpoint.md").exists())
+            self.assertTrue((run_root / "02_plan" / "review.md").exists())
+
+    def test_resume_reruns_orphaned_plan_turn(self) -> None:
+        class FailingPlanAgent:
+            name = "failing_plan_agent"
+
+            def __init__(self) -> None:
+                self.plan_calls = 0
+
+            def run_stage(self, request: StageRequest) -> AgentTurn:
+                output_dir = Path(request.repo_root) / request.output_dir
+                output_dir.mkdir(parents=True, exist_ok=True)
+                if request.stage == BackendStage.ENRICHMENT:
+                    (output_dir / "handoff.md").write_text("# Enrichment Handoff\n", encoding="utf-8")
+                    return AgentTurn({"stage": "enrichment"}, "enrichment prompt", "enrichment response")
+                if request.stage == BackendStage.PLAN:
+                    self.plan_calls += 1
+                    (output_dir / "handoff.md").write_text("# Plan Handoff\n", encoding="utf-8")
+                    raise ValueError("plan serialization failed")
+                raise AssertionError("Proof should not run while the plan turn is still failing.")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            agent = FailingPlanAgent()
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=agent,
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+
+            with self.assertRaisesRegex(ValueError, "plan serialization failed"):
+                workflow.prove(source_path=source_path, run_id="plan-failure", auto_approve=True)
+            self.assertEqual(agent.plan_calls, 1)
+
+            with self.assertRaisesRegex(ValueError, "plan serialization failed"):
+                workflow.resume("plan-failure", auto_approve=False)
+            self.assertEqual(agent.plan_calls, 2)
+            self.assertFalse(
+                (temp_root / "artifacts" / "runs" / "plan-failure" / "03_proof" / "attempts" / "attempt_0001").exists()
+            )
+
+    def test_resume_reruns_orphaned_proof_turn(self) -> None:
+        class FailingProofAgent:
+            name = "failing_proof_agent"
+
+            def __init__(self) -> None:
+                self.proof_calls = 0
+
+            def run_stage(self, request: StageRequest) -> AgentTurn:
+                output_dir = Path(request.repo_root) / request.output_dir
+                output_dir.mkdir(parents=True, exist_ok=True)
+                if request.stage == BackendStage.ENRICHMENT:
+                    (output_dir / "handoff.md").write_text("# Enrichment Handoff\n", encoding="utf-8")
+                    return AgentTurn({"stage": "enrichment"}, "enrichment prompt", "enrichment response")
+                if request.stage == BackendStage.PLAN:
+                    (output_dir / "handoff.md").write_text("# Plan Handoff\n", encoding="utf-8")
+                    return AgentTurn({"stage": "plan"}, "plan prompt", "plan response")
+                self.proof_calls += 1
+                (output_dir / "candidate.lean").write_text(
+                    "\n".join(
+                        [
+                            "import FormalizationEngineWorkspace.Basic",
+                            "",
+                            "theorem failed_proof (n : Nat) : 0 + n = n := by",
+                            "  sorry",
+                            "",
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+                raise ValueError("proof serialization failed")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            agent = FailingProofAgent()
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=agent,
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+
+            with self.assertRaisesRegex(ValueError, "proof serialization failed"):
+                workflow.prove(source_path=source_path, run_id="proof-failure", auto_approve=True)
+            self.assertEqual(agent.proof_calls, 1)
+            run_root = temp_root / "artifacts" / "runs" / "proof-failure"
+            self.assertFalse((run_root / "03_proof" / "attempts" / "attempt_0001" / "request.json").exists())
+
+            with self.assertRaisesRegex(ValueError, "proof serialization failed"):
+                workflow.resume("proof-failure", auto_approve=False)
+            self.assertEqual(agent.proof_calls, 2)
+            self.assertFalse((run_root / "03_proof" / "attempts" / "attempt_0001" / "compile_result.json").exists())
+
+    def test_resume_clears_stale_candidate_before_rerunning_proof_turn(self) -> None:
+        class CrashingProofAgent:
+            name = "crashing_proof_agent"
+
+            def run_stage(self, request: StageRequest) -> AgentTurn:
+                output_dir = Path(request.repo_root) / request.output_dir
+                output_dir.mkdir(parents=True, exist_ok=True)
+                if request.stage == BackendStage.ENRICHMENT:
+                    (output_dir / "handoff.md").write_text("# Enrichment Handoff\n", encoding="utf-8")
+                    return AgentTurn({"stage": "enrichment"}, "enrichment prompt", "enrichment response")
+                if request.stage == BackendStage.PLAN:
+                    (output_dir / "handoff.md").write_text("# Plan Handoff\n", encoding="utf-8")
+                    return AgentTurn({"stage": "plan"}, "plan prompt", "plan response")
+                (output_dir / "candidate.lean").write_text(
+                    "\n".join(
+                        [
+                            "import FormalizationEngineWorkspace.Basic",
+                            "",
+                            "theorem failed_proof (n : Nat) : 0 + n = n := by",
+                            "  sorry",
+                            "",
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+                raise ValueError("proof serialization failed")
+
+        class MissingCandidateAgent:
+            name = "missing_candidate_agent"
+
+            def run_stage(self, request: StageRequest) -> AgentTurn:
+                output_dir = Path(request.repo_root) / request.output_dir
+                output_dir.mkdir(parents=True, exist_ok=True)
+                if request.stage == BackendStage.ENRICHMENT:
+                    (output_dir / "handoff.md").write_text("# Enrichment Handoff\n", encoding="utf-8")
+                elif request.stage == BackendStage.PLAN:
+                    (output_dir / "handoff.md").write_text("# Plan Handoff\n", encoding="utf-8")
+                return AgentTurn({"stage": request.stage.value}, f"{request.stage.value} prompt", f"{request.stage.value} response")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            crashing_workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=CrashingProofAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+
+            with self.assertRaisesRegex(ValueError, "proof serialization failed"):
+                crashing_workflow.prove(source_path=source_path, run_id="proof-stale", auto_approve=True)
+
+            recovery_workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=MissingCandidateAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+            with self.assertRaisesRegex(RuntimeError, "attempt_0001/candidate.lean"):
+                recovery_workflow.resume("proof-stale", auto_approve=False)
+
+            run_root = temp_root / "artifacts" / "runs" / "proof-stale"
+            manifest = recovery_workflow.status("proof-stale")
+            self.assertEqual(manifest.attempt_count, 0)
+            self.assertFalse((run_root / "03_proof" / "attempts" / "attempt_0001" / "candidate.lean").exists())
+            self.assertFalse((run_root / "03_proof" / "attempts" / "attempt_0001" / "compile_result.json").exists())
+            self.assertFalse((run_root / "03_proof" / "attempts" / "attempt_0002").exists())
+
+    def test_command_backend_repairs_after_sorry(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            provider_script = Path(__file__).resolve().parents[1] / "examples" / "providers" / "scripted_repair_provider.py"
+            command = [sys.executable, str(provider_script)]
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=SubprocessFormalizationAgent(command),
+                agent_config=AgentConfig(backend="command", command=command),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+            manifest = workflow.prove(source_path=source_path, run_id="command-demo", auto_approve=True)
+            run_root = temp_root / "artifacts" / "runs" / "command-demo"
+
+            self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
+            self.assertEqual(manifest.attempt_count, 2)
+            first_attempt = json.loads(
+                (run_root / "03_proof" / "attempts" / "attempt_0001" / "compile_result.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            second_attempt = json.loads(
+                (run_root / "03_proof" / "attempts" / "attempt_0002" / "compile_result.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertTrue(first_attempt["contains_sorry"])
+            self.assertEqual(first_attempt["status"], "compile_failed")
+            self.assertTrue(second_attempt["passed"])
+
+    def test_stage_requests_use_file_paths_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            agent = RecordingRepairAgent()
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=agent,
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+            manifest = workflow.prove(source_path=source_path, run_id="recording", auto_approve=False)
+            run_root = temp_root / "artifacts" / "runs" / "recording"
             self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
-            run_root = temp_root / "artifacts" / "runs" / "logging"
-            log_text = (run_root / "logs" / "timeline.md").read_text(encoding="utf-8")
-            self.assertIn("run_started", log_text)
-            self.assertIn("checkpoint_opened", log_text)
+
+            self._write_review(run_root, "01_enrichment", "approve", "Scope looks right.")
+            manifest = workflow.resume("recording", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
+
+            self._write_review(run_root, "02_plan", "approve", "Start proving.")
+            manifest = workflow.resume("recording", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
+
+            self._write_review(run_root, "03_proof", "retry", "One more attempt.")
+            manifest = workflow.resume("recording", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_FINAL_APPROVAL)
+
+            self.assertEqual(agent.requests[0].stage, BackendStage.ENRICHMENT)
+            self.assertEqual(
+                set(agent.requests[0].input_paths),
+                {"normalized_source", "provenance", "source"},
+            )
+            self.assertIsNone(agent.requests[0].review_notes_path)
+
+            self.assertEqual(agent.requests[1].stage, BackendStage.PLAN)
+            self.assertIn("enrichment_handoff", agent.requests[1].input_paths)
+            self.assertIn("enrichment_review", agent.requests[1].input_paths)
+            self.assertTrue(agent.requests[1].review_notes_path.endswith("01_enrichment/review.md"))
+            self.assertNotIn("extraction", agent.requests[1].input_paths)
+            self.assertNotIn("theorem_spec", agent.requests[1].input_paths)
+
+            first_proof = agent.requests[2]
+            self.assertEqual(first_proof.stage, BackendStage.PROOF)
+            self.assertIn("plan_handoff", first_proof.input_paths)
+            self.assertIn("plan_review", first_proof.input_paths)
+            self.assertTrue(first_proof.review_notes_path.endswith("02_plan/review.md"))
+            self.assertNotIn("plan", first_proof.input_paths)
+
+            retry_proof = agent.requests[-1]
+            self.assertEqual(retry_proof.stage, BackendStage.PROOF)
+            self.assertIn("previous_compile_result", retry_proof.input_paths)
+            self.assertIn("previous_candidate", retry_proof.input_paths)
+            self.assertTrue(retry_proof.review_notes_path.endswith("03_proof/review.md"))
+
+    def test_retry_review_file_resets_after_consumption(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=AlwaysSorryAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=ContentCheckingLeanRunner(),
+                max_attempts=1,
+            )
+            manifest = workflow.prove(source_path=source_path, run_id="stale-retry", auto_approve=False)
+            run_root = temp_root / "artifacts" / "runs" / "stale-retry"
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+
+            self._write_review(run_root, "01_enrichment", "approve", "Scope is fixed.")
+            manifest = workflow.resume("stale-retry", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
+
+            self._write_review(run_root, "02_plan", "approve", "Try once.")
+            manifest = workflow.resume("stale-retry", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
+            self.assertEqual(manifest.attempt_count, 1)
+
+            self._write_review(run_root, "03_proof", "retry", "Try one more attempt.")
+            manifest = workflow.resume("stale-retry", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
+            self.assertEqual(manifest.attempt_count, 2)
+
+            review_text = (run_root / "03_proof" / "review.md").read_text(encoding="utf-8")
+            self.assertIn("decision: pending", review_text)
+            self.assertNotIn("decision: retry", review_text)
+
+            manifest = workflow.resume("stale-retry", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
+            self.assertEqual(manifest.attempt_count, 2)
+
+    def test_stage_requests_fall_back_to_legacy_normalized_input(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RecordingRepairAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+            store = RunStore(temp_root / "artifacts", "legacy-normalized")
+            store.ensure_new()
+            store.write_text("00_input/source.txt", "For every natural number n, 0 + n = n.\n")
+            store.write_json("00_input/provenance.json", {})
+            store.write_text("01_normalized/normalized.md", "For every natural number n, 0 + n = n.\n")
+
+            manifest = RunManifest(
+                run_id="legacy-normalized",
+                source=SourceRef(path="input.md", kind=SourceKind.MARKDOWN),
+                agent_name="recording_repair_agent",
+                agent_config=AgentConfig(backend="demo"),
+                template_dir=str((temp_root / "lean_workspace_template").resolve()),
+                created_at="2026-04-16T00:00:00Z",
+                updated_at="2026-04-16T00:00:00Z",
+                current_stage=RunStage.CREATED,
+            )
+
+            request = workflow._build_stage_request(
+                store,
+                manifest,
+                stage=BackendStage.ENRICHMENT,
+                output_dir="01_enrichment",
+                required_outputs=["handoff.md"],
+            )
+
+            self.assertTrue(request.input_paths["normalized_source"].endswith("01_normalized/normalized.md"))
+
+    def test_auto_approve_does_not_advertise_missing_review_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            agent = RecordingRepairAgent()
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=agent,
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+            workflow.prove(source_path=source_path, run_id="auto-approve", auto_approve=True)
+
+            plan_request = agent.requests[1]
+            first_proof_request = agent.requests[2]
+            self.assertNotIn("enrichment_review", plan_request.input_paths)
+            self.assertIsNone(plan_request.review_notes_path)
+            self.assertNotIn("plan_review", first_proof_request.input_paths)
+            self.assertIsNone(first_proof_request.review_notes_path)
+
+    def test_auto_approve_resume_does_not_pass_pending_review_templates(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            agent = RecordingRepairAgent()
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=agent,
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=ContentCheckingLeanRunner(),
+                max_attempts=1,
+            )
+
+            manifest = workflow.prove(source_path=source_path, run_id="auto-approve-resume", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+
+            manifest = workflow.resume("auto-approve-resume", auto_approve=True)
+            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
+
+            plan_request = agent.requests[1]
+            proof_request = agent.requests[2]
+            self.assertNotIn("enrichment_review", plan_request.input_paths)
+            self.assertIsNone(plan_request.review_notes_path)
+            self.assertNotIn("plan_review", proof_request.input_paths)
+            self.assertIsNone(proof_request.review_notes_path)
+
+    def test_legacy_auto_approve_does_not_pass_pending_enrichment_review_template(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            run_root = temp_root / "artifacts" / "runs" / "legacy-enrichment-auto"
+            (run_root / "00_input").mkdir(parents=True, exist_ok=True)
+            (run_root / "03_enrichment").mkdir(parents=True, exist_ok=True)
+            (run_root / "00_input" / "source.txt").write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            (run_root / "00_input" / "normalized.md").write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            (run_root / "00_input" / "provenance.json").write_text("{}", encoding="utf-8")
+            (run_root / "03_enrichment" / "enrichment_report.approved.json").write_text("{}", encoding="utf-8")
+            (run_root / "03_enrichment" / "review.md").write_text(
+                "# Legacy Enrichment Review\n\ndecision: pending\n\nNotes:\n\n",
+                encoding="utf-8",
+            )
+            (run_root / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "legacy-enrichment-auto",
+                        "source": {"path": "input.md", "kind": "markdown"},
+                        "agent_name": "recording_repair_agent",
+                        "agent_config": {"backend": "demo"},
+                        "template_dir": str((temp_root / "lean_workspace_template").resolve()),
+                        "created_at": "2026-04-16T00:00:00Z",
+                        "updated_at": "2026-04-16T00:00:00Z",
+                        "current_stage": "awaiting_enrichment_review",
+                        "attempt_count": 0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            agent = RecordingRepairAgent()
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=agent,
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=ContentCheckingLeanRunner(),
+                max_attempts=0,
+            )
+            manifest = workflow.resume("legacy-enrichment-auto", auto_approve=True)
+            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
+
+            plan_request = agent.requests[0]
+            self.assertNotIn("legacy_enrichment_review", plan_request.input_paths)
+            self.assertIsNone(plan_request.review_notes_path)
+
+    def test_legacy_auto_approve_does_not_pass_pending_plan_review_template(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            run_root = temp_root / "artifacts" / "runs" / "legacy-plan-auto"
+            (run_root / "00_input").mkdir(parents=True, exist_ok=True)
+            (run_root / "06_plan").mkdir(parents=True, exist_ok=True)
+            (run_root / "00_input" / "source.txt").write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            (run_root / "00_input" / "normalized.md").write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            (run_root / "00_input" / "provenance.json").write_text("{}", encoding="utf-8")
+            (run_root / "06_plan" / "formalization_plan.approved.json").write_text("{}", encoding="utf-8")
+            (run_root / "06_plan" / "review.md").write_text(
+                "# Legacy Plan Review\n\ndecision: pending\n\nNotes:\n\n",
+                encoding="utf-8",
+            )
+            (run_root / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "legacy-plan-auto",
+                        "source": {"path": "input.md", "kind": "markdown"},
+                        "agent_name": "recording_repair_agent",
+                        "agent_config": {"backend": "demo"},
+                        "template_dir": str((temp_root / "lean_workspace_template").resolve()),
+                        "created_at": "2026-04-16T00:00:00Z",
+                        "updated_at": "2026-04-16T00:00:00Z",
+                        "current_stage": "awaiting_plan_review",
+                        "attempt_count": 0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            agent = RecordingRepairAgent()
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=agent,
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=ContentCheckingLeanRunner(),
+                max_attempts=1,
+            )
+            manifest = workflow.resume("legacy-plan-auto", auto_approve=True)
+            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
+
+            proof_request = agent.requests[0]
+            self.assertNotIn("legacy_plan_review", proof_request.input_paths)
+            self.assertIsNone(proof_request.review_notes_path)
+
+    def test_legacy_spec_review_stays_legacy_until_plan_is_migrated(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            run_root = temp_root / "artifacts" / "runs" / "legacy-spec"
+            (run_root / "04_spec").mkdir(parents=True, exist_ok=True)
+            (run_root / "03_enrichment").mkdir(parents=True, exist_ok=True)
+            (run_root / "00_input").mkdir(parents=True, exist_ok=True)
+            (run_root / "00_input" / "source.txt").write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            (run_root / "00_input" / "normalized.md").write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            (run_root / "00_input" / "provenance.json").write_text("{}", encoding="utf-8")
+            (run_root / "03_enrichment" / "enrichment_report.approved.json").write_text("{}", encoding="utf-8")
+            (run_root / "04_spec" / "theorem_spec.approved.json").write_text(
+                json.dumps({"title": "Legacy spec", "conclusion": "0 + n = n"}),
+                encoding="utf-8",
+            )
+            (run_root / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "legacy-spec",
+                        "source": {"path": "input.md", "kind": "markdown"},
+                        "agent_name": "recording_repair_agent",
+                        "agent_config": {"backend": "demo"},
+                        "template_dir": str((temp_root / "lean_workspace_template").resolve()),
+                        "created_at": "2026-04-16T00:00:00Z",
+                        "updated_at": "2026-04-16T00:00:00Z",
+                        "current_stage": "awaiting_spec_review",
+                        "attempt_count": 0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            agent = RecordingRepairAgent()
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=agent,
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+
+            manifest = workflow.status("legacy-spec")
+            self.assertEqual(manifest.current_stage, RunStage.LEGACY_AWAITING_SPEC_REVIEW)
+
+            manifest = workflow.resume("legacy-spec", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.LEGACY_AWAITING_SPEC_REVIEW)
+            self.assertTrue((run_root / "04_spec" / "checkpoint.md").exists())
+            self.assertTrue((run_root / "04_spec" / "review.md").exists())
+
+            self._write_review(run_root, "04_spec", "approve", "Use the approved legacy spec.")
+            manifest = workflow.resume("legacy-spec", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
+            self.assertTrue((run_root / "02_plan" / "handoff.md").exists())
+            self.assertIn("legacy_spec", agent.requests[0].input_paths)
+            self.assertTrue(agent.requests[0].review_notes_path.endswith("04_spec/review.md"))
+
+    def test_legacy_reject_review_is_not_overwritten_on_pause(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            run_root = temp_root / "artifacts" / "runs" / "legacy-reject"
+            (run_root / "04_spec").mkdir(parents=True, exist_ok=True)
+            (run_root / "04_spec" / "theorem_spec.json").write_text("{}", encoding="utf-8")
+            original_review = "\n".join(
+                [
+                    "# Legacy Spec Review",
+                    "",
+                    "decision: reject",
+                    "",
+                    "Notes:",
+                    "keep these notes",
+                    "",
+                ]
+            )
+            (run_root / "04_spec" / "review.md").write_text(original_review, encoding="utf-8")
+            (run_root / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "legacy-reject",
+                        "source": {"path": "input.md", "kind": "markdown"},
+                        "agent_name": "demo_zero_add_agent",
+                        "agent_config": {"backend": "demo"},
+                        "template_dir": str((temp_root / "lean_workspace_template").resolve()),
+                        "created_at": "2026-04-16T00:00:00Z",
+                        "updated_at": "2026-04-16T00:00:00Z",
+                        "current_stage": "awaiting_spec_review",
+                        "attempt_count": 0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=DemoFormalizationAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+            manifest = workflow.resume("legacy-reject", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.LEGACY_AWAITING_SPEC_REVIEW)
+            self.assertEqual((run_root / "04_spec" / "review.md").read_text(encoding="utf-8"), original_review)
+
+    def test_legacy_stall_retry_carries_forward_previous_compile_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            run_root = temp_root / "artifacts" / "runs" / "legacy-stall"
+            (run_root / "00_input").mkdir(parents=True, exist_ok=True)
+            (run_root / "06_plan").mkdir(parents=True, exist_ok=True)
+            (run_root / "09_review").mkdir(parents=True, exist_ok=True)
+            (run_root / "07_draft" / "attempt_0001").mkdir(parents=True, exist_ok=True)
+            (run_root / "08_compile" / "attempt_0001").mkdir(parents=True, exist_ok=True)
+            (run_root / "00_input" / "source.txt").write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            (run_root / "00_input" / "normalized.md").write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            (run_root / "00_input" / "provenance.json").write_text("{}", encoding="utf-8")
+            (run_root / "06_plan" / "formalization_plan.approved.json").write_text("{}", encoding="utf-8")
+            (run_root / "09_review" / "review.md").write_text(
+                "# Legacy Proof Stall Review\n\ndecision: retry\n\nNotes:\ntry again\n",
+                encoding="utf-8",
+            )
+            (run_root / "07_draft" / "attempt_0001" / "draft.lean").write_text("theorem x : True := by\n  sorry\n", encoding="utf-8")
+            (run_root / "08_compile" / "attempt_0001" / "result.json").write_text('{"status":"compile_failed"}', encoding="utf-8")
+            (run_root / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "legacy-stall",
+                        "source": {"path": "input.md", "kind": "markdown"},
+                        "agent_name": "recording_repair_agent",
+                        "agent_config": {"backend": "demo"},
+                        "template_dir": str((temp_root / "lean_workspace_template").resolve()),
+                        "created_at": "2026-04-16T00:00:00Z",
+                        "updated_at": "2026-04-16T00:00:00Z",
+                        "current_stage": "awaiting_stall_review",
+                        "attempt_count": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            agent = RecordingRepairAgent()
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=agent,
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+            manifest = workflow.resume("legacy-stall", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
+
+            proof_request = agent.requests[0]
+            self.assertEqual(proof_request.stage, BackendStage.PROOF)
+            self.assertIn("legacy_previous_compile_result", proof_request.input_paths)
+            self.assertIn("legacy_previous_candidate", proof_request.input_paths)
+            self.assertTrue(proof_request.latest_compile_result_path.endswith("08_compile/attempt_0001/result.json"))
+
+    def test_resume_queues_final_review_after_successful_compile_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            runner = ContentCheckingLeanRunner()
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=DemoFormalizationAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=runner,
+            )
+            workflow.prove(source_path=source_path, run_id="proof-crash", auto_approve=False)
+            run_root = temp_root / "artifacts" / "runs" / "proof-crash"
+            self._write_review(run_root, "01_enrichment", "approve", "")
+            workflow.resume("proof-crash", auto_approve=False)
+            self._write_review(run_root, "02_plan", "approve", "")
+
+            store = RunStore(temp_root / "artifacts", "proof-crash")
+            manifest = workflow.status("proof-crash")
+            request = workflow._build_stage_request(
+                store,
+                manifest,
+                stage=BackendStage.PROOF,
+                output_dir="03_proof/attempts/attempt_0001",
+                required_outputs=["candidate.lean"],
+                review_notes_relative_path="02_plan/review.md",
+                attempt=1,
+                max_attempts=3,
+            )
+            workflow._run_backend_stage(store, request, "03_proof/attempts/attempt_0001")
+            compile_result = runner.compile_candidate(store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            workflow._write_compile_result(store, 1, compile_result)
+            manifest.current_stage = RunStage.PROVING
+            manifest.attempt_count = 1
+            manifest.latest_error = None
+            workflow._save_manifest(store, manifest)
+
+            manifest = workflow.resume("proof-crash", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_FINAL_APPROVAL)
+            self.assertEqual(manifest.attempt_count, 1)
+            self.assertTrue((run_root / "04_final" / "final_candidate.lean").exists())
+
+    def test_missing_required_output_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=BrokenAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+            with self.assertRaisesRegex(RuntimeError, "required Terry output"):
+                workflow.prove(source_path=source_path, run_id="broken", auto_approve=False)
+
+    def test_cli_demo_backend_e2e(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            fake_lake = self._write_fake_lake(temp_root)
+
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+            command = [
+                sys.executable,
+                "-m",
+                "lean_formalization_engine",
+                "--repo-root",
+                str(temp_root),
+                "--lake-path",
+                str(fake_lake),
+                "prove",
+                str(source_path),
+                "--run-id",
+                "cli-demo",
+                "--agent-backend",
+                "demo",
+                "--auto-approve",
+            ]
+            result = subprocess.run(command, capture_output=True, text=True, env=env, check=False)
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertIn("Stage: completed", result.stdout)
+            self.assertTrue((temp_root / "artifacts" / "runs" / "cli-demo" / "04_final" / "final.lean").exists())
+
+    def test_cli_command_backend_e2e(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            fake_lake = self._write_fake_lake(temp_root)
+            provider_script = Path(__file__).resolve().parents[1] / "examples" / "providers" / "scripted_repair_provider.py"
+
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+            command = [
+                sys.executable,
+                "-m",
+                "lean_formalization_engine",
+                "--repo-root",
+                str(temp_root),
+                "--lake-path",
+                str(fake_lake),
+                "prove",
+                str(source_path),
+                "--run-id",
+                "cli-command",
+                "--agent-backend",
+                "command",
+                "--agent-command",
+                f"{sys.executable} {provider_script}",
+                "--auto-approve",
+            ]
+            result = subprocess.run(command, capture_output=True, text=True, env=env, check=False)
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertIn("Attempts: 2", result.stdout)
+            self.assertTrue((temp_root / "artifacts" / "runs" / "cli-command" / "04_final" / "final.lean").exists())

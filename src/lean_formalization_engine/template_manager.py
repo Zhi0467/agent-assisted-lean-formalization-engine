@@ -15,6 +15,12 @@ class TemplateResolution:
     warning: str | None = None
 
 
+@dataclass
+class TemplateVersionPins:
+    lean_toolchain: str | None = None
+    mathlib_rev: str | None = None
+
+
 def resolve_workspace_template(
     search_root: Path,
     package_template_dir: Path,
@@ -51,10 +57,16 @@ def _find_eligible_template(search_root: Path) -> Path | None:
             continue
         candidates.append(child / "lean_workspace_template")
 
-    for candidate in candidates:
-        if _is_eligible_template(candidate):
-            return candidate.resolve()
-    return None
+    eligible = [candidate.resolve() for candidate in candidates if _is_eligible_template(candidate)]
+    if not eligible:
+        return None
+    if len(eligible) > 1:
+        listed = ", ".join(str(path) for path in eligible)
+        raise RuntimeError(
+            "Found multiple eligible `lean_workspace_template` directories at depth 1. "
+            f"Keep only one Terry template in this repo before continuing: {listed}"
+        )
+    return eligible[0]
 
 
 def _is_eligible_template(candidate: Path) -> bool:
@@ -88,6 +100,7 @@ def _initialize_workspace_template(
 ) -> TemplateResolution:
     search_root.mkdir(parents=True, exist_ok=True)
     command: list[str] = []
+    generated_pins: TemplateVersionPins | None = None
     if target_dir.exists():
         if _is_eligible_template(target_dir):
             return TemplateResolution(template_dir=target_dir.resolve(), origin="discovered", command=[])
@@ -114,6 +127,7 @@ def _initialize_workspace_template(
                 check=True,
                 timeout=timeout_seconds,
             )
+            generated_pins = _capture_initialized_version_pins(target_dir)
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(
                 "Timed out while running `lake new ... math` for `lean_workspace_template`."
@@ -121,6 +135,7 @@ def _initialize_workspace_template(
         except subprocess.CalledProcessError as exc:
             details = "\n".join(part for part in [exc.stdout, exc.stderr] if part).strip()
             if not _is_packaged_template_fallback_error(details):
+                shutil.rmtree(target_dir, ignore_errors=True)
                 raise RuntimeError(
                     "Failed to initialize `lean_workspace_template` with `lake new ... math`."
                     + (f"\n{details}" if details else "")
@@ -141,6 +156,8 @@ def _initialize_workspace_template(
             )
 
     _copy_packaged_template(package_template_dir, target_dir)
+    if generated_pins is not None:
+        _restore_initialized_version_pins(target_dir, generated_pins)
     return TemplateResolution(
         template_dir=target_dir.resolve(),
         origin="initialized",
@@ -181,3 +198,58 @@ def _resolve_lake(configured_lake: str | None) -> str | None:
 def _is_packaged_template_fallback_error(details: str) -> bool:
     normalized = details.lower()
     return "mathlib" in normalized and "revision not found" in normalized
+
+
+def _capture_initialized_version_pins(target_dir: Path) -> TemplateVersionPins:
+    toolchain_path = target_dir / "lean-toolchain"
+    lakefile_path = target_dir / "lakefile.toml"
+    return TemplateVersionPins(
+        lean_toolchain=toolchain_path.read_text(encoding="utf-8") if toolchain_path.exists() else None,
+        mathlib_rev=_extract_mathlib_rev(lakefile_path.read_text(encoding="utf-8")) if lakefile_path.exists() else None,
+    )
+
+
+def _restore_initialized_version_pins(target_dir: Path, pins: TemplateVersionPins) -> None:
+    if pins.lean_toolchain is not None:
+        (target_dir / "lean-toolchain").write_text(pins.lean_toolchain, encoding="utf-8")
+    if pins.mathlib_rev is None:
+        return
+
+    lakefile_path = target_dir / "lakefile.toml"
+    if not lakefile_path.exists():
+        return
+    lakefile_path.write_text(
+        _replace_mathlib_rev(lakefile_path.read_text(encoding="utf-8"), pins.mathlib_rev),
+        encoding="utf-8",
+    )
+
+
+def _extract_mathlib_rev(lakefile_text: str) -> str | None:
+    blocks = lakefile_text.split("[[require]]")
+    for block in blocks[1:]:
+        if 'name = "mathlib"' not in block:
+            continue
+        for raw_line in block.splitlines():
+            line = raw_line.strip()
+            if line.startswith("rev = "):
+                return line.split("=", 1)[1].strip().strip('"')
+    return None
+
+
+def _replace_mathlib_rev(lakefile_text: str, revision: str) -> str:
+    blocks = lakefile_text.split("[[require]]")
+    rebuilt: list[str] = [blocks[0]]
+    replaced = False
+    for block in blocks[1:]:
+        block_text = "[[require]]" + block
+        if not replaced and 'name = "mathlib"' in block_text:
+            lines = block_text.splitlines()
+            for index, raw_line in enumerate(lines):
+                if raw_line.strip().startswith("rev = "):
+                    prefix = raw_line.split("rev", 1)[0]
+                    lines[index] = f'{prefix}rev = "{revision}"'
+                    replaced = True
+                    break
+            block_text = "\n".join(lines)
+        rebuilt.append(block_text)
+    return "".join(rebuilt)

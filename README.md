@@ -32,6 +32,17 @@ Start a run:
 terry prove examples/inputs/right_add_zero.md --run-id right-add-zero
 ```
 
+By default Terry uses the live `codex` backend, so a working `codex` CLI must be on
+`PATH` unless you explicitly pick another backend. To drive Terry through an external
+provider command instead, pass:
+
+```bash
+terry prove examples/inputs/right_add_zero.md \
+  --run-id right-add-zero \
+  --agent-backend command \
+  --agent-command "python3 examples/providers/scripted_repair_provider.py"
+```
+
 Terry pauses at three human checkpoints:
 
 1. enrichment approval: scope and missing prerequisites
@@ -60,9 +71,9 @@ terry status right-add-zero
 Each run lives under `artifacts/runs/<run_id>/`:
 
 - `00_input/` — original source text and provenance
-- `01_enrichment/` — extraction, enrichment report, and enrichment checkpoint files
-- `02_plan/` — merged meaning+plan checkpoint
-- `03_proof/` — prove-and-repair attempts, run-local workspace, and proof-blocked handoff if needed
+- `01_enrichment/` — backend-owned enrichment handoff plus Terry's checkpoint files
+- `02_plan/` — backend-owned merged meaning+plan handoff plus Terry's checkpoint files
+- `03_proof/` — prove-and-repair attempts, backend-written Lean candidates, run-local workspace, and proof-blocked handoff if needed
 - `04_final/` — final candidate, final review files, and approved output
 - `logs/` — readable `timeline.md` plus structured `workflow.jsonl`
 

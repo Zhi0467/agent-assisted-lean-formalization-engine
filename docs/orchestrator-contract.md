@@ -4,6 +4,10 @@ This is the intended boundary for Terry after Wangzhi's 2026-04-16 merge-blockin
 feedback. Terry should orchestrate the workflow; the chosen backend should own the
 actual theorem understanding, enrichment, planning, and proving content.
 
+This is now the live boundary in the working tree rather than a future sketch. Terry
+passes only a narrow control-plane request, the backend writes stage files directly into
+the run directory, and Terry compiles only the current `candidate.lean`.
+
 ## Terry Owns
 
 - run creation under `artifacts/runs/<run_id>/`
@@ -87,22 +91,26 @@ should stay narrow:
 The control plane should not restate theorem meaning, assumptions, symbols, plan fields,
 or proof content that already lives on disk.
 
-## Current Violations In This Branch
+## Implemented Surface In This Branch
 
-- `models.py` / `agents.py`
-  Terry-owned stage dataclasses and typed backend protocol
-- `codex_agent.py`
-  JSON-schema-constrained stage outputs
-- `subprocess_agent.py`
-  `parsed_output` contract plus theorem-spec fallback synthesis
-- `workflow.py`
-  Terry-authored extraction / enrichment / plan summaries and context-pack synthesis
+- `src/lean_formalization_engine/agents.py`
+  Single file-first backend protocol: `run_stage(StageRequest) -> AgentTurn`
+- `src/lean_formalization_engine/models.py`
+  Control-plane-only request, manifest, and compile types without Terry-owned theorem or plan schemas
+- `src/lean_formalization_engine/codex_agent.py`
+  `codex exec` prompt that reads prior files and writes the required stage file directly
+- `src/lean_formalization_engine/subprocess_agent.py`
+  External provider bridge that passes the narrow request over stdin/stdout and expects the provider to write files directly
+- `src/lean_formalization_engine/workflow.py`
+  Checkpoint orchestration, review parsing, proof-loop control, and validation that the backend wrote the required file
+- `examples/providers/scripted_repair_provider.py`
+  Minimal command-backend example that follows the same file contract
 
-## Refactor Order
+## Verification Focus
 
-1. Replace the typed backend API with a filesystem-first stage API.
-2. Change Codex and subprocess backends to read/write stage files directly.
-3. Remove Terry-owned theorem / enrichment / plan dataclasses and fallback parsers.
-4. Rewrite checkpoint generation so Terry points at backend-owned handoff files.
-5. Revalidate the Terry happy path and one blocked proof-loop resume on the new file
-   contract before merging.
+The contract is only credible if Terry survives both the happy path and the repair path
+without slipping back into Terry-owned stage content. The current verification surface is:
+
+- `PYTHONPATH=src python3 -m unittest discover -s tests`
+- a fresh CLI command-backend e2e run that stops for enrichment, merged plan, proof retry, and final approval through `review.md`
+- direct `codex review --base main` on the working tree

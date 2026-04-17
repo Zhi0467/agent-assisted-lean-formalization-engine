@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import shutil
 from pathlib import Path
 
@@ -8,12 +7,7 @@ from lean_formalization_engine.codex_agent import CodexCliFormalizationAgent
 from lean_formalization_engine.models import AgentConfig, RunManifest, RunStage
 from lean_formalization_engine.workflow import FormalizationWorkflow
 
-EXPECTED_IMPORT = "FormalizationEngineWorkspace.Basic"
-EXPECTED_TARGET_STATEMENT = "theorem right_add_zero_nat (n : Nat) : n + 0 = n"
-
-
-def _read_json(path: Path) -> dict[str, object]:
-    return json.loads(path.read_text(encoding="utf-8"))
+EXPECTED_GOAL_FRAGMENT = "n + 0 = n"
 
 
 def _expect_stage(manifest: RunManifest, expected: RunStage, label: str) -> None:
@@ -40,41 +34,28 @@ def _write_review_decision(path: Path, decision: str, notes: str) -> None:
     )
 
 
-def validate_enrichment_report(enrichment_report: dict[str, object]) -> None:
-    if not enrichment_report.get("self_contained"):
-        raise RuntimeError("Enrichment review failed: theorem should be self-contained.")
-
-    missing = [str(item) for item in enrichment_report.get("missing_prerequisites", [])]
-    if missing:
+def validate_enrichment_handoff(content: str) -> None:
+    if "self-contained" not in content.lower():
+        raise RuntimeError("Enrichment review failed: theorem should be marked self-contained.")
+    if "missing prerequisites: none" not in content.lower():
         raise RuntimeError("Enrichment review failed: unexpected missing prerequisites.")
 
 
-def validate_formalization_plan(plan: dict[str, object]) -> None:
-    if plan.get("theorem_name") != "right_add_zero_nat":
-        raise RuntimeError("Plan review failed: unexpected theorem name.")
-    if plan.get("target_statement") != EXPECTED_TARGET_STATEMENT:
-        raise RuntimeError("Plan review failed: unexpected target statement.")
-
-    imports = [str(item) for item in plan.get("imports", [])]
-    if EXPECTED_IMPORT not in imports:
-        raise RuntimeError("Plan review failed: expected import is missing.")
-
-    assumptions = [str(item) for item in plan.get("assumptions", [])]
-    if "n : Nat" not in assumptions:
-        raise RuntimeError("Plan review failed: natural-number assumption is missing.")
-
-    proof_sketch = " ".join(str(item) for item in plan.get("proof_sketch", []))
-    if "Nat.add_zero" not in proof_sketch:
-        raise RuntimeError("Plan review failed: proof sketch does not use `Nat.add_zero`.")
+def validate_plan_handoff(content: str) -> None:
+    lowered = content.lower()
+    if EXPECTED_GOAL_FRAGMENT not in content:
+        raise RuntimeError("Plan review failed: expected the right-add-zero target to stay in scope.")
+    if "nat" not in lowered:
+        raise RuntimeError("Plan review failed: the theorem should still stay over Nat.")
+    if "proof" not in lowered:
+        raise RuntimeError("Plan review failed: expected some proof guidance in the handoff.")
 
 
 def validate_final_candidate(content: str) -> None:
-    if EXPECTED_IMPORT not in content:
-        raise RuntimeError("Final review failed: expected import is missing.")
-    if EXPECTED_TARGET_STATEMENT not in content:
-        raise RuntimeError("Final review failed: theorem statement drifted.")
-    if "Nat.add_zero" not in content:
-        raise RuntimeError("Final review failed: proof does not use `Nat.add_zero`.")
+    if EXPECTED_GOAL_FRAGMENT not in content:
+        raise RuntimeError("Final review failed: candidate drifted away from right-add-zero.")
+    if "theorem" not in content and "example" not in content:
+        raise RuntimeError("Final review failed: expected a Lean declaration in the candidate.")
     if "sorry" in content:
         raise RuntimeError("Final review failed: candidate still contains `sorry`.")
 
@@ -99,8 +80,7 @@ def main() -> None:
         auto_approve=False,
     )
     _expect_stage(manifest, RunStage.AWAITING_ENRICHMENT_APPROVAL, "enrichment review")
-    enrichment_report = _read_json(run_root / "01_enrichment" / "enrichment_report.json")
-    validate_enrichment_report(enrichment_report)
+    validate_enrichment_handoff((run_root / "01_enrichment" / "handoff.md").read_text(encoding="utf-8"))
     _write_review_decision(
         run_root / "01_enrichment" / "review.md",
         "approve",
@@ -109,8 +89,7 @@ def main() -> None:
 
     manifest = workflow.resume(run_id, auto_approve=False)
     _expect_stage(manifest, RunStage.AWAITING_PLAN_APPROVAL, "plan review")
-    plan = _read_json(run_root / "02_plan" / "formalization_plan.json")
-    validate_formalization_plan(plan)
+    validate_plan_handoff((run_root / "02_plan" / "handoff.md").read_text(encoding="utf-8"))
     _write_review_decision(
         run_root / "02_plan" / "review.md",
         "approve",

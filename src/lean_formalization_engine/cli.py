@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import shlex
+import shutil
 import sys
 from pathlib import Path
 
@@ -18,22 +19,53 @@ from .workflow import FormalizationWorkflow
 _STATUS_SURFACE_CANDIDATES = {
     RunStage.AWAITING_ENRICHMENT_APPROVAL: [
         ("01_enrichment/checkpoint.md", "01_enrichment/review.md"),
+    ],
+    RunStage.LEGACY_AWAITING_ENRICHMENT_REVIEW: [
+        ("03_enrichment/checkpoint.md", "03_enrichment/review.md"),
         ("03_enrichment/handoff.md", "03_enrichment/decision.json"),
     ],
     RunStage.AWAITING_PLAN_APPROVAL: [
         ("02_plan/checkpoint.md", "02_plan/review.md"),
-        ("06_plan/formalization_plan.json", "06_plan/decision.json"),
+    ],
+    RunStage.LEGACY_AWAITING_SPEC_REVIEW: [
         ("04_spec/checkpoint.md", "04_spec/review.md"),
-        ("04_spec/theorem_spec.json", "04_spec/review.md"),
+        ("04_spec/theorem_spec.json", "04_spec/decision.json"),
+    ],
+    RunStage.LEGACY_AWAITING_PLAN_REVIEW: [
+        ("06_plan/checkpoint.md", "06_plan/review.md"),
+        ("06_plan/formalization_plan.json", "06_plan/decision.json"),
     ],
     RunStage.PROOF_BLOCKED: [
         ("03_proof/checkpoint.md", "03_proof/review.md"),
+    ],
+    RunStage.LEGACY_AWAITING_STALL_REVIEW: [
+        ("09_review/checkpoint.md", "09_review/review.md"),
         ("09_review/stall_report.md", "09_review/decision.json"),
     ],
     RunStage.AWAITING_FINAL_APPROVAL: [
         ("04_final/checkpoint.md", "04_final/review.md"),
+    ],
+    RunStage.LEGACY_AWAITING_FINAL_REVIEW: [
+        ("10_final/checkpoint.md", "10_final/review.md"),
         ("10_final/final_report.md", "10_final/decision.json"),
     ],
+}
+
+_LEGACY_STAGE_BY_CURRENT = {
+    RunStage.CREATED: RunStage.CREATED.value,
+    RunStage.AWAITING_ENRICHMENT_APPROVAL: RunStage.LEGACY_AWAITING_ENRICHMENT_REVIEW.value,
+    RunStage.AWAITING_PLAN_APPROVAL: RunStage.LEGACY_AWAITING_SPEC_REVIEW.value,
+    RunStage.PROVING: RunStage.LEGACY_REPAIRING.value,
+    RunStage.PROOF_BLOCKED: RunStage.LEGACY_AWAITING_STALL_REVIEW.value,
+    RunStage.AWAITING_FINAL_APPROVAL: RunStage.LEGACY_AWAITING_FINAL_REVIEW.value,
+    RunStage.LEGACY_AWAITING_ENRICHMENT_REVIEW: RunStage.LEGACY_AWAITING_ENRICHMENT_REVIEW.value,
+    RunStage.LEGACY_AWAITING_SPEC_REVIEW: RunStage.LEGACY_AWAITING_SPEC_REVIEW.value,
+    RunStage.LEGACY_AWAITING_PLAN_REVIEW: RunStage.LEGACY_AWAITING_PLAN_REVIEW.value,
+    RunStage.LEGACY_REPAIRING: RunStage.LEGACY_REPAIRING.value,
+    RunStage.LEGACY_AWAITING_STALL_REVIEW: RunStage.LEGACY_AWAITING_STALL_REVIEW.value,
+    RunStage.LEGACY_AWAITING_FINAL_REVIEW: RunStage.LEGACY_AWAITING_FINAL_REVIEW.value,
+    RunStage.COMPLETED: RunStage.COMPLETED.value,
+    RunStage.FAILED: RunStage.FAILED.value,
 }
 
 
@@ -46,16 +78,20 @@ class _MissingCommandAgent:
             "Resume it with `--agent-command \"python3 path/to/provider.py\"`."
         )
 
-    def draft_theorem_extraction(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+    def run_stage(self, *args, **kwargs):  # type: ignore[no-untyped-def]
         self._raise()
 
-    def draft_theorem_enrichment(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        self._raise()
 
-    def draft_formalization_plan(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        self._raise()
+class _MissingCodexAgent:
+    name = "codex-backend-missing-cli"
 
-    def draft_lean_file(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+    def _raise(self) -> None:
+        raise ValueError(
+            "The `codex` CLI is not available. Install it before using the default Codex backend, "
+            "or pass `--agent-backend demo` or `--agent-backend command --agent-command ...`."
+        )
+
+    def run_stage(self, *args, **kwargs):  # type: ignore[no-untyped-def]
         self._raise()
 
 
@@ -179,11 +215,16 @@ def build_agent_config(args: argparse.Namespace, repo_root: Path) -> AgentConfig
     codex_model = getattr(args, "codex_model", None) or getattr(args, "legacy_codex_model", None)
 
     if backend is None:
-        backend = "command" if agent_command else "codex"
+        if agent_command:
+            backend = "command"
+        else:
+            backend = "codex"
 
     if backend == "command":
         if not agent_command:
             raise ValueError("`--agent-command` is required when `--agent-backend command` is used.")
+        if codex_model is not None:
+            raise ValueError("`--codex-model` is only valid with the Codex backend.")
         return AgentConfig(
             backend="command",
             command=_resolve_agent_command(shlex.split(agent_command), repo_root),
@@ -191,8 +232,14 @@ def build_agent_config(args: argparse.Namespace, repo_root: Path) -> AgentConfig
         )
 
     if backend == "demo":
+        if agent_command:
+            raise ValueError("`--agent-command` is only valid with the command backend.")
+        if codex_model is not None:
+            raise ValueError("`--codex-model` is only valid with the Codex backend.")
         return AgentConfig(backend="demo")
 
+    if agent_command:
+        raise ValueError("`--agent-command` is only valid with the command backend.")
     return AgentConfig(backend="codex", codex_model=codex_model)
 
 
@@ -200,6 +247,8 @@ def build_agent(agent_config: AgentConfig, repo_root: Path):
     if agent_config.backend == "demo":
         return DemoFormalizationAgent()
     if agent_config.backend == "codex":
+        if shutil.which("codex") is None:
+            return _MissingCodexAgent()
         return CodexCliFormalizationAgent(repo_root=repo_root, model=agent_config.codex_model)
     if not agent_config.command:
         return _MissingCommandAgent()
@@ -320,6 +369,11 @@ def _resume_agent_config(
         return manifest.agent_config
 
     backend = requested_backend or ("command" if agent_command else manifest.agent_config.backend)
+    if backend != manifest.agent_config.backend:
+        raise ValueError(
+            "Paused Terry runs keep the backend recorded in the manifest. "
+            f"This run uses `{manifest.agent_config.backend}`."
+        )
 
     if backend == "command":
         command = manifest.agent_config.command
@@ -341,15 +395,23 @@ def _resume_agent_config(
         raise ValueError("`--agent-command` is only valid with the command backend.")
 
     if backend == "demo":
+        if agent_command:
+            raise ValueError("`--agent-command` is only valid with the command backend.")
         if requested_model is not None:
             raise ValueError("`--codex-model` is only valid with the Codex backend.")
-        return AgentConfig(backend="demo")
+        return manifest.agent_config
 
+    if requested_model is not None and requested_model != manifest.agent_config.codex_model:
+        raise ValueError(
+            "Paused Terry runs keep the Codex model recorded in the manifest."
+        )
     return AgentConfig(
         backend="codex",
-        codex_model=requested_model
-        if requested_model is not None
-        else (manifest.agent_config.codex_model if manifest.agent_config.backend == "codex" else None),
+        codex_model=(
+            manifest.agent_config.codex_model
+            if manifest.agent_config.backend == "codex"
+            else None
+        ),
     )
 
 
@@ -444,11 +506,27 @@ def _write_compatibility_approval(
     decision = ReviewDecision(decision=decision_value, updated_at=utc_now(), notes=notes)
 
     terry_targets = {
-        "approve-enrichment": "01_enrichment",
+        "approve-enrichment": (
+            "03_enrichment"
+            if manifest.current_stage == RunStage.LEGACY_AWAITING_ENRICHMENT_REVIEW
+            else "01_enrichment"
+        ),
         "approve-spec": "02_plan" if manifest.current_stage == RunStage.AWAITING_PLAN_APPROVAL else "04_spec",
-        "approve-plan": "02_plan",
-        "approve-final": "04_final",
-        "approve-stall": "03_proof",
+        "approve-plan": (
+            "06_plan"
+            if manifest.current_stage == RunStage.LEGACY_AWAITING_PLAN_REVIEW
+            else "02_plan"
+        ),
+        "approve-final": (
+            "10_final"
+            if manifest.current_stage == RunStage.LEGACY_AWAITING_FINAL_REVIEW
+            else "04_final"
+        ),
+        "approve-stall": (
+            "09_review"
+            if manifest.current_stage == RunStage.LEGACY_AWAITING_STALL_REVIEW
+            else "03_proof"
+        ),
     }
     stage_dir = terry_targets[command]
     review_path = store.path(f"{stage_dir}/review.md")
@@ -459,17 +537,6 @@ def _write_compatibility_approval(
         )
     if store.path(f"{stage_dir}/decision.json").parent.exists():
         store.write_json(f"{stage_dir}/decision.json", decision)
-
-    legacy_payload_targets = {
-        "approve-enrichment": ("03_enrichment/enrichment_report.json", "03_enrichment/enrichment_report.approved.json"),
-        "approve-spec": ("04_spec/theorem_spec.json", "04_spec/theorem_spec.approved.json"),
-        "approve-plan": ("06_plan/formalization_plan.json", "06_plan/formalization_plan.approved.json"),
-    }
-    payload_paths = legacy_payload_targets.get(command)
-    if payload_paths is not None:
-        source_path, approved_path = payload_paths
-        if store.exists(source_path):
-            store.write_json(approved_path, store.read_json(source_path))
 
     legacy_decision_targets = {
         "approve-enrichment": "03_enrichment/decision.json",
@@ -498,6 +565,24 @@ def _legacy_json_output(args: argparse.Namespace) -> bool:
     return args.command in {"resume", "status"} and getattr(args, "legacy_run_id", None) is not None
 
 
+def _render_legacy_manifest_payload(manifest: RunManifest) -> dict[str, object]:
+    return to_jsonable(
+        {
+            "run_id": manifest.run_id,
+            "source": manifest.source,
+            "agent_name": manifest.agent_name,
+            "created_at": manifest.created_at,
+            "updated_at": manifest.updated_at,
+            "current_stage": _LEGACY_STAGE_BY_CURRENT[manifest.current_stage],
+            "workflow_version": manifest.workflow_version,
+            "workflow_tags": manifest.workflow_tags,
+            "attempt_count": manifest.attempt_count,
+            "latest_error": manifest.latest_error,
+            "final_output_path": manifest.final_output_path,
+        }
+    )
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -510,6 +595,11 @@ def main() -> None:
             run_id = args.run_id or _default_run_id(source_path)
             _validate_prove_request(repo_root, source_path, run_id)
             agent_config = build_agent_config(args, repo_root)
+            if agent_config.backend == "codex" and shutil.which("codex") is None:
+                raise ValueError(
+                    "The `codex` CLI is not available. Install it before using the default Codex backend, "
+                    "or pass `--agent-backend demo` or `--agent-backend command --agent-command ...`."
+                )
             agent = build_agent(agent_config, repo_root)
             workflow = FormalizationWorkflow(
                 repo_root=repo_root,
@@ -536,7 +626,17 @@ def main() -> None:
             manifest = workflow.resume(run_id, auto_approve=args.auto_approve)
 
         elif args.command.startswith("approve-"):
-            manifest = _write_compatibility_approval(repo_root, args.run_id, args.command, args.notes)
+            run_id = args.run_id
+            manifest = _write_compatibility_approval(repo_root, run_id, args.command, args.notes)
+            lake_path = lake_path or _resolve_lake_path(manifest.lake_path, repo_root)
+            agent_config = _resume_agent_config(manifest, args, repo_root)
+            workflow = FormalizationWorkflow(
+                repo_root=repo_root,
+                agent=build_agent(agent_config, repo_root),
+                agent_config=agent_config,
+                lean_runner=LeanRunner(template_dir=Path(manifest.template_dir), lake_path=lake_path),
+            )
+            manifest = workflow.resume(run_id, auto_approve=False)
 
         else:
             run_id = _resolve_run_id_argument(args)
@@ -546,7 +646,7 @@ def main() -> None:
                 return
 
         if _legacy_json_output(args):
-            print(json.dumps(to_jsonable(manifest), indent=2))
+            print(json.dumps(_render_legacy_manifest_payload(manifest), indent=2))
         else:
             print(render_manifest_summary(manifest, repo_root))
     except (RuntimeError, ValueError, FileExistsError, FileNotFoundError) as exc:

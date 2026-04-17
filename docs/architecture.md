@@ -15,13 +15,17 @@ Terry runs through five phases:
 1. `00_input/`
    Normalized source text plus provenance
 2. `01_enrichment/`
-   Internal extraction artifact, enrichment report, human handoff, and enrichment review files
+   Backend-owned enrichment artifacts plus Terry's checkpoint, review, and decision files
 3. `02_plan/`
-   The merged checkpoint that locks mathematical meaning, Lean theorem statement, imports, and proof sketch together
+   Backend-owned plan artifacts plus Terry's checkpoint, review, and decision files
 4. `03_proof/`
-   The bounded prove-and-repair loop: draft Lean, compile, persist diagnostics, retry if needed
+   The bounded prove-and-repair loop: backend-written Lean candidates, Terry compile checks, persisted diagnostics, retry if needed
 5. `04_final/`
-   The compiling candidate, final review files, and the approved final Lean file
+   The compiling candidate, Terry's final review files, compile results, and the approved final Lean file
+
+Terry no longer owns theorem extraction schemas, plan schemas, theorem parsing, or
+provider-specific structured outputs. The chosen backend reads prior stage files and
+writes its own `handoff.md` or `candidate.lean` files directly into the run directory.
 
 The only human approvals Terry expects on the happy path are:
 
@@ -68,8 +72,8 @@ Every run writes:
 Events include:
 
 - run start
-- extraction ready
 - enrichment ready
+- plan ready
 - checkpoint open / approval
 - proof loop start
 - proof attempt start / failure / success
@@ -82,7 +86,7 @@ Events include:
 - `src/lean_formalization_engine/cli.py`
   `terry prove`, `terry resume`, and `terry status`
 - `src/lean_formalization_engine/workflow.py`
-  State machine, checkpoint writing, review parsing, and prove-loop control
+  State machine, checkpoint writing, review parsing, stage-output validation, and prove-loop control
 - `src/lean_formalization_engine/template_manager.py`
   Depth-1 template discovery and `lake new ... math` initialization
 - `src/lean_formalization_engine/lean_runner.py`
@@ -90,13 +94,32 @@ Events include:
 - `src/lean_formalization_engine/storage.py`
   Run-store helpers and workflow logging
 - `src/lean_formalization_engine/agents.py`
-  Agent protocol
+  File-first backend protocol
 - `src/lean_formalization_engine/demo_agent.py`
   Deterministic baseline backend
 - `src/lean_formalization_engine/subprocess_agent.py`
-  External provider command backend
+  External provider command backend that writes stage files directly
 - `src/lean_formalization_engine/codex_agent.py`
-  `codex exec` backend
+  `codex exec` backend that writes stage files directly
+
+## Backend Stage Calls
+
+Each backend stage call gets a narrow control-plane payload:
+
+- the stage name
+- the repo-root-relative run directory and output directory
+- repo-root-relative input file paths from earlier stages
+- the current review-notes file path when the stage resumes after human input
+- proof-loop attempt metadata and the latest compile-result path when Terry is asking for a repair
+
+The backend is expected to write the required output file inside that output directory:
+
+- `01_enrichment/handoff.md`
+- `02_plan/handoff.md`
+- `03_proof/attempts/attempt_<n>/candidate.lean`
+
+Terry persists the backend call beside those outputs as `request.json`, `prompt.md`, and
+`response.txt`, but it does not parse theorem content back into Terry-owned schemas.
 
 ## Template Discovery
 
