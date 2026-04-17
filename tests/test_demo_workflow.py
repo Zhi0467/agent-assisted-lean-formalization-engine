@@ -6,9 +6,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
+import lean_formalization_engine.lean_runner as lean_runner_module
 from lean_formalization_engine.demo_agent import DemoFormalizationAgent
 from lean_formalization_engine.lean_runner import LeanRunner
 from lean_formalization_engine.models import (
@@ -184,8 +186,8 @@ class DemoWorkflowTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def _write_fake_lake(self, directory: Path) -> Path:
-        fake_lake = directory / "lake"
+    def _write_fake_lake(self, directory: Path, *, name: str = "lake", version: str = "fake-lake") -> Path:
+        fake_lake = directory / name
         workspace_template = (
             Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
         )
@@ -198,14 +200,27 @@ class DemoWorkflowTest(unittest.TestCase):
                     "import sys",
                     "",
                     f"WORKSPACE_TEMPLATE = pathlib.Path({str(workspace_template)!r})",
+                    f"VERSION = {version!r}",
                     "",
                     "def main() -> int:",
                     "    args = sys.argv[1:]",
+                    "    if args[:1] == ['--version']:",
+                    "        print(VERSION)",
+                    "        return 0",
+                    "    if args[:1] == ['update']:",
+                    "        manifest = pathlib.Path.cwd() / 'lake-manifest.json'",
+                    "        manifest.write_text('{\"version\": 7, \"packagesDir\": \".lake/packages\"}', encoding='utf-8')",
+                    "        return 0",
                     "    if args[:2] == ['build', 'FormalizationEngineWorkspace']:",
+                    "        manifest = pathlib.Path.cwd() / 'lake-manifest.json'",
+                    "        packages = pathlib.Path.cwd() / '.lake' / 'packages'",
+                    "        if not manifest.exists() and not packages.exists():",
+                    "            print('missing manifest; use `lake update` to generate one', file=sys.stderr)",
+                    "            return 1",
                     "        generated = pathlib.Path.cwd() / 'FormalizationEngineWorkspace' / 'Generated.lean'",
                     "        content = generated.read_text(encoding='utf-8')",
                     "        if 'sorry' in content:",
-                    "            print('found sorry', file=sys.stderr)",
+                    "            print(f'{generated}: found sorry', file=sys.stderr)",
                     "            return 1",
                     "        return 0",
                     "    if args[:3] == ['new', 'lean_workspace_template', 'math']:",
@@ -226,6 +241,9 @@ class DemoWorkflowTest(unittest.TestCase):
         )
         fake_lake.chmod(0o755)
         return fake_lake
+
+    def _write_named_fake_lake(self, directory: Path, name: str) -> Path:
+        return self._write_fake_lake(directory, name=name, version=name)
 
     def test_demo_workflow_completes_without_old_payload_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -351,11 +369,756 @@ class DemoWorkflowTest(unittest.TestCase):
                 repo_root=temp_root,
                 agent=DemoFormalizationAgent(),
                 agent_config=AgentConfig(backend="demo"),
-                lean_runner=LeanRunner(Path(manifest.template_dir), lake_path=str(fake_lake)),
+                lean_runner=LeanRunner(
+                    Path(manifest.template_dir),
+                    repo_root=temp_root,
+                    lake_path=str(fake_lake),
+                ),
             )
             manifest = resumed_workflow.resume("stall-demo", auto_approve=True)
             self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
             self.assertEqual(Path(manifest.template_dir), packaged_template)
+
+    def test_lean_runner_reuses_shared_workspace_across_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            fake_lake = self._write_fake_lake(temp_root)
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            first_store = RunStore(temp_root / "artifacts", "cache-a")
+            first_store.ensure_new()
+            first_store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem cached_zero_add_a (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+            first_result = runner.compile_candidate(first_store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(first_result.passed)
+            self.assertEqual(
+                first_result.command,
+                ["lake update", "lake build FormalizationEngineWorkspace"],
+            )
+
+            shared_workspace = temp_root / ".terry" / "lean_workspace"
+            sentinel = shared_workspace / ".lake" / "packages" / "mathlib" / "sentinel.txt"
+            sentinel.parent.mkdir(parents=True, exist_ok=True)
+            sentinel.write_text("warm", encoding="utf-8")
+
+            second_store = RunStore(temp_root / "artifacts", "cache-b")
+            second_store.ensure_new()
+            second_store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem cached_zero_add_b (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+            second_result = runner.compile_candidate(second_store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(second_result.passed)
+            self.assertEqual(second_result.command, ["lake build FormalizationEngineWorkspace"])
+            self.assertTrue(sentinel.exists())
+
+    def test_lean_runner_sanitizes_generated_path_to_attempt_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            fake_lake = self._write_fake_lake(temp_root)
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            store = RunStore(temp_root / "artifacts", "path-sanitize")
+            store.ensure_new()
+            candidate_relative_path = "03_proof/attempts/attempt_0001/candidate.lean"
+            store.write_text(
+                candidate_relative_path,
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem path_sanitize (n : Nat) : 0 + n = n := by",
+                        "  sorry",
+                        "",
+                    ]
+                ),
+            )
+
+            result = runner.compile_candidate(store, candidate_relative_path, 1)
+            self.assertFalse(result.passed)
+            self.assertIn(
+                "artifacts/runs/path-sanitize/03_proof/attempts/attempt_0001/candidate.lean: found sorry",
+                result.stderr,
+            )
+            self.assertNotIn(".terry/lean_workspace/FormalizationEngineWorkspace/Generated.lean", result.stderr)
+
+    def test_lean_runner_rebuilds_shared_workspace_when_template_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            fake_lake = self._write_fake_lake(temp_root)
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            first_store = RunStore(temp_root / "artifacts", "refresh-a")
+            first_store.ensure_new()
+            first_store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem refresh_zero_add_a (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+            first_result = runner.compile_candidate(first_store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(first_result.passed)
+
+            shared_workspace = temp_root / ".terry" / "lean_workspace"
+            stale_marker = shared_workspace / "stale.txt"
+            stale_marker.write_text("remove me", encoding="utf-8")
+            template_basic = temp_root / "lean_workspace_template" / "FormalizationEngineWorkspace" / "Basic.lean"
+            template_basic.write_text(
+                template_basic.read_text(encoding="utf-8") + "\n-- changed template\n",
+                encoding="utf-8",
+            )
+
+            second_store = RunStore(temp_root / "artifacts", "refresh-b")
+            second_store.ensure_new()
+            second_store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem refresh_zero_add_b (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+            second_result = runner.compile_candidate(second_store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(second_result.passed)
+            self.assertEqual(
+                second_result.command,
+                ["lake update", "lake build FormalizationEngineWorkspace"],
+            )
+            self.assertFalse(stale_marker.exists())
+            self.assertIn(
+                "-- changed template",
+                (shared_workspace / "FormalizationEngineWorkspace" / "Basic.lean").read_text(encoding="utf-8"),
+            )
+            self.assertEqual(
+                (shared_workspace / "lake-manifest.json").read_text(encoding="utf-8"),
+                '{"version": 7, "packagesDir": ".lake/packages"}',
+            )
+
+    def test_lean_runner_rebuilds_shared_workspace_when_vendored_lake_contents_change(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            vendored_file = temp_root / "lean_workspace_template" / ".lake" / "packages" / "mathlib" / "marker.txt"
+            vendored_file.parent.mkdir(parents=True, exist_ok=True)
+            vendored_file.write_text("first", encoding="utf-8")
+            (vendored_file.parent / "lakefile.toml").write_text(
+                "\n".join(
+                    [
+                        "name = \"mathlib\"",
+                        "version = \"0.1.0\"",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_lake = self._write_fake_lake(temp_root)
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            first_store = RunStore(temp_root / "artifacts", "vendored-a")
+            first_store.ensure_new()
+            first_store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem vendored_zero_add_a (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+            first_result = runner.compile_candidate(first_store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(first_result.passed)
+            self.assertEqual(first_result.command, ["lake build FormalizationEngineWorkspace"])
+
+            shared_workspace = temp_root / ".terry" / "lean_workspace"
+            stale_marker = shared_workspace / "stale-vendored.txt"
+            stale_marker.write_text("remove me", encoding="utf-8")
+            vendored_file.write_text("second", encoding="utf-8")
+
+            second_store = RunStore(temp_root / "artifacts", "vendored-b")
+            second_store.ensure_new()
+            second_store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem vendored_zero_add_b (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+            second_result = runner.compile_candidate(second_store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(second_result.passed)
+            self.assertEqual(second_result.command, ["lake build FormalizationEngineWorkspace"])
+            self.assertFalse(stale_marker.exists())
+            self.assertEqual(
+                (shared_workspace / ".lake" / "packages" / "mathlib" / "marker.txt").read_text(encoding="utf-8"),
+                "second",
+            )
+
+    def test_lean_runner_does_not_copy_template_build_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            fake_lake = self._write_fake_lake(temp_root)
+            top_level_build = temp_root / "lean_workspace_template" / "build" / "stale.txt"
+            top_level_build.parent.mkdir(parents=True, exist_ok=True)
+            top_level_build.write_text("stale", encoding="utf-8")
+            lake_build = (
+                temp_root
+                / "lean_workspace_template"
+                / ".lake"
+                / "build"
+                / "lib"
+                / "FormalizationEngineWorkspace"
+                / "Basic.olean"
+            )
+            lake_build.parent.mkdir(parents=True, exist_ok=True)
+            lake_build.write_text("stale", encoding="utf-8")
+            vendored_lake_build = (
+                temp_root
+                / "lean_workspace_template"
+                / ".lake"
+                / "packages"
+                / "mathlib"
+                / ".lake"
+                / "build"
+                / "lib"
+                / "Mathlib"
+                / "Vendored.olean"
+            )
+            vendored_lake_build.parent.mkdir(parents=True, exist_ok=True)
+            vendored_lake_build.write_text("stale", encoding="utf-8")
+            vendored_build = (
+                temp_root
+                / "lean_workspace_template"
+                / ".lake"
+                / "packages"
+                / "mathlib"
+                / "build"
+                / "Vendored.olean"
+            )
+            vendored_build.parent.mkdir(parents=True, exist_ok=True)
+            vendored_build.write_text("stale", encoding="utf-8")
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            store = RunStore(temp_root / "artifacts", "no-build-copy")
+            store.ensure_new()
+            store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem no_build_copy (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+
+            result = runner.compile_candidate(store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(result.passed)
+            shared_workspace = temp_root / ".terry" / "lean_workspace"
+            self.assertFalse((shared_workspace / "build" / "stale.txt").exists())
+            self.assertFalse(
+                (
+                    shared_workspace
+                    / ".lake"
+                    / "build"
+                    / "lib"
+                    / "FormalizationEngineWorkspace"
+                    / "Basic.olean"
+                ).exists()
+            )
+            self.assertFalse(
+                (
+                    shared_workspace
+                    / ".lake"
+                    / "packages"
+                    / "mathlib"
+                    / ".lake"
+                    / "build"
+                    / "lib"
+                    / "Mathlib"
+                    / "Vendored.olean"
+                ).exists()
+            )
+            self.assertFalse(
+                (
+                    shared_workspace
+                    / ".lake"
+                    / "packages"
+                    / "mathlib"
+                    / "build"
+                    / "Vendored.olean"
+                ).exists()
+            )
+
+    def test_lean_runner_updates_when_vendored_packages_are_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            vendored_file = temp_root / "lean_workspace_template" / ".lake" / "packages" / "aux" / "marker.txt"
+            vendored_file.parent.mkdir(parents=True, exist_ok=True)
+            vendored_file.write_text("aux", encoding="utf-8")
+            fake_lake = self._write_fake_lake(temp_root)
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            store = RunStore(temp_root / "artifacts", "partial-vendored")
+            store.ensure_new()
+            store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem partial_vendored (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+
+            result = runner.compile_candidate(store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(result.passed)
+            self.assertEqual(
+                result.command,
+                ["lake update", "lake build FormalizationEngineWorkspace"],
+            )
+
+    def test_lean_runner_rebuilds_when_git_backed_vendored_package_is_dirty(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            mathlib_dir = temp_root / "lean_workspace_template" / ".lake" / "packages" / "mathlib"
+            mathlib_dir.mkdir(parents=True, exist_ok=True)
+            tracked_file = mathlib_dir / "Marker.lean"
+            tracked_file.write_text("first\n", encoding="utf-8")
+            (mathlib_dir / "lakefile.toml").write_text(
+                "\n".join(
+                    [
+                        "name = \"mathlib\"",
+                        "version = \"0.1.0\"",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "init"], cwd=mathlib_dir, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=mathlib_dir, check=True, capture_output=True, text=True)
+            subprocess.run(
+                ["git", "config", "user.email", "test@example.com"],
+                cwd=mathlib_dir,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(["git", "add", "Marker.lean"], cwd=mathlib_dir, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=mathlib_dir, check=True, capture_output=True, text=True)
+            fake_lake = self._write_fake_lake(temp_root)
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            first_store = RunStore(temp_root / "artifacts", "git-vendored-a")
+            first_store.ensure_new()
+            first_store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem git_vendored_a (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+            first_result = runner.compile_candidate(first_store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(first_result.passed)
+            self.assertEqual(first_result.command, ["lake build FormalizationEngineWorkspace"])
+
+            shared_workspace = temp_root / ".terry" / "lean_workspace"
+            stale_marker = shared_workspace / "stale-git-vendored.txt"
+            stale_marker.write_text("remove me", encoding="utf-8")
+            tracked_file.write_text("second\n", encoding="utf-8")
+
+            second_store = RunStore(temp_root / "artifacts", "git-vendored-b")
+            second_store.ensure_new()
+            second_store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem git_vendored_b (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+            second_result = runner.compile_candidate(second_store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(second_result.passed)
+            self.assertEqual(second_result.command, ["lake build FormalizationEngineWorkspace"])
+            self.assertFalse(stale_marker.exists())
+
+    def test_lean_runner_respects_vendored_packages_for_lakefile_lean_templates(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            (temp_root / "lean_workspace_template" / "lakefile.toml").unlink()
+            (temp_root / "lean_workspace_template" / "lakefile.lean").write_text(
+                "\n".join(
+                    [
+                        "import Lake",
+                        "open Lake DSL",
+                        "",
+                        "package FormalizationEngineWorkspace",
+                        "",
+                        "require mathlib from git",
+                        "  \"https://github.com/leanprover-community/mathlib4.git\" @ \"v4.29.0\"",
+                        "",
+                        "@[default_target]",
+                        "lean_lib FormalizationEngineWorkspace",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            mathlib_dir = temp_root / "lean_workspace_template" / ".lake" / "packages" / "mathlib"
+            mathlib_dir.mkdir(parents=True, exist_ok=True)
+            (mathlib_dir / "Marker.lean").write_text("vendored\n", encoding="utf-8")
+            (mathlib_dir / "lakefile.toml").write_text(
+                "\n".join(
+                    [
+                        "name = \"mathlib\"",
+                        "version = \"0.1.0\"",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_lake = self._write_fake_lake(temp_root)
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            store = RunStore(temp_root / "artifacts", "lakefile-lean-vendored")
+            store.ensure_new()
+            store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem lakefile_lean_vendored (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+
+            result = runner.compile_candidate(store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(result.passed)
+            self.assertEqual(result.command, ["lake build FormalizationEngineWorkspace"])
+
+    def test_lean_runner_rebuilds_shared_workspace_when_lake_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            first_lake = self._write_named_fake_lake(temp_root, "lake-first")
+            second_lake = self._write_named_fake_lake(temp_root, "lake-second")
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(first_lake),
+            )
+
+            first_store = RunStore(temp_root / "artifacts", "lake-a")
+            first_store.ensure_new()
+            first_store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem lake_zero_add_a (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+            first_result = runner.compile_candidate(first_store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(first_result.passed)
+
+            shared_workspace = temp_root / ".terry" / "lean_workspace"
+            stale_marker = shared_workspace / "stale-toolchain.txt"
+            stale_marker.write_text("remove me", encoding="utf-8")
+            runner.lake_path = str(second_lake)
+
+            second_store = RunStore(temp_root / "artifacts", "lake-b")
+            second_store.ensure_new()
+            second_store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem lake_zero_add_b (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+            second_result = runner.compile_candidate(second_store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(second_result.passed)
+            self.assertEqual(
+                second_result.command,
+                ["lake-second update", "lake-second build FormalizationEngineWorkspace"],
+            )
+            self.assertFalse(stale_marker.exists())
+
+    def test_lean_runner_rebuilds_shared_workspace_when_lake_changes_in_place(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            fake_lake = self._write_fake_lake(temp_root, version="lake-v1")
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            first_store = RunStore(temp_root / "artifacts", "lake-same-path-a")
+            first_store.ensure_new()
+            first_store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem lake_same_path_a (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+            first_result = runner.compile_candidate(first_store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(first_result.passed)
+
+            shared_workspace = temp_root / ".terry" / "lean_workspace"
+            stale_marker = shared_workspace / "stale-same-path.txt"
+            stale_marker.write_text("remove me", encoding="utf-8")
+            self._write_fake_lake(temp_root, version="lake-v2")
+
+            second_store = RunStore(temp_root / "artifacts", "lake-same-path-b")
+            second_store.ensure_new()
+            second_store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem lake_same_path_b (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+            second_result = runner.compile_candidate(second_store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(second_result.passed)
+            self.assertEqual(
+                second_result.command,
+                ["lake update", "lake build FormalizationEngineWorkspace"],
+            )
+            self.assertFalse(stale_marker.exists())
+
+    def test_lean_runner_serializes_shared_workspace_without_platform_file_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            fake_lake = temp_root / "race-lake"
+            fake_lake.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env python3",
+                        "import pathlib",
+                        "import sys",
+                        "import time",
+                        "",
+                        "def main() -> int:",
+                        "    args = sys.argv[1:]",
+                        "    if args[:1] == ['update']:",
+                        "        manifest = pathlib.Path.cwd() / 'lake-manifest.json'",
+                        "        manifest.write_text('{\"version\": 7}', encoding='utf-8')",
+                        "        return 0",
+                        "    if args[:2] == ['build', 'FormalizationEngineWorkspace']:",
+                        "        generated = pathlib.Path.cwd() / 'FormalizationEngineWorkspace' / 'Generated.lean'",
+                        "        text = generated.read_text(encoding='utf-8')",
+                        "        time.sleep(0.2)",
+                        "        if 'theorem A' in text:",
+                        "            print('saw A', file=sys.stderr)",
+                        "        elif 'theorem B' in text:",
+                        "            print('saw B', file=sys.stderr)",
+                        "        else:",
+                        "            print('saw ?', file=sys.stderr)",
+                        "        return 0",
+                        "    print(f'unexpected args: {args}', file=sys.stderr)",
+                        "    return 1",
+                        "",
+                        "if __name__ == '__main__':",
+                        "    raise SystemExit(main())",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_lake.chmod(0o755)
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            original_fcntl = lean_runner_module.fcntl
+            original_msvcrt = lean_runner_module.msvcrt
+            lean_runner_module.fcntl = None
+            lean_runner_module.msvcrt = None
+            try:
+                results: dict[str, str] = {}
+                failures: list[BaseException] = []
+
+                def run(run_id: str, theorem_name: str) -> None:
+                    try:
+                        store = RunStore(temp_root / "artifacts", run_id)
+                        store.ensure_new()
+                        candidate_relative_path = "03_proof/attempts/attempt_0001/candidate.lean"
+                        store.write_text(
+                            candidate_relative_path,
+                            "\n".join(
+                                [
+                                    "import FormalizationEngineWorkspace.Basic",
+                                    "",
+                                    f"theorem {theorem_name} : True := by",
+                                    "  trivial",
+                                    "",
+                                ]
+                            ),
+                        )
+                        results[run_id] = runner.compile_candidate(store, candidate_relative_path, 1).stderr
+                    except BaseException as exc:  # pragma: no cover - thread failure forwarding
+                        failures.append(exc)
+
+                first_thread = threading.Thread(target=run, args=("race-a", "A"))
+                second_thread = threading.Thread(target=run, args=("race-b", "B"))
+                first_thread.start()
+                second_thread.start()
+                first_thread.join()
+                second_thread.join()
+            finally:
+                lean_runner_module.fcntl = original_fcntl
+                lean_runner_module.msvcrt = original_msvcrt
+
+            self.assertFalse(failures)
+            self.assertIn("saw A", results["race-a"])
+            self.assertIn("saw B", results["race-b"])
 
     def test_resume_reuses_existing_plan_handoff_after_enrichment_approval(self) -> None:
         class PlanCountingAgent:

@@ -11,6 +11,7 @@ review file for the active checkpoint, and continue with `terry resume`.
 - `examples/` holds theorem inputs plus runnable demo scripts for the demo, command, and Codex backends.
 - `artifacts/runs/<run_id>/` is the system of record for each run: checkpoints, proof attempts, final artifacts, and logs.
 - `lean_workspace_template/` is the Terry workspace scaffold. The CLI auto-discovers it at depth 1, initializes one with `lake new ... math` if none is present, and falls back to the packaged scaffold for the known mathlib revision-mismatch bootstrap failure.
+- `.terry/lean_workspace/` is Terry's local compile cache. It stays out of Git, keeps the warmed `.lake` state between runs in the same repo, and gets rebuilt when the template or the actual toolchain behind `lake` changes.
 - `docs/` holds the durable workflow contract, backlog, roadmap, and walkthroughs.
 
 ## Install
@@ -49,6 +50,10 @@ Terry pauses at three human checkpoints:
 2. plan approval: mathematical meaning plus Lean theorem statement and proof plan
 3. final approval: the compiling Lean candidate
 
+The first real Lean compile in a repo can still be slow because it warms mathlib into
+`.terry/lean_workspace/`. Later Terry runs in that same repo reuse the cache instead of
+starting from a fresh copied workspace each time.
+
 At each pause Terry writes:
 
 - `checkpoint.md` with the files to inspect and the exact resume command
@@ -73,7 +78,7 @@ Each run lives under `artifacts/runs/<run_id>/`:
 - `00_input/` — original source text and provenance
 - `01_enrichment/` — backend-owned enrichment handoff plus Terry's checkpoint files
 - `02_plan/` — backend-owned merged meaning+plan handoff plus Terry's checkpoint files
-- `03_proof/` — prove-and-repair attempts, backend-written Lean candidates, run-local workspace, and proof-blocked handoff if needed
+- `03_proof/` — prove-and-repair attempts, backend-written Lean candidates, compile results, and proof-blocked handoff if needed
 - `04_final/` — final candidate, final review files, and approved output
 - `logs/` — readable `timeline.md` plus structured `workflow.jsonl`
 

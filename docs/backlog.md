@@ -2,20 +2,23 @@
 
 The architecture correction is implemented on the current head now: Terry is back to
 workflow orchestration only, the built-in backends write stage files directly, and the
-old Terry-owned theorem/parsing layer is gone. The rewrite backlog is now clean: the
-latest direct `codex review --base main` rerun on this head did not identify any
-actionable pre-merge bugs, so the remaining unchecked ideas move to the roadmap as
-follow-on work rather than blockers for this cut.
+old Terry-owned theorem/parsing layer is gone. The remaining blocker is no longer a
+known runtime bug in Terry itself but the review gate on the new shared-cache follow-up:
+the latest local Codex review loops kept surfacing real cache bugs until this branch,
+and the current final rerun is stalling after runtime probes instead of returning either
+a clean or failing verdict. So the rewrite backlog stays open until that verdict exists.
 
 Current verification:
 
-- `PYTHONPATH=src python3 -m unittest discover -s tests` (`57` tests, all passing)
+- `PYTHONPATH=src python3 -m unittest discover -s tests` (`68` tests, all passing)
 - targeted CLI e2e tests still pass on the current head:
   `DemoWorkflowTest.test_cli_demo_backend_e2e`
   `DemoWorkflowTest.test_cli_command_backend_e2e`
-- direct local `codex review --base main` on this latest head came back clean:
-  "I did not identify any discrete, actionable bugs in the diff that would likely break
-  existing behavior or require follow-up before merge."
+- direct local `codex review --base main` on the final shared-cache head is still
+  unresolved:
+  repeated local reruns found and closed several real cache bugs, but the current
+  detached rerun is stalling after deep runtime probes instead of emitting a clean or
+  failing verdict
 
 ## Orchestrator-Only Refactor
 
@@ -36,5 +39,13 @@ reuse an already-written `02_plan/` turn instead of silently rerunning the backe
 packaged-template runs keep their original workspace on resume instead of drifting to a
 new local template, Codex now writes inside a temp sandbox so only the stage output dir
 comes back to the real repo, successful `lake new` keeps its own Lean/mathlib pins, and
-proof-turn reruns clear stale artifacts before retrying the backend. The rewrite itself
-is no longer blocked; the next work lives in `docs/roadmap.md` under Milestones 2 and 3.
+proof-turn reruns clear stale artifacts before retrying the backend. Terry now also
+compiles through a shared repo-local cache at `.terry/lean_workspace/`, so later runs in
+the same repo keep the warmed `.lake` state instead of redownloading mathlib into a
+fresh per-run workspace. That cache now tracks vendored template `.lake/` contents and
+the real toolchain identity behind `lake`, while still respecting templates that already
+carry their own lockfile or vendored dependency state. The newest regressions now cover
+same-path toolchain changes, vendored package edits, incomplete vendored trees, nested
+vendored build-output stripping, dirty git-backed vendored packages, and `lakefile.lean`
+templates. The next product work still lives in `docs/roadmap.md` under Milestones 2 and
+3, but this cache branch is not review-closed yet.

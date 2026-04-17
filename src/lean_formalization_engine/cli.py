@@ -607,6 +607,7 @@ def main() -> None:
                 agent_config=agent_config,
                 lean_runner=LeanRunner(
                     template_dir=_preferred_prove_template_dir(repo_root),
+                    repo_root=repo_root,
                     lake_path=lake_path,
                 ),
             )
@@ -621,7 +622,11 @@ def main() -> None:
                 repo_root=repo_root,
                 agent=build_agent(agent_config, repo_root),
                 agent_config=agent_config,
-                lean_runner=LeanRunner(template_dir=Path(manifest.template_dir), lake_path=lake_path),
+                lean_runner=LeanRunner(
+                    template_dir=Path(manifest.template_dir),
+                    repo_root=repo_root,
+                    lake_path=lake_path,
+                ),
             )
             manifest = workflow.resume(run_id, auto_approve=args.auto_approve)
 
@@ -634,7 +639,11 @@ def main() -> None:
                 repo_root=repo_root,
                 agent=build_agent(agent_config, repo_root),
                 agent_config=agent_config,
-                lean_runner=LeanRunner(template_dir=Path(manifest.template_dir), lake_path=lake_path),
+                lean_runner=LeanRunner(
+                    template_dir=Path(manifest.template_dir),
+                    repo_root=repo_root,
+                    lake_path=lake_path,
+                ),
             )
             manifest = workflow.resume(run_id, auto_approve=False)
 

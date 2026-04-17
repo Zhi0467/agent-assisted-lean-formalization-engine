@@ -213,6 +213,7 @@ artifacts/runs/*/workspace/build/
 artifacts/runs/*/workspace/.cache/
 artifacts/runs/*/workspace/.DS_Store
 lean_workspace_template/.lake/
+.terry/
 
 # macOS
 .DS_Store

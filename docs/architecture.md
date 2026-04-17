@@ -90,7 +90,7 @@ Events include:
 - `src/lean_formalization_engine/template_manager.py`
   Depth-1 template discovery and `lake new ... math` initialization
 - `src/lean_formalization_engine/lean_runner.py`
-  Run-local workspace copy plus compile checks
+  Shared local Lean workspace cache plus compile checks
 - `src/lean_formalization_engine/storage.py`
   Run-store helpers and workflow logging
 - `src/lean_formalization_engine/agents.py`
@@ -134,6 +134,25 @@ and then overlays the shipped Terry workspace scaffold onto that new directory. 
 bootstrap fails with the known mathlib revision mismatch (`revision not found 'v4.29.1'`),
 Terry falls back to the packaged workspace template, records the full `lake` stderr in
 the structured workflow log, and continues. Other `lake new` failures still stop the run.
+
+## Compile Cache
+
+Terry compiles inside a shared repo-local workspace at `.terry/lean_workspace/`. That
+directory is ignored by Git and persists across runs in the same repo, so the first real
+`lake build` can warm `.lake` once and later Terry runs reuse it instead of cloning
+mathlib into a fresh run-local copy every time.
+
+If the shared workspace does not have a `lake-manifest.json` yet, Terry runs
+`lake update` there once before the first build so later runs can reuse the same
+dependency manifest instead of recloning through a missing-manifest cold start.
+
+Before each compile Terry overwrites only `FormalizationEngineWorkspace/Generated.lean`
+and clears that module's old build outputs, which forces the current theorem to rebuild
+while keeping the warmed dependency state. If `lean_workspace_template/`, vendored
+`.lake/` contents inside that template, or the actual toolchain behind `lake` changes,
+Terry rebuilds `.terry/lean_workspace/` before the next compile. If a rebuilt template
+already carries its own `lake-manifest.json` or vendored `.lake/packages/` state, Terry
+reuses that pinned dependency state instead of immediately forcing `lake update`.
 
 ## Backend Persistence
 
