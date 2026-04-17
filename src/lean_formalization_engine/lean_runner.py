@@ -568,14 +568,38 @@ class LeanRunner:
 
     def _parse_required_packages_from_lakefile_lean(self, lakefile_text: str) -> list[PackageRequirement]:
         package_requirements: list[PackageRequirement] = []
+        pending_path_requirement: str | None = None
         for line in lakefile_text.splitlines():
-            path_match = re.match(r"""^\s*require\s+([A-Za-z_][A-Za-z0-9_']*)\s+from\s+(["'])([^"']+)\2""", line)
+            stripped = line.strip()
+            if pending_path_requirement is not None:
+                if not stripped or stripped.startswith("--"):
+                    continue
+                multiline_path_match = re.match(r"""^(["'])([^"']+)\1(?:\s*--.*)?$""", stripped)
+                if multiline_path_match:
+                    package_requirements.append(
+                        PackageRequirement(name=pending_path_requirement, path=multiline_path_match.group(2))
+                    )
+                    pending_path_requirement = None
+                    continue
+                package_requirements.append(PackageRequirement(name=pending_path_requirement))
+                pending_path_requirement = None
+
+            path_match = re.match(
+                r"""^\s*require\s+([A-Za-z_][A-Za-z0-9_']*)\s+from\s+(["'])([^"']+)\2(?:\s*--.*)?$""",
+                line,
+            )
             if path_match:
                 package_requirements.append(PackageRequirement(name=path_match.group(1), path=path_match.group(3)))
+                continue
+            pending_match = re.match(r"""^\s*require\s+([A-Za-z_][A-Za-z0-9_']*)\s+from\s*(?:--.*)?$""", line)
+            if pending_match:
+                pending_path_requirement = pending_match.group(1)
                 continue
             match = re.match(r"^\s*require\s+([A-Za-z_][A-Za-z0-9_']*)\b", line)
             if match:
                 package_requirements.append(PackageRequirement(name=match.group(1)))
+        if pending_path_requirement is not None:
+            package_requirements.append(PackageRequirement(name=pending_path_requirement))
         return package_requirements
 
     def _path_dependencies_ready(self, workspace: Path, required_packages: list[PackageRequirement]) -> bool:
