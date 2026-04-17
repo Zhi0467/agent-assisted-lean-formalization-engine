@@ -32,6 +32,35 @@ from .storage import RunStore
 
 _THREAD_LOCKS: dict[str, threading.Lock] = {}
 _THREAD_LOCKS_GUARD = threading.Lock()
+_VENDORED_SOURCE_SUFFIXES = {
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cxx",
+    ".h",
+    ".hh",
+    ".hpp",
+    ".hxx",
+    ".lean",
+    ".rs",
+    ".s",
+    ".S",
+}
+_VENDORED_METADATA_NAMES = {
+    ".gitignore",
+    "COPYING",
+    "LICENSE",
+    "LICENSE.md",
+    "LICENSE.txt",
+    "README",
+    "README.md",
+    "README.rst",
+    "README.txt",
+    "lake-manifest.json",
+    "lakefile.lean",
+    "lakefile.toml",
+    "lean-toolchain",
+}
 
 
 class LeanRunner:
@@ -301,8 +330,13 @@ class LeanRunner:
                 digest = hashlib.sha256()
                 digest.update(git_status.stdout.encode("utf-8"))
                 digest.update(git_status.stderr.encode("utf-8"))
+                if any(line and not line.startswith("#") for line in git_status.stdout.splitlines()):
+                    digest.update(self._vendored_package_filesystem_signature(package_dir).encode("utf-8"))
                 return digest.hexdigest()
 
+        return self._vendored_package_filesystem_signature(package_dir)
+
+    def _vendored_package_filesystem_signature(self, package_dir: Path) -> str:
         digest = hashlib.sha256()
         for root, dirnames, filenames in os.walk(package_dir):
             root_path = Path(root)
@@ -507,11 +541,17 @@ class LeanRunner:
                 for dirname in dirnames
                 if not self._ignore_template_path(Path(".lake") / "packages" / package_dir.name / root_relative / dirname)
             )
-            for filename in filenames:
-                full_relative_path = Path(".lake") / "packages" / package_dir.name / root_relative / filename
-                if not self._ignore_template_path(full_relative_path):
+            for filename in sorted(filenames):
+                relative_path = root_relative / filename
+                full_relative_path = Path(".lake") / "packages" / package_dir.name / relative_path
+                if not self._ignore_template_path(full_relative_path) and self._is_vendored_source_path(relative_path):
                     return True
         return False
+
+    def _is_vendored_source_path(self, relative_path: Path) -> bool:
+        if relative_path.name in _VENDORED_METADATA_NAMES:
+            return False
+        return relative_path.suffix in _VENDORED_SOURCE_SUFFIXES
 
     @contextmanager
     def _workspace_lock(self):
