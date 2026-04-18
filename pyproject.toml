@@ -36,6 +36,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 lean_formalization_engine = [
+  "prompts/*",
   "workspace_template/*",
   "workspace_template/FormalizationEngineWorkspace/*",
 ]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
 import shutil
@@ -22,6 +23,7 @@ from lean_formalization_engine.cli import (
 )
 from lean_formalization_engine.codex_agent import CodexCliFormalizationAgent
 from lean_formalization_engine.models import AgentConfig, BackendStage, RunManifest, RunStage, SourceKind, SourceRef, StageRequest
+from lean_formalization_engine.prompt_loader import load_prompt_template
 from lean_formalization_engine.subprocess_agent import ProviderResponseError, SubprocessFormalizationAgent
 from lean_formalization_engine.template_manager import discover_workspace_template, resolve_workspace_template
 
@@ -268,6 +270,107 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
             self.assertIn("enrichment_handoff", prompt)
             self.assertEqual(turn.raw_response, "wrote 02_plan/handoff.md")
             self.assertEqual((run_root / "02_plan" / "handoff.md").read_text(encoding="utf-8"), "# Plan Handoff\n")
+
+    def test_codex_proof_prompt_carries_review_and_previous_attempt_pointers(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            agent = CodexCliFormalizationAgent(repo_root=repo_root)
+            request = StageRequest(
+                stage=BackendStage.PROOF,
+                run_id="demo",
+                repo_root=str(repo_root),
+                run_dir="artifacts/runs/demo",
+                output_dir="artifacts/runs/demo/03_proof/attempts/attempt_0002",
+                input_paths={
+                    "source": "artifacts/runs/demo/00_input/source.txt",
+                    "normalized_source": "artifacts/runs/demo/00_input/normalized.md",
+                    "enrichment_handoff": "artifacts/runs/demo/01_enrichment/handoff.md",
+                    "natural_language_statement": "artifacts/runs/demo/01_enrichment/natural_language_statement.md",
+                    "natural_language_proof": "artifacts/runs/demo/01_enrichment/natural_language_proof.md",
+                    "proof_status": "artifacts/runs/demo/01_enrichment/proof_status.json",
+                    "plan_handoff": "artifacts/runs/demo/02_plan/handoff.md",
+                    "previous_compile_result": "artifacts/runs/demo/03_proof/attempts/attempt_0001/compile_result.json",
+                    "previous_candidate": "artifacts/runs/demo/03_proof/attempts/attempt_0001/candidate.lean",
+                    "previous_walkthrough": "artifacts/runs/demo/03_proof/attempts/attempt_0001/review/walkthrough.md",
+                    "previous_readable_candidate": "artifacts/runs/demo/03_proof/attempts/attempt_0001/review/readable_candidate.lean",
+                    "previous_error_report": "artifacts/runs/demo/03_proof/attempts/attempt_0001/review/error.md",
+                },
+                required_outputs=["candidate.lean"],
+                review_notes_path="artifacts/runs/demo/03_proof/review.md",
+                latest_compile_result_path="artifacts/runs/demo/03_proof/attempts/attempt_0001/compile_result.json",
+                previous_attempt_dir="artifacts/runs/demo/03_proof/attempts/attempt_0001",
+                attempt=2,
+                max_attempts=3,
+            )
+
+            prompt = agent._build_prompt(request)
+            self.assertIn("natural_language_statement", prompt)
+            self.assertIn("natural_language_proof", prompt)
+            self.assertIn("previous_walkthrough", prompt)
+            self.assertIn("previous_readable_candidate", prompt)
+            self.assertIn("previous_error_report", prompt)
+            self.assertIn("Read any previous walkthrough, readable-candidate, or error-report pointers before repairing.", prompt)
+
+    def test_prompt_templates_are_centralized(self) -> None:
+        for template_name in (
+            "codex_common.md",
+            "codex_enrichment.md",
+            "codex_plan.md",
+            "codex_proof.md",
+            "codex_review.md",
+            "demo_enrichment.md",
+            "demo_plan.md",
+            "demo_proof.md",
+            "demo_review.md",
+        ):
+            self.assertTrue(load_prompt_template(template_name).strip())
+
+    def test_codex_stage_templates_name_core_input_pointers(self) -> None:
+        expected_snippets = {
+            "codex_enrichment.md": ("`source`", "`normalized_source`", "`provenance`"),
+            "codex_plan.md": (
+                "`enrichment_handoff`",
+                "`natural_language_statement`",
+                "`natural_language_proof`",
+                "`proof_status`",
+            ),
+            "codex_proof.md": (
+                "`plan_handoff`",
+                "`natural_language_statement`",
+                "`natural_language_proof`",
+            ),
+            "codex_review.md": (
+                "`plan_handoff`",
+                "`natural_language_statement`",
+                "`natural_language_proof`",
+                "`attempt_candidate`",
+                "`attempt_compile_result`",
+            ),
+        }
+        for template_name, snippets in expected_snippets.items():
+            template = load_prompt_template(template_name)
+            for snippet in snippets:
+                self.assertIn(snippet, template)
+
+    def test_runtime_modules_do_not_embed_literal_prompt_strings(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        for relative_path in (
+            "src/lean_formalization_engine/codex_agent.py",
+            "src/lean_formalization_engine/demo_agent.py",
+        ):
+            module = ast.parse((project_root / relative_path).read_text(encoding="utf-8"))
+            for node in ast.walk(module):
+                if not isinstance(node, ast.Call):
+                    continue
+                if not isinstance(node.func, ast.Name) or node.func.id != "AgentTurn":
+                    continue
+                for keyword in node.keywords:
+                    if keyword.arg != "prompt":
+                        continue
+                    self.assertFalse(
+                        isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str),
+                        f"{relative_path} embeds a literal prompt string instead of loading a template.",
+                    )
 
     def test_codex_agent_only_copies_output_dir_back_to_repo(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

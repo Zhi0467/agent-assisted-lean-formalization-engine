@@ -1,0 +1,7 @@
+- Read `plan_handoff`, `natural_language_statement`, `natural_language_proof`, and any `plan_review` / `proof_review` notes before editing Lean.
+- Objective: produce exactly the next `candidate.lean` for this attempt while staying inside the approved theorem statement and proof route.
+- Formalize the approved plan into Lean.
+- Keep the theorem surface aligned with the approved statement unless reviewer notes explicitly change it.
+- On repair attempts, read the previous candidate and compile result before editing.
+- Read any previous walkthrough, readable-candidate, or error-report pointers before repairing.
+- Write only `candidate.lean` for this attempt.

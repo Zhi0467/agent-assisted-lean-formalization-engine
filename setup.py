@@ -18,6 +18,7 @@ setup(
     packages=find_packages("src"),
     package_data={
         "lean_formalization_engine": [
+            "prompts/*",
             "workspace_template/*",
             "workspace_template/FormalizationEngineWorkspace/*",
         ]

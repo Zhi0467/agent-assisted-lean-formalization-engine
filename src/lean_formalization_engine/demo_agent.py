@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from .models import AgentTurn, BackendStage, StageRequest, to_jsonable
+from .prompt_loader import render_prompt_template
 
 
 class DemoFormalizationAgent:
@@ -70,9 +71,10 @@ class DemoFormalizationAgent:
             )
             return AgentTurn(
                 request_payload=to_jsonable(request),
-                prompt=(
-                    "Write an enrichment handoff plus statement/proof-status files that confirm the theorem "
-                    "already has an existing natural-language statement and proof."
+                prompt=render_prompt_template(
+                    "demo_enrichment.md",
+                    theorem_name=theorem["theorem_name"],
+                    output_dir=request.output_dir,
                 ),
                 raw_response="\n\n".join([handoff, natural_language_statement, natural_language_proof]),
             )
@@ -94,7 +96,11 @@ class DemoFormalizationAgent:
             (output_dir / "handoff.md").write_text(handoff, encoding="utf-8")
             return AgentTurn(
                 request_payload=to_jsonable(request),
-                prompt="Write a plan handoff that locks the theorem statement and Lean proof route.",
+                prompt=render_prompt_template(
+                    "demo_plan.md",
+                    theorem_name=theorem["theorem_name"],
+                    output_dir=request.output_dir,
+                ),
                 raw_response=handoff,
             )
 
@@ -136,7 +142,12 @@ class DemoFormalizationAgent:
             (output_dir / "error.md").write_text(error_report, encoding="utf-8")
             return AgentTurn(
                 request_payload=to_jsonable(request),
-                prompt="Write the Terry review artifacts for the selected proof attempt.",
+                prompt=render_prompt_template(
+                    "demo_review.md",
+                    theorem_name=theorem["theorem_name"],
+                    output_dir=request.output_dir,
+                    compile_status=compile_status,
+                ),
                 raw_response="\n\n".join([walkthrough, error_report]),
             )
 
@@ -155,9 +166,12 @@ class DemoFormalizationAgent:
         (output_dir / "candidate.lean").write_text(candidate, encoding="utf-8")
         return AgentTurn(
             request_payload=to_jsonable(request),
-            prompt=(
-                "Write the Lean candidate for the approved plan. "
-                f"Attempt: {request.attempt}/{request.max_attempts}"
+            prompt=render_prompt_template(
+                "demo_proof.md",
+                theorem_name=theorem["theorem_name"],
+                output_dir=request.output_dir,
+                attempt=request.attempt,
+                max_attempts=request.max_attempts,
             ),
             raw_response=candidate,
         )
