@@ -519,14 +519,15 @@ def render_resume_command(
 
 def render_review_summary(run_id: str, attempt: int, repo_root: Path) -> str:
     attempt_dir = repo_root / "artifacts" / "runs" / run_id / "03_proof" / "attempts" / f"attempt_{attempt:04d}"
+    review_dir = attempt_dir / "review"
     lines = [
         f"Run: {run_id}",
         f"Working directory: {repo_root.resolve()}",
         f"Reviewed attempt: {attempt}",
         "Artifacts:",
-        f"- {attempt_dir.relative_to(repo_root) / 'walkthrough.md'}",
-        f"- {attempt_dir.relative_to(repo_root) / 'readable_candidate.lean'}",
-        f"- {attempt_dir.relative_to(repo_root) / 'error.md'}",
+        f"- {review_dir.relative_to(repo_root) / 'walkthrough.md'}",
+        f"- {review_dir.relative_to(repo_root) / 'readable_candidate.lean'}",
+        f"- {review_dir.relative_to(repo_root) / 'error.md'}",
     ]
     return "\n".join(lines)
 

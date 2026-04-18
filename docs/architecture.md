@@ -46,7 +46,8 @@ Terry runs through five phases:
    Backend-owned plan artifacts plus Terry's checkpoint, review, and decision files
 4. `03_proof/`
    The bounded prove-and-repair loop: backend-written Lean candidates, Terry compile
-   checks, backend-written attempt review artifacts, persisted diagnostics, retry if needed
+   checks, backend-written attempt review artifacts under each attempt's `review/`
+   subdirectory, persisted diagnostics, retry if needed
 5. `04_final/`
    The compiling candidate, Terry's final review files, compile results, and the approved final Lean file
 
@@ -158,9 +159,9 @@ The backend is expected to write the required output file inside that output dir
 - `01_enrichment/proof_status.json`
 - `02_plan/handoff.md`
 - `03_proof/attempts/attempt_<n>/candidate.lean`
-- `03_proof/attempts/attempt_<n>/walkthrough.md`
-- `03_proof/attempts/attempt_<n>/readable_candidate.lean`
-- `03_proof/attempts/attempt_<n>/error.md`
+- `03_proof/attempts/attempt_<n>/review/walkthrough.md`
+- `03_proof/attempts/attempt_<n>/review/readable_candidate.lean`
+- `03_proof/attempts/attempt_<n>/review/error.md`
 
 Terry persists the backend call beside those outputs as `request.json`, `prompt.md`, and
 `response.txt`, but it does not parse theorem content back into Terry-owned schemas.

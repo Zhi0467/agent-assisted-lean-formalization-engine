@@ -33,9 +33,9 @@ Run from the repo root after Lean and the Codex CLI are available:
 11. Resume into the prove-and-repair loop:
     `terry resume right-add-zero`
 12. Terry now writes review artifacts for every proof attempt. For the latest one, inspect:
-    `cat artifacts/runs/right-add-zero/03_proof/attempts/attempt_0001/walkthrough.md`
-    `cat artifacts/runs/right-add-zero/03_proof/attempts/attempt_0001/error.md`
-    `cat artifacts/runs/right-add-zero/03_proof/attempts/attempt_0001/readable_candidate.lean`
+    `cat artifacts/runs/right-add-zero/03_proof/attempts/attempt_0001/review/walkthrough.md`
+    `cat artifacts/runs/right-add-zero/03_proof/attempts/attempt_0001/review/error.md`
+    `cat artifacts/runs/right-add-zero/03_proof/attempts/attempt_0001/review/readable_candidate.lean`
     You can rerun that worker explicitly with:
     `terry review right-add-zero --attempt 1`
 13. If Terry reaches final approval directly, inspect:

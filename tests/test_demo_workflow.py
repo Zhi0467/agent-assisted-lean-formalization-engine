@@ -5118,8 +5118,9 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertEqual(manifest.current_stage, RunStage.AWAITING_FINAL_APPROVAL)
             self.assertEqual(manifest.attempt_count, 1)
             self.assertTrue((run_root / "04_final" / "final_candidate.lean").exists())
-            self.assertTrue((run_root / "03_proof" / "attempts" / "attempt_0001" / "walkthrough.md").exists())
-            self.assertTrue((run_root / "03_proof" / "attempts" / "attempt_0001" / "error.md").exists())
+            review_dir = run_root / "03_proof" / "attempts" / "attempt_0001" / "review"
+            self.assertTrue((review_dir / "walkthrough.md").exists())
+            self.assertTrue((review_dir / "error.md").exists())
 
     def test_legacy_three_stage_provider_gets_fallback_attempt_review(self) -> None:
         class LegacyThreeStageAgent:
@@ -5183,11 +5184,161 @@ class DemoWorkflowTest(unittest.TestCase):
 
             self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
             attempt_dir = run_root / "03_proof" / "attempts" / "attempt_0001"
-            self.assertTrue((attempt_dir / "walkthrough.md").exists())
-            self.assertTrue((attempt_dir / "readable_candidate.lean").exists())
-            self.assertTrue((attempt_dir / "error.md").exists())
-            self.assertIn("fallback", (attempt_dir / "walkthrough.md").read_text(encoding="utf-8").lower())
-            self.assertIn("Unsupported stage review", (attempt_dir / "error.md").read_text(encoding="utf-8"))
+            review_dir = attempt_dir / "review"
+            self.assertTrue((review_dir / "walkthrough.md").exists())
+            self.assertTrue((review_dir / "readable_candidate.lean").exists())
+            self.assertTrue((review_dir / "error.md").exists())
+            self.assertIn("fallback", (review_dir / "walkthrough.md").read_text(encoding="utf-8").lower())
+            self.assertIn("Unsupported stage review", (review_dir / "error.md").read_text(encoding="utf-8"))
+
+    def test_attempt_review_outputs_are_isolated_from_compiled_candidate(self) -> None:
+        class NoisyReviewAgent:
+            name = "noisy_review_agent"
+
+            def run_stage(self, request: StageRequest) -> AgentTurn:
+                output_dir = Path(request.repo_root) / request.output_dir
+                output_dir.mkdir(parents=True, exist_ok=True)
+
+                if request.stage == BackendStage.ENRICHMENT:
+                    (output_dir / "handoff.md").write_text("# Enrichment Handoff\n\nScoped over Nat.\n", encoding="utf-8")
+                    (output_dir / "natural_language_statement.md").write_text(
+                        "# Natural-Language Statement\n\nFor every natural number n, 0 + n = n.\n",
+                        encoding="utf-8",
+                    )
+                    (output_dir / "natural_language_proof.md").write_text(
+                        "# Natural-Language Proof\n\nUse `Nat.zero_add`.\n",
+                        encoding="utf-8",
+                    )
+                    (output_dir / "proof_status.json").write_text(
+                        json.dumps({"obtained": True, "source": "input", "notes": ""}),
+                        encoding="utf-8",
+                    )
+                elif request.stage == BackendStage.PLAN:
+                    (output_dir / "handoff.md").write_text("# Plan Handoff\n\nUse `Nat.zero_add`.\n", encoding="utf-8")
+                elif request.stage == BackendStage.PROOF:
+                    (output_dir / "candidate.lean").write_text(
+                        "\n".join(
+                            [
+                                "import FormalizationEngineWorkspace.Basic",
+                                "",
+                                "theorem isolated_review (n : Nat) : 0 + n = n := by",
+                                "  simpa using Nat.zero_add n",
+                                "",
+                            ]
+                        ),
+                        encoding="utf-8",
+                    )
+                elif request.stage == BackendStage.REVIEW:
+                    (output_dir / "candidate.lean").write_text("-- bogus review spillover\n", encoding="utf-8")
+                    (output_dir / "walkthrough.md").write_text("# Attempt Walkthrough\n\nCompiled cleanly.\n", encoding="utf-8")
+                    (output_dir / "readable_candidate.lean").write_text("-- Readable rewrite\n", encoding="utf-8")
+                    (output_dir / "error.md").write_text("# Error Report\n\nNo error.\n", encoding="utf-8")
+                else:
+                    raise ValueError(f"Unsupported stage {request.stage.value}")
+
+                return AgentTurn(
+                    request_payload={"stage": request.stage.value},
+                    prompt=f"{request.stage.value} prompt",
+                    raw_response=f"{request.stage.value} response",
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=NoisyReviewAgent(),
+                agent_config=AgentConfig(backend="command", command=["python3", "provider.py"]),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+
+            manifest = workflow.prove(source_path=source_path, run_id="isolated-review", auto_approve=True)
+            run_root = temp_root / "artifacts" / "runs" / "isolated-review"
+            attempt_dir = run_root / "03_proof" / "attempts" / "attempt_0001"
+            review_dir = attempt_dir / "review"
+
+            self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
+            self.assertTrue((review_dir / "candidate.lean").exists())
+            self.assertIn("isolated_review", (attempt_dir / "candidate.lean").read_text(encoding="utf-8"))
+            self.assertIn("isolated_review", (run_root / "04_final" / "final_candidate.lean").read_text(encoding="utf-8"))
+            self.assertNotIn("bogus review spillover", (run_root / "04_final" / "final_candidate.lean").read_text(encoding="utf-8"))
+
+    def test_proof_blocked_checkpoint_points_to_retry_command(self) -> None:
+        class StuckProofAgent:
+            name = "stuck_proof_agent"
+
+            def run_stage(self, request: StageRequest) -> AgentTurn:
+                output_dir = Path(request.repo_root) / request.output_dir
+                output_dir.mkdir(parents=True, exist_ok=True)
+
+                if request.stage == BackendStage.ENRICHMENT:
+                    (output_dir / "handoff.md").write_text("# Enrichment Handoff\n\nScoped over Nat.\n", encoding="utf-8")
+                    (output_dir / "natural_language_statement.md").write_text(
+                        "# Natural-Language Statement\n\nFor every natural number n, 0 + n = n.\n",
+                        encoding="utf-8",
+                    )
+                    (output_dir / "natural_language_proof.md").write_text(
+                        "# Natural-Language Proof\n\nUse `Nat.zero_add`.\n",
+                        encoding="utf-8",
+                    )
+                    (output_dir / "proof_status.json").write_text(
+                        json.dumps({"obtained": True, "source": "input", "notes": ""}),
+                        encoding="utf-8",
+                    )
+                elif request.stage == BackendStage.PLAN:
+                    (output_dir / "handoff.md").write_text("# Plan Handoff\n\nUse `Nat.zero_add`.\n", encoding="utf-8")
+                elif request.stage == BackendStage.PROOF:
+                    (output_dir / "candidate.lean").write_text(
+                        "\n".join(
+                            [
+                                "import FormalizationEngineWorkspace.Basic",
+                                "",
+                                "theorem blocked_retry (n : Nat) : 0 + n = n := by",
+                                "  sorry",
+                                "",
+                            ]
+                        ),
+                        encoding="utf-8",
+                    )
+                elif request.stage == BackendStage.REVIEW:
+                    (output_dir / "walkthrough.md").write_text("# Attempt Walkthrough\n\nStill blocked.\n", encoding="utf-8")
+                    (output_dir / "readable_candidate.lean").write_text("-- Readable rewrite\n", encoding="utf-8")
+                    (output_dir / "error.md").write_text("# Error Report\n\nStill blocked.\n", encoding="utf-8")
+                else:
+                    raise ValueError(f"Unsupported stage {request.stage.value}")
+
+                return AgentTurn(
+                    request_payload={"stage": request.stage.value},
+                    prompt=f"{request.stage.value} prompt",
+                    raw_response=f"{request.stage.value} response",
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=StuckProofAgent(),
+                agent_config=AgentConfig(backend="command", command=["python3", "provider.py"]),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+
+            manifest = workflow.prove(source_path=source_path, run_id="blocked-checkpoint", auto_approve=True)
+            checkpoint_text = (
+                temp_root
+                / "artifacts"
+                / "runs"
+                / "blocked-checkpoint"
+                / "03_proof"
+                / "checkpoint.md"
+            ).read_text(encoding="utf-8")
+
+            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
+            self.assertIn("## Continue Command", checkpoint_text)
+            self.assertIn("retry blocked-checkpoint --attempts 3", checkpoint_text)
+            self.assertNotIn("## Resume Command", checkpoint_text)
 
     def test_missing_required_output_raises(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -5318,9 +5469,10 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertEqual(review_result.returncode, 0, msg=review_result.stderr)
             self.assertIn("Reviewed attempt: 1", review_result.stdout)
             attempt_dir = temp_root / "artifacts" / "runs" / "cli-review" / "03_proof" / "attempts" / "attempt_0001"
-            self.assertTrue((attempt_dir / "walkthrough.md").exists())
-            self.assertTrue((attempt_dir / "readable_candidate.lean").exists())
-            self.assertTrue((attempt_dir / "error.md").exists())
+            review_dir = attempt_dir / "review"
+            self.assertTrue((review_dir / "walkthrough.md").exists())
+            self.assertTrue((review_dir / "readable_candidate.lean").exists())
+            self.assertTrue((review_dir / "error.md").exists())
 
     def test_cli_retry_command_allows_one_more_attempt(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

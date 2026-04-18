@@ -148,7 +148,7 @@ Each run lives under `artifacts/runs/<run_id>/`:
 - `00_input/` — original source text and provenance
 - `01_enrichment/` — backend-owned enrichment handoff, natural-language statement/proof files, proof status, plus Terry's checkpoint files
 - `02_plan/` — backend-owned merged meaning+plan handoff plus Terry's checkpoint files
-- `03_proof/` — prove-and-repair attempts, backend-written Lean candidates, attempt review artifacts, compile results, and proof-blocked handoff if needed
+- `03_proof/` — prove-and-repair attempts, backend-written Lean candidates, per-attempt `review/` artifacts, compile results, and proof-blocked handoff if needed
 - `04_final/` — final candidate, final review files, and approved output
 - `logs/` — readable `timeline.md` plus structured `workflow.jsonl`
 

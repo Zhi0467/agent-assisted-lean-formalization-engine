@@ -70,16 +70,16 @@ launch the backend, but theorem content itself should travel only through files.
   beside it.
 - `03_proof/attempts/attempt_<n>/candidate.lean`
   The Lean file Terry compiles for that attempt.
-- `03_proof/attempts/attempt_<n>/walkthrough.md`
-- `03_proof/attempts/attempt_<n>/readable_candidate.lean`
-- `03_proof/attempts/attempt_<n>/error.md`
+- `03_proof/attempts/attempt_<n>/review/walkthrough.md`
+- `03_proof/attempts/attempt_<n>/review/readable_candidate.lean`
+- `03_proof/attempts/attempt_<n>/review/error.md`
   Terry review artifacts for that proof attempt.
 
 - `01_enrichment/natural_language_proof.md`
   Required in practice whenever `proof_status.json` reports `obtained: true`.
-- `03_proof/attempts/attempt_<n>/walkthrough.md`
-- `03_proof/attempts/attempt_<n>/readable_candidate.lean`
-- `03_proof/attempts/attempt_<n>/error.md`
+- `03_proof/attempts/attempt_<n>/review/walkthrough.md`
+- `03_proof/attempts/attempt_<n>/review/readable_candidate.lean`
+- `03_proof/attempts/attempt_<n>/review/error.md`
   These review artifacts should also be passed back into later proof turns by pointer
   when Terry asks the backend for a repair attempt.
 
@@ -87,7 +87,7 @@ launch the backend, but theorem content itself should travel only through files.
 
 - `01_enrichment/*`
 - `02_plan/*`
-- `03_proof/attempts/attempt_<n>/*` other than the required `candidate.lean` plus review artifacts above
+- `03_proof/attempts/attempt_<n>/*` other than the required `candidate.lean` and `compile_result.json`, plus review artifacts under `review/`
 - `04_final/handoff.md`
 - any other files the backend wants to preserve for replay or human review
 

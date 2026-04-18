@@ -38,6 +38,7 @@ PLAN_HANDOFF = f"{PLAN_DIR}/handoff.md"
 PROOF_BLOCKER = f"{PROOF_DIR}/blocker.md"
 PROOF_LOOP = f"{PROOF_DIR}/loop.md"
 FINAL_CANDIDATE = f"{FINAL_DIR}/final_candidate.lean"
+ATTEMPT_REVIEW_DIR = "review"
 ATTEMPT_WALKTHROUGH = "walkthrough.md"
 ATTEMPT_READABLE_CANDIDATE = "readable_candidate.lean"
 ATTEMPT_ERROR_REPORT = "error.md"
@@ -1082,7 +1083,7 @@ class FormalizationWorkflow:
         self._save_manifest(store, manifest)
         review_path = f"{stage_dir}/review.md"
         checkpoint_path = f"{stage_dir}/checkpoint.md"
-        resume_command = self._resume_command(manifest)
+        continue_command = self._continue_command(manifest, continue_decision)
 
         existing_decision = self._load_decision(store, f"{stage_dir}/decision.json")
         if existing_decision is None or existing_decision.decision in {"pending", continue_decision}:
@@ -1107,7 +1108,7 @@ class FormalizationWorkflow:
                 summary=summary,
                 artifact_paths=artifact_paths,
                 review_path=review_path,
-                resume_command=resume_command,
+                continue_command=continue_command,
                 continue_decision=continue_decision,
             ),
         )
@@ -1118,7 +1119,7 @@ class FormalizationWorkflow:
             details={
                 "checkpoint_path": checkpoint_path,
                 "review_path": review_path,
-                "resume_command": resume_command,
+                "continue_command": continue_command,
             },
         )
         return manifest
@@ -1227,7 +1228,7 @@ class FormalizationWorkflow:
                     ("previous_readable_candidate", ATTEMPT_READABLE_CANDIDATE),
                     ("previous_error_report", ATTEMPT_ERROR_REPORT),
                 ):
-                    previous_review_path = f"{previous_attempt_dir}/{filename}"
+                    previous_review_path = f"{previous_attempt_dir}/{ATTEMPT_REVIEW_DIR}/{filename}"
                     if store.exists(previous_review_path):
                         input_paths[key] = self._repo_relative(store.path(previous_review_path))
             elif attempt is not None and attempt > 1:
@@ -1341,11 +1342,12 @@ class FormalizationWorkflow:
             raise ValueError(
                 "Terry review needs both the candidate and compile result for the selected attempt."
             )
+        review_dir = f"{attempt_dir}/{ATTEMPT_REVIEW_DIR}"
         request = self._build_stage_request(
             store,
             manifest,
             stage=BackendStage.REVIEW,
-            output_dir=attempt_dir,
+            output_dir=review_dir,
             required_outputs=ATTEMPT_REVIEW_OUTPUTS,
             review_notes_relative_path=review_notes_relative_path,
             latest_compile_result_path=compile_path,
@@ -1353,7 +1355,7 @@ class FormalizationWorkflow:
             max_attempts=max_attempts or manifest.attempt_count or self.max_attempts,
         )
         try:
-            self._run_backend_stage(store, request, attempt_dir)
+            self._run_backend_stage(store, request, review_dir)
             store.append_log(
                 "attempt_review_ready",
                 f"Wrote Terry review artifacts for attempt {attempt}.",
@@ -1439,13 +1441,15 @@ class FormalizationWorkflow:
                 ]
             )
         error_lines.append("")
-        store.write_text(f"{attempt_dir}/{ATTEMPT_WALKTHROUGH}", walkthrough)
-        store.write_text(f"{attempt_dir}/{ATTEMPT_READABLE_CANDIDATE}", readable_candidate)
-        store.write_text(f"{attempt_dir}/{ATTEMPT_ERROR_REPORT}", "\n".join(error_lines))
+        review_dir = f"{attempt_dir}/{ATTEMPT_REVIEW_DIR}"
+        store.write_text(f"{review_dir}/{ATTEMPT_WALKTHROUGH}", walkthrough)
+        store.write_text(f"{review_dir}/{ATTEMPT_READABLE_CANDIDATE}", readable_candidate)
+        store.write_text(f"{review_dir}/{ATTEMPT_ERROR_REPORT}", "\n".join(error_lines))
 
     def _attempt_review_paths(self, attempt: int) -> list[str]:
         attempt_dir = f"{PROOF_DIR}/attempts/attempt_{attempt:04d}"
-        return [f"{attempt_dir}/{relative_path}" for relative_path in ATTEMPT_REVIEW_OUTPUTS]
+        review_dir = f"{attempt_dir}/{ATTEMPT_REVIEW_DIR}"
+        return [f"{review_dir}/{relative_path}" for relative_path in ATTEMPT_REVIEW_OUTPUTS]
 
     def _existing_attempt_review_artifacts(self, store: RunStore, attempt: int) -> list[str]:
         return [relative_path for relative_path in self._attempt_review_paths(attempt) if store.exists(relative_path)]
@@ -1533,7 +1537,7 @@ class FormalizationWorkflow:
         summary: str,
         artifact_paths: list[str],
         review_path: str,
-        resume_command: str,
+        continue_command: str,
         continue_decision: str,
     ) -> str:
         artifact_lines = "\n".join(f"- `{path}`" for path in artifact_paths)
@@ -1552,8 +1556,8 @@ class FormalizationWorkflow:
                 "## Continue Condition",
                 f"Set `decision: {continue_decision}` in the review file when you want Terry to continue.",
                 "",
-                "## Resume Command",
-                f"`{resume_command}`",
+                "## Continue Command",
+                f"`{continue_command}`",
                 "",
             ]
         )
@@ -1594,6 +1598,11 @@ class FormalizationWorkflow:
             return None
         return self._repo_relative(store.path(relative_path))
 
+    def _continue_command(self, manifest: RunManifest, continue_decision: str) -> str:
+        if continue_decision == "retry":
+            return self._retry_command(manifest)
+        return self._resume_command(manifest)
+
     def _resume_command(self, manifest: RunManifest) -> str:
         command = [
             self.terry_command,
@@ -1604,6 +1613,25 @@ class FormalizationWorkflow:
         if lake_path:
             command.extend(["--lake-path", lake_path])
         command.extend(["resume", manifest.run_id])
+        if manifest.agent_config.backend == "command":
+            provider_command = (
+                shlex.join(manifest.agent_config.command)
+                if manifest.agent_config.command
+                else "python3 path/to/provider.py"
+            )
+            command.extend(["--agent-command", provider_command])
+        return " ".join(shlex.quote(part) for part in command)
+
+    def _retry_command(self, manifest: RunManifest, extra_attempts: int = 3) -> str:
+        command = [
+            self.terry_command,
+            "--repo-root",
+            str(self.repo_root.resolve()),
+        ]
+        lake_path = self._persisted_lake_path()
+        if lake_path:
+            command.extend(["--lake-path", lake_path])
+        command.extend(["retry", manifest.run_id, "--attempts", str(extra_attempts)])
         if manifest.agent_config.backend == "command":
             provider_command = (
                 shlex.join(manifest.agent_config.command)
