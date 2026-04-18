@@ -503,7 +503,7 @@ class DemoWorkflowTest(unittest.TestCase):
                     lake_path=str(fake_lake),
                 ),
             )
-            manifest = resumed_workflow.resume("stall-demo", auto_approve=True)
+            manifest = resumed_workflow.retry("stall-demo", extra_attempts=1, auto_approve=True)
             self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
             self.assertEqual(Path(manifest.template_dir), packaged_template)
 
@@ -4427,7 +4427,7 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
 
             self._write_review(run_root, "03_proof", "retry", "One more attempt.")
-            manifest = workflow.resume("recording", auto_approve=False)
+            manifest = workflow.retry("recording", extra_attempts=1)
             self.assertEqual(manifest.current_stage, RunStage.AWAITING_FINAL_APPROVAL)
 
             self.assertEqual(agent.requests[0].stage, BackendStage.ENRICHMENT)
@@ -4510,7 +4510,7 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertEqual(manifest.attempt_count, 1)
 
             self._write_review(run_root, "03_proof", "retry", "Try one more attempt.")
-            manifest = workflow.resume("stale-retry", auto_approve=False)
+            manifest = workflow.retry("stale-retry", extra_attempts=1)
             self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
             self.assertEqual(manifest.attempt_count, 2)
 
@@ -4518,9 +4518,8 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertIn("decision: pending", review_text)
             self.assertNotIn("decision: retry", review_text)
 
-            manifest = workflow.resume("stale-retry", auto_approve=False)
-            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
-            self.assertEqual(manifest.attempt_count, 2)
+            with self.assertRaisesRegex(ValueError, "terry retry"):
+                workflow.resume("stale-retry", auto_approve=False)
 
     def test_missing_natural_language_proof_blocks_plan_stage_even_with_auto_approve(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -4601,7 +4600,6 @@ class DemoWorkflowTest(unittest.TestCase):
             review_text = (run_root / "02_plan" / "review.md").read_text(encoding="utf-8")
             self.assertIn("decision: pending", review_text)
             self.assertNotIn("decision: reject", review_text)
-
     def test_stage_requests_fall_back_to_legacy_normalized_input(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -4921,7 +4919,7 @@ class DemoWorkflowTest(unittest.TestCase):
                 agent_config=AgentConfig(backend="demo"),
                 lean_runner=ContentCheckingLeanRunner(),
             )
-            manifest = workflow.resume("legacy-stall", auto_approve=False)
+            manifest = workflow.retry("legacy-stall", extra_attempts=1)
             self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
 
             proof_request = agent.requests[0]
@@ -5183,6 +5181,8 @@ class DemoWorkflowTest(unittest.TestCase):
                 str(fake_lake),
                 "retry",
                 "cli-retry",
+                "--attempts",
+                "1",
                 "--agent-backend",
                 "command",
                 "--agent-command",

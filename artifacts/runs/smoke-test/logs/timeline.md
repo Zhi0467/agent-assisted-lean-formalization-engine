@@ -1,0 +1,1 @@
+- 2026-04-18T04:19:17Z | `run_started` [input] | Started run `smoke-test` from `examples/inputs/right_add_zero.md`.

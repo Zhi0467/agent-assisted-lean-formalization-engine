@@ -343,59 +343,17 @@ class FormalizationWorkflow:
             return self._prove_loop(store, manifest, auto_approve=auto_approve)
 
         if manifest.current_stage == RunStage.PROOF_BLOCKED:
-            decision = self._resolve_checkpoint_decision(
-                store,
-                PROOF_DIR,
-                continue_decision="retry",
-                auto_approve=auto_approve,
-            )
-            if decision is None or decision.decision != "retry":
-                if self._checkpoint_surface_missing(store, PROOF_DIR):
-                    return self._pause_for_proof_blocked(
-                        store,
-                        manifest,
-                        reason=(
-                            "Terry paused in the prove-and-repair loop.\n\n"
-                            "Review the blocker and loop summary, then set `decision: retry` "
-                            "when you want exactly one more attempt."
-                        ),
-                    )
-                return manifest
-            store.append_log(
-                "proof_retry_approved",
-                "Human approved one more prove-and-repair attempt.",
-                stage="proof",
-                details={"notes": decision.notes},
-            )
-            return self._prove_loop(
-                store,
-                manifest,
-                auto_approve=auto_approve,
-                max_attempts=manifest.attempt_count + 1,
-                review_notes_relative_path=f"{PROOF_DIR}/review.md",
+            raise ValueError(
+                f"Run `{run_id}` is proof-blocked after {manifest.attempt_count} attempt(s). "
+                "Use `terry retry` to grant more prove-and-repair budget:\n\n"
+                f"  terry retry {run_id} --attempts 3"
             )
 
         if manifest.current_stage == RunStage.LEGACY_AWAITING_STALL_REVIEW:
-            decision = self._resolve_checkpoint_decision(
-                store,
-                LEGACY_STALL_DIR,
-                continue_decision="retry",
-                auto_approve=auto_approve,
-            )
-            if decision is None or decision.decision != "retry":
-                return self._pause_for_legacy_stall_review(store, manifest)
-            store.append_log(
-                "proof_retry_approved",
-                "Legacy proof-stall checkpoint approved for one more attempt.",
-                stage="proof",
-                details={"notes": decision.notes},
-            )
-            return self._prove_loop(
-                store,
-                manifest,
-                auto_approve=auto_approve,
-                max_attempts=manifest.attempt_count + 1,
-                review_notes_relative_path=f"{LEGACY_STALL_DIR}/review.md",
+            raise ValueError(
+                f"Run `{run_id}` is proof-blocked (legacy stall) after {manifest.attempt_count} attempt(s). "
+                "Use `terry retry` to grant more prove-and-repair budget:\n\n"
+                f"  terry retry {run_id} --attempts 3"
             )
 
         if manifest.current_stage == RunStage.AWAITING_FINAL_APPROVAL:
@@ -435,6 +393,43 @@ class FormalizationWorkflow:
             return self._complete_from_candidate(store, manifest)
 
         return manifest
+
+    def retry(self, run_id: str, extra_attempts: int = 3, auto_approve: bool = False) -> RunManifest:
+        store = RunStore(self.artifacts_root, run_id)
+        manifest = self._load_manifest(store)
+
+        blocked_stages = {
+            RunStage.PROOF_BLOCKED,
+            RunStage.LEGACY_AWAITING_STALL_REVIEW,
+        }
+        if manifest.current_stage not in blocked_stages:
+            raise ValueError(
+                f"Run `{run_id}` is in `{manifest.current_stage.value}`, not proof-blocked. "
+                "`terry retry` only works on runs that exhausted their prove-and-repair budget."
+            )
+        if extra_attempts < 1:
+            raise ValueError("--attempts must be at least 1.")
+
+        review_notes_relative_path: str | None = None
+        if manifest.current_stage == RunStage.PROOF_BLOCKED:
+            review_notes_relative_path = f"{PROOF_DIR}/review.md"
+        elif manifest.current_stage == RunStage.LEGACY_AWAITING_STALL_REVIEW:
+            review_notes_relative_path = f"{LEGACY_STALL_DIR}/review.md"
+
+        store.append_log(
+            "proof_retry_approved",
+            f"Human approved {extra_attempts} more prove-and-repair attempt(s) via `terry retry`.",
+            stage="proof",
+            details={"extra_attempts": extra_attempts},
+        )
+
+        return self._prove_loop(
+            store,
+            manifest,
+            auto_approve=auto_approve,
+            max_attempts=manifest.attempt_count + extra_attempts,
+            review_notes_relative_path=review_notes_relative_path,
+        )
 
     def status(self, run_id: str) -> RunManifest:
         store = RunStore(self.artifacts_root, run_id)
@@ -757,8 +752,7 @@ class FormalizationWorkflow:
                     manifest,
                     reason=(
                         "Lean toolchain is unavailable, so Terry could not continue the proof loop.\n\n"
-                        "Fix the toolchain, then set `decision: retry` in the review file to allow "
-                        "one more attempt."
+                        "Fix the toolchain, then run `terry retry <run_id>` to grant more attempts."
                     ),
                 )
 
@@ -785,8 +779,8 @@ class FormalizationWorkflow:
             manifest,
             reason=(
                 "The prove-and-repair loop hit the retry cap.\n\n"
-                "If you want Terry to take one more attempt on the same locked plan, set "
-                "`decision: retry` in the proof review file and keep any guidance in the notes."
+                "To grant more attempts, run `terry retry <run_id> --attempts N`.\n"
+                "Add any guidance in the `03_proof/review.md` notes before retrying."
             ),
         )
 
@@ -990,7 +984,7 @@ class FormalizationWorkflow:
             stage=RunStage.PROOF_BLOCKED,
             stage_dir=PROOF_DIR,
             title="Proof Loop Blocked",
-            summary="Terry paused inside the prove-and-repair loop and needs explicit permission to retry.",
+            summary="Terry paused inside the prove-and-repair loop. Run `terry retry` to grant more attempts.",
             artifact_paths=artifact_paths,
             continue_decision="retry",
         )

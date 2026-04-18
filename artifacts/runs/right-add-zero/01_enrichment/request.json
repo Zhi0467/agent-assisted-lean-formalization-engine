@@ -1,0 +1,20 @@
+{
+  "attempt": null,
+  "input_paths": {
+    "normalized_source": "artifacts/runs/right-add-zero/00_input/normalized.md",
+    "provenance": "artifacts/runs/right-add-zero/00_input/provenance.json",
+    "source": "artifacts/runs/right-add-zero/00_input/source.txt"
+  },
+  "latest_compile_result_path": null,
+  "max_attempts": null,
+  "output_dir": "artifacts/runs/right-add-zero/01_enrichment",
+  "previous_attempt_dir": null,
+  "repo_root": "/Users/zhiwang/Desktop/research/agent-assisted-lean-formalization-engine",
+  "required_outputs": [
+    "handoff.md"
+  ],
+  "review_notes_path": null,
+  "run_dir": "artifacts/runs/right-add-zero",
+  "run_id": "right-add-zero",
+  "stage": "enrichment"
+}

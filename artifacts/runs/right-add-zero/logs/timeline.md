@@ -1,0 +1,3 @@
+- 2026-04-18T04:20:55Z | `run_started` [input] | Started run `right-add-zero` from `examples/inputs/right_add_zero.md`.
+- 2026-04-18T04:37:43Z | `enrichment_ready` [enrichment] | Prepared the backend-owned enrichment handoff.
+- 2026-04-18T04:37:43Z | `checkpoint_opened` [awaiting_enrichment_approval] | Terry is waiting for enrichment approval before locking the formalization scope.
