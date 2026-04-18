@@ -9,6 +9,7 @@ review file for the active checkpoint, and continue with `terry resume`.
 
 - `src/lean_formalization_engine/` holds the engine, CLI, template resolver, and Lean runner.
 - `examples/` holds theorem inputs plus runnable demo scripts for the demo, command, and Codex backends.
+- `examples/inputs/convergent_sequence_bounded.md` plus `artifacts/runs/convergent-seq-bounded/` give the first checked-in nontrivial Terry/Codex example that actually needed repair attempts.
 - `artifacts/runs/<run_id>/` is the system of record for each run: checkpoints, proof attempts, final artifacts, and logs.
 - `lean_workspace_template/` is the Terry workspace scaffold. The CLI auto-discovers it at depth 1, initializes one with `lake new ... math` if none is present, and falls back to the packaged scaffold for the known mathlib revision-mismatch bootstrap failure.
 - `.terry/lean_workspace/` is Terry's local compile cache. It stays out of Git, keeps the warmed `.lake` state between runs in the same repo, and gets rebuilt when the template or the actual toolchain behind `lake` changes.

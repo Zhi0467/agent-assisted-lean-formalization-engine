@@ -1,0 +1,22 @@
+{
+  "attempt": null,
+  "input_paths": {
+    "enrichment_handoff": "artifacts/runs/convergent-seq-bounded/01_enrichment/handoff.md",
+    "enrichment_review": "artifacts/runs/convergent-seq-bounded/01_enrichment/review.md",
+    "normalized_source": "artifacts/runs/convergent-seq-bounded/00_input/normalized.md",
+    "provenance": "artifacts/runs/convergent-seq-bounded/00_input/provenance.json",
+    "source": "artifacts/runs/convergent-seq-bounded/00_input/source.txt"
+  },
+  "latest_compile_result_path": null,
+  "max_attempts": null,
+  "output_dir": "artifacts/runs/convergent-seq-bounded/02_plan",
+  "previous_attempt_dir": null,
+  "repo_root": ".",
+  "required_outputs": [
+    "handoff.md"
+  ],
+  "review_notes_path": "artifacts/runs/convergent-seq-bounded/01_enrichment/review.md",
+  "run_dir": "artifacts/runs/convergent-seq-bounded",
+  "run_id": "convergent-seq-bounded",
+  "stage": "plan"
+}

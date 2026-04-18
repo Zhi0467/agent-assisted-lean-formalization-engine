@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-04-18 03:17 UTC
+Last updated: 2026-04-18 04:36 UTC
 
 ## Current Status
 
@@ -69,8 +69,15 @@ Final validation on the merged surface is now:
 
 The review tool still never produced a final terminal message on its last detached rerun,
 but that pass did not surface any new issue beyond the final two cache-recovery bugs
-fixed before merge, and all live GitHub review threads on PR `#4` were resolved. The
-next product work is no longer review closure; it is Milestone 2 on the merged surface.
+fixed before merge, and all live GitHub review threads on PR `#4` were resolved.
+
+Milestone 2 is now closed on the shipped repo surface as well, not just in a task
+report. The repo now includes `examples/inputs/convergent_sequence_bounded.md` plus the
+archived run `artifacts/runs/convergent-seq-bounded/`, where Terry needed all `3`
+default proof attempts before the final candidate compiled cleanly. The next product
+work is therefore no longer "prove Terry can repair at least once"; it is deciding
+whether the proof loop needs richer verification or revision control once theorems get
+harder.
 
 ## Milestone 1 — Terry CLI Contract
 
@@ -145,6 +152,8 @@ Gate:
 
 ## Milestone 2 — Real Proof Stress
 
+Status: complete on `main` as of archived run `convergent-seq-bounded`.
+
 Success criteria:
 
 - a non-demo theorem forces at least one genuine repair attempt on the Terry surface
@@ -153,6 +162,12 @@ Success criteria:
 Gate:
 
 - at least one checked-in run proves a theorem only after seeing real compile feedback
+
+### Activity Log
+
+- [2026-04-18 04:36 UTC] Archived the first nontrivial Terry/Codex repair run into the repo at `artifacts/runs/convergent-seq-bounded/`, with the source theorem mirrored at `examples/inputs/convergent_sequence_bounded.md`. To keep the checked-in example portable, only location-dependent metadata was normalized to repo-relative form; the proof attempts, prompts, responses, review files, and compile logs are the original run artifacts.
+- [2026-04-18 04:05 UTC] Terry completed the college-level real-analysis theorem "a convergent real sequence is bounded" after `3` proof attempts. Attempts `1` and `2` failed on real Lean theorem-code issues, and attempt `3` compiled cleanly with no `sorry`, which satisfies the Milestone 2 gate.
+- [2026-04-18 04:05 UTC] The full timing trail for that run is now durable in `artifacts/runs/convergent-seq-bounded/logs/timeline.md`: run start `03:41:24 UTC`, prove-loop start `03:45:34 UTC`, attempt `1` fail `03:55:26 UTC`, attempt `2` fail `03:59:02 UTC`, attempt `3` pass `04:04:49 UTC`, and final approval / completion `04:05:32 UTC`.
 
 ## Milestone 3 — Richer Revision Control
 

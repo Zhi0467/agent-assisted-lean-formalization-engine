@@ -9,6 +9,12 @@ shared workspace when it is partially damaged, and degrades gracefully when conv
 steps like `.git/info/exclude` writes or alias symlink creation fail. The Milestone 1
 backlog is clean.
 
+Milestone 2's gate is now met as well. The repo now carries the exact nontrivial Terry
+run under `artifacts/runs/convergent-seq-bounded/`, backed by
+`examples/inputs/convergent_sequence_bounded.md`. That archived run needed all `3`
+default proof attempts: attempts `1` and `2` failed on real Lean theorem-code issues,
+and attempt `3` passed.
+
 Current verification:
 
 - `PYTHONPATH=src:. pytest -q` (`107` tests, all passing)
@@ -29,12 +35,16 @@ Current verification:
     reusable
 - all live GitHub review threads on PR `#4` were resolved before merge, and the local
   project checkout was cleaned of untracked Terry test junk after the final e2e
+- the first checked-in nontrivial Terry/Codex archive is now in the repo:
+  - input: `examples/inputs/convergent_sequence_bounded.md`
+  - run: `artifacts/runs/convergent-seq-bounded/`
+  - final output: `artifacts/runs/convergent-seq-bounded/04_final/final.lean`
 
-Next step:
+Open follow-ups:
 
-- run a non-demo theorem that actually needs at least one repair pass on the merged
-  Terry surface, then decide whether the proof-loop control needs stronger stopping or
-  verification logic
+- [ ] Decide whether Terry's default `3`-attempt proof budget should become a CLI-level knob instead of a code default.
+- [ ] Decide whether final approval should add a second fresh-workspace verification pass instead of trusting one passing Terry compile.
+- [ ] Build a small checked-in benchmark set beyond `convergent-seq-bounded` so proof-loop behavior is not judged from one theorem.
 
 ## Orchestrator-Only Refactor
 

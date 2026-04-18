@@ -1,0 +1,21 @@
+- 2026-04-18T03:41:24Z | `run_started` [input] | Started run `convergent-seq-bounded` from `convergent_sequence_bounded.md`.
+- 2026-04-18T03:43:02Z | `enrichment_ready` [enrichment] | Prepared the backend-owned enrichment handoff.
+- 2026-04-18T03:43:02Z | `checkpoint_opened` [awaiting_enrichment_approval] | Terry is waiting for enrichment approval before locking the formalization scope.
+- 2026-04-18T03:43:34Z | `resume_requested` [awaiting_enrichment_approval] | Resume requested while run is in `awaiting_enrichment_approval`.
+- 2026-04-18T03:43:34Z | `checkpoint_approved` [enrichment] | Enrichment checkpoint approved.
+- 2026-04-18T03:44:58Z | `plan_ready` [plan] | Prepared the backend-owned plan handoff.
+- 2026-04-18T03:44:58Z | `checkpoint_opened` [awaiting_plan_approval] | Terry is waiting for the merged plan approval before starting the prove-and-repair loop.
+- 2026-04-18T03:45:34Z | `resume_requested` [awaiting_plan_approval] | Resume requested while run is in `awaiting_plan_approval`.
+- 2026-04-18T03:45:34Z | `checkpoint_approved` [plan] | Plan checkpoint approved.
+- 2026-04-18T03:45:34Z | `prove_loop_started` [proof] | Started the bounded prove-and-repair loop.
+- 2026-04-18T03:45:34Z | `prove_attempt_started` [proof] | Starting proof attempt 1 of 3.
+- 2026-04-18T03:55:26Z | `prove_attempt_failed` [proof] | Attempt 1 failed and Terry is trying the next repair step.
+- 2026-04-18T03:55:26Z | `prove_attempt_started` [proof] | Starting proof attempt 2 of 3.
+- 2026-04-18T03:59:02Z | `prove_attempt_failed` [proof] | Attempt 2 failed and Terry is trying the next repair step.
+- 2026-04-18T03:59:02Z | `prove_attempt_started` [proof] | Starting proof attempt 3 of 3.
+- 2026-04-18T04:04:49Z | `prove_attempt_passed` [proof] | Attempt 3 compiled successfully.
+- 2026-04-18T04:04:49Z | `final_candidate_ready` [final] | Generated a compiling Lean candidate for final review.
+- 2026-04-18T04:04:49Z | `checkpoint_opened` [awaiting_final_approval] | Terry is waiting for final approval of the compiling Lean candidate.
+- 2026-04-18T04:05:32Z | `resume_requested` [awaiting_final_approval] | Resume requested while run is in `awaiting_final_approval`.
+- 2026-04-18T04:05:32Z | `checkpoint_approved` [final] | Final checkpoint approved.
+- 2026-04-18T04:05:32Z | `run_completed` [final] | Final Lean file approved and written to disk.

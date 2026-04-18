@@ -1,0 +1,9 @@
+# Enrichment Approval
+
+decision: approve
+
+Change `decision: pending` to `approve` when you want Terry to continue.
+Leave the `Notes:` section blank unless you want Terry to receive actual reviewer guidance.
+
+Notes:
+- The target statement and proof direction are clear enough to lock.

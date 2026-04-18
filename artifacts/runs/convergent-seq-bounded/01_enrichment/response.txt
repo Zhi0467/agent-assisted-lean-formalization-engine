@@ -1,0 +1,1 @@
+Wrote `artifacts/runs/convergent-seq-bounded/01_enrichment/handoff.md` with the formal Lean target theorem statement, source/provenance summary, and a proof plan based on an `ε = 1` tail bound plus a finite-prefix `Finset.range` sum to avoid finite-maximum complications.
