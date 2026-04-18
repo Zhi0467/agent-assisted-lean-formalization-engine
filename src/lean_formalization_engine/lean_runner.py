@@ -299,7 +299,7 @@ class LeanRunner:
             workspace,
             ignore=self._copy_template_ignore,
         )
-        self._materialize_path_dependencies(workspace, self.template_dir)
+        self._materialize_path_dependencies(workspace, self.template_dir, root_workspace=workspace)
         self._write_vendored_revision_snapshot(workspace)
         self._write_workspace_metadata(fingerprint)
         self._sync_workspace_alias(workspace)
@@ -351,7 +351,12 @@ class LeanRunner:
         elif alias_path.exists():
             shutil.rmtree(alias_path)
         alias_path.parent.mkdir(parents=True, exist_ok=True)
-        alias_path.symlink_to(os.path.relpath(workspace, alias_path.parent), target_is_directory=True)
+        try:
+            alias_path.symlink_to(os.path.relpath(workspace, alias_path.parent), target_is_directory=True)
+        except OSError:
+            # The alias is a convenience path only. Builds should still proceed when the
+            # current filesystem refuses directory symlinks.
+            return
 
     def _workspace_metadata_path(self) -> Path:
         return self._cache_root() / "lean_workspace.json"
@@ -394,9 +399,12 @@ class LeanRunner:
         existing_entries = {line.strip() for line in existing.splitlines()}
         if {".terry/", ".terry", "/.terry/", "/.terry"} & existing_entries:
             return
-        exclude_path.parent.mkdir(parents=True, exist_ok=True)
-        prefix = "" if not existing or existing.endswith("\n") else "\n"
-        exclude_path.write_text(f"{existing}{prefix}.terry/\n", encoding="utf-8")
+        try:
+            exclude_path.parent.mkdir(parents=True, exist_ok=True)
+            prefix = "" if not existing or existing.endswith("\n") else "\n"
+            exclude_path.write_text(f"{existing}{prefix}.terry/\n", encoding="utf-8")
+        except OSError:
+            return
 
     def _read_workspace_metadata(self) -> dict[str, str] | None:
         metadata_path = self._workspace_metadata_path()
@@ -487,6 +495,7 @@ class LeanRunner:
         workspace: Path,
         source_workspace: Path,
         seen: set[Path] | None = None,
+        root_workspace: Path | None = None,
     ) -> None:
         resolved_source_workspace = source_workspace.resolve()
         if seen is not None and resolved_source_workspace in seen:
@@ -494,6 +503,7 @@ class LeanRunner:
         required_packages = self._required_packages(source_workspace)
         if not required_packages:
             return
+        root_workspace = root_workspace or workspace
         next_seen = (seen or set()) | {resolved_source_workspace}
         for requirement in required_packages:
             source_package_dir = self._resolve_package_dir(source_workspace, requirement)
@@ -501,11 +511,28 @@ class LeanRunner:
             if source_package_dir is None or target_package_dir is None:
                 continue
             if not self._is_within_path(source_package_dir, self.template_dir):
-                self._ensure_path_dependency_mirror(source_package_dir, target_package_dir)
-            self._materialize_path_dependencies(target_package_dir, source_package_dir, next_seen)
+                self._ensure_path_dependency_mirror(source_package_dir, target_package_dir, root_workspace)
+            self._materialize_path_dependencies(
+                target_package_dir,
+                source_package_dir,
+                next_seen,
+                root_workspace=root_workspace,
+            )
 
-    def _ensure_path_dependency_mirror(self, source_package_dir: Path, target_package_dir: Path) -> None:
+    def _ensure_path_dependency_mirror(
+        self,
+        source_package_dir: Path,
+        target_package_dir: Path,
+        root_workspace: Path,
+    ) -> None:
         if not self._is_lexically_within_path(target_package_dir, self._cache_root()):
+            return
+        protected_child = self._workspace_protected_child(target_package_dir, root_workspace)
+        if protected_child is not None:
+            if not source_package_dir.exists():
+                self._clear_overlay_path_dependency_mirror(target_package_dir, protected_child)
+                return
+            self._overlay_path_dependency_mirror(source_package_dir, target_package_dir, protected_child)
             return
         if not source_package_dir.exists():
             self._remove_path_dependency_mirror(target_package_dir)
@@ -528,6 +555,60 @@ class LeanRunner:
                 symlinks=True,
                 ignore=lambda directory, names: self._copy_package_ignore(source_package_dir, directory, names),
             )
+
+    def _workspace_protected_child(self, target_package_dir: Path, root_workspace: Path) -> str | None:
+        if not self._is_lexically_within_path(root_workspace, target_package_dir):
+            return None
+        relative_workspace = Path(os.path.abspath(root_workspace)).relative_to(Path(os.path.abspath(target_package_dir)))
+        if not relative_workspace.parts:
+            return None
+        return relative_workspace.parts[0]
+
+    def _overlay_path_dependency_mirror(
+        self,
+        source_package_dir: Path,
+        target_package_dir: Path,
+        protected_child: str,
+    ) -> None:
+        target_package_dir.mkdir(parents=True, exist_ok=True)
+        protected_entries = {protected_child, ".terry"}
+        for target_child in list(target_package_dir.iterdir()):
+            if target_child.name in protected_entries:
+                continue
+            source_child = source_package_dir / target_child.name
+            if not source_child.exists():
+                self._remove_path_dependency_mirror(target_child)
+                continue
+            source_is_directory = source_child.is_dir() and not source_child.is_symlink()
+            target_is_directory = target_child.is_dir() and not target_child.is_symlink()
+            if source_is_directory:
+                self._remove_path_dependency_mirror(target_child)
+                continue
+            if source_is_directory != target_is_directory:
+                self._remove_path_dependency_mirror(target_child)
+
+        def ignore(directory: str, names: list[str]) -> set[str]:
+            ignored = self._copy_package_ignore(source_package_dir, directory, names)
+            relative_dir = Path(directory).relative_to(source_package_dir)
+            if not relative_dir.parts:
+                ignored.update(name for name in protected_entries if name in names)
+            return ignored
+
+        shutil.copytree(
+            source_package_dir,
+            target_package_dir,
+            dirs_exist_ok=True,
+            symlinks=True,
+            ignore=ignore,
+        )
+
+    def _clear_overlay_path_dependency_mirror(self, target_package_dir: Path, protected_child: str) -> None:
+        if not target_package_dir.exists():
+            return
+        for target_child in list(target_package_dir.iterdir()):
+            if target_child.name in {protected_child, ".terry"}:
+                continue
+            self._remove_path_dependency_mirror(target_child)
 
     def _remove_path_dependency_mirror(self, target_package_dir: Path) -> None:
         if target_package_dir.is_symlink() or target_package_dir.is_file():
@@ -688,11 +769,14 @@ class LeanRunner:
         return digest.hexdigest()
 
     def _workspace_ready(self, workspace: Path) -> bool:
+        lakefile_exists = (workspace / "lakefile.toml").exists() or (workspace / "lakefile.lean").exists()
         required_paths = [
             workspace / "FormalizationEngineWorkspace" / "Basic.lean",
             workspace / "FormalizationEngineWorkspace" / "Generated.lean",
+            workspace / "FormalizationEngineWorkspace.lean",
+            workspace / "lean-toolchain",
         ]
-        return all(path.exists() for path in required_paths)
+        return lakefile_exists and all(path.exists() for path in required_paths)
 
     def _clear_generated_build_outputs(self, workspace: Path) -> None:
         build_roots = [
@@ -769,9 +853,9 @@ class LeanRunner:
         if dependency_state.has_external_dependency:
             if bootstrap_ready:
                 return self._vendored_packages_ready(workspace, dependency_state.external_package_names)
-            if manifest_exists and not vendored_packages_path.exists():
-                return True
-            return manifest_exists and self._vendored_packages_ready(workspace, dependency_state.external_package_names)
+            if not manifest_exists:
+                return False
+            return self._vendored_packages_ready(workspace, dependency_state.external_package_names)
         return True
 
     def _dependency_state(self, workspace: Path, seen: set[Path] | None = None) -> DependencyState:
@@ -1192,7 +1276,17 @@ class LeanRunner:
                         owner_pid = int(lines[0])
                     except ValueError:
                         owner_pid = None
+                    try:
+                        owner_started_at = float(lines[1])
+                    except (IndexError, ValueError):
+                        owner_started_at = None
                     if owner_pid is not None and self._process_exists(owner_pid):
+                        if owner_started_at is not None:
+                            process_started_at = self._process_start_time(owner_pid)
+                            # `ps -o etimes=` is only second-granular on some platforms, so
+                            # treat near-equal start times as the same live owner.
+                            if process_started_at is not None and process_started_at > owner_started_at + 1.0:
+                                return True
                         return False
                     return True
             return time.time() - fallback_lock_path.stat().st_mtime > 1.0
@@ -1218,6 +1312,26 @@ class LeanRunner:
         except OSError:
             return False
         return True
+
+    def _process_start_time(self, pid: int) -> float | None:
+        if pid <= 0:
+            return None
+        try:
+            result = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "etimes="],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            return None
+        if result.returncode != 0:
+            return None
+        try:
+            elapsed_seconds = float(result.stdout.strip())
+        except ValueError:
+            return None
+        return time.time() - elapsed_seconds
 
     def _resolve_lake(self) -> str | None:
         if self.lake_path:
