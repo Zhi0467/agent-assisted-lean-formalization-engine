@@ -256,6 +256,19 @@ class FormalizationWorkflow:
                 stage="enrichment",
                 details={"notes": decision.notes},
             )
+            if not self._natural_language_proof_ready(store):
+                store.append_log(
+                    "enrichment_rerun_requested",
+                    "Enrichment approval supplied missing-proof guidance; Terry is rerunning enrichment before planning.",
+                    stage="enrichment",
+                    details={"notes": decision.notes},
+                )
+                return self._run_enrichment_stage(
+                    store,
+                    manifest,
+                    auto_approve=auto_approve,
+                    review_notes_relative_path=f"{ENRICHMENT_DIR}/review.md",
+                )
             return self._run_plan_stage(
                 store,
                 manifest,
@@ -531,7 +544,12 @@ class FormalizationWorkflow:
             required_outputs=["handoff.md", "proof_status.json", "natural_language_statement.md"],
             review_notes_relative_path=review_notes_relative_path,
         )
-        self._run_backend_stage(store, request, ENRICHMENT_DIR)
+        self._run_backend_stage(
+            store,
+            request,
+            ENRICHMENT_DIR,
+            extra_stale_outputs=[ENRICHMENT_NATURAL_LANGUAGE_PROOF.removeprefix(f"{ENRICHMENT_DIR}/")],
+        )
         proof_status = self._load_proof_status(store)
         if proof_status is None:
             raise RuntimeError("Enrichment stage did not write a valid `01_enrichment/proof_status.json`.")
@@ -789,11 +807,14 @@ class FormalizationWorkflow:
         store: RunStore,
         request: StageRequest,
         turn_dir: str,
+        *,
+        extra_stale_outputs: list[str] | None = None,
     ) -> AgentTurn:
         self._clear_turn_artifacts(
             store,
             turn_dir,
             request.required_outputs,
+            extra_stale_outputs=extra_stale_outputs,
             clear_compile_outputs=request.stage == BackendStage.PROOF,
         )
         turn = self.agent.run_stage(request)
@@ -1700,6 +1721,7 @@ class FormalizationWorkflow:
         turn_dir: str,
         required_outputs: list[str],
         *,
+        extra_stale_outputs: list[str] | None = None,
         clear_compile_outputs: bool = False,
     ) -> None:
         stale_paths = [
@@ -1708,6 +1730,8 @@ class FormalizationWorkflow:
             f"{turn_dir}/response.txt",
         ]
         stale_paths.extend(f"{turn_dir}/{relative_path}" for relative_path in required_outputs)
+        if extra_stale_outputs:
+            stale_paths.extend(f"{turn_dir}/{relative_path}" for relative_path in extra_stale_outputs)
         if clear_compile_outputs and turn_dir.startswith(f"{PROOF_DIR}/attempts/"):
             stale_paths.extend(
                 [

@@ -97,7 +97,7 @@ Current CLI helpers on top of that review-file surface:
 - `terry review <run_id> --attempt <n>`
   Regenerate the backend-owned attempt review artifacts for a completed proof attempt
 - `terry retry <run_id>`
-  Approve exactly one more proof attempt when Terry is blocked inside `03_proof/`
+  Grant more proof attempts when Terry is blocked inside `03_proof/`
 
 ## Logging
 

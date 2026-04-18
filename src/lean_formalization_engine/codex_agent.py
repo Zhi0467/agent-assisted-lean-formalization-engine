@@ -33,7 +33,7 @@ class CodexCliFormalizationAgent:
                 "exec",
                 "--ephemeral",
                 "--skip-git-repo-check",
-                "--dangerously-bypass-approvals-and-sandbox",
+                "--full-auto",
                 "-C",
                 str(sandbox_root),
             ]

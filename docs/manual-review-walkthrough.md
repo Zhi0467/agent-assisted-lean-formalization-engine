@@ -48,7 +48,7 @@ Run from the repo root after Lean and the Codex CLI are available:
     `cat artifacts/runs/right-add-zero/03_proof/loop.md`
     Then either set `decision: retry` in `artifacts/runs/right-add-zero/03_proof/review.md`
     and run `terry resume right-add-zero`, or just run:
-    `terry retry right-add-zero`
+   `terry retry right-add-zero --attempts 1`
 15. When the final checkpoint is open, set `decision: approve` in:
     `artifacts/runs/right-add-zero/04_final/review.md`
 16. Finish the run:
@@ -61,7 +61,7 @@ pass the project directory explicitly on every command:
 terry prove examples/inputs/right_add_zero.md --run-id right-add-zero --workdir /path/to/project
 terry resume right-add-zero --workdir /path/to/project
 terry review right-add-zero --attempt 1 --workdir /path/to/project
-terry retry right-add-zero --workdir /path/to/project
+terry retry right-add-zero --attempts 1 --workdir /path/to/project
 terry status right-add-zero --workdir /path/to/project
 ```
 
@@ -77,7 +77,7 @@ Useful status command:
 
 - `terry status right-add-zero`
 - `terry review right-add-zero --attempt 1`
-- `terry retry right-add-zero`
+- `terry retry right-add-zero --attempts 1`
 
 The example scripts under `examples/` still exist for deterministic or backend-specific
 demo runs, but the intended human path is the Terry CLI plus the review files Terry

@@ -126,11 +126,11 @@ If you want Terry to regenerate the review artifacts for a completed proof attem
 terry review right-add-zero --attempt 1
 ```
 
-If the proof loop is blocked and you want to approve exactly one more attempt without
-editing `03_proof/review.md` manually:
+If the proof loop is blocked and you want to grant more attempt budget without editing
+`03_proof/review.md` manually:
 
 ```bash
-terry retry right-add-zero
+terry retry right-add-zero --attempts 1
 ```
 
 If you resume or inspect a run from outside that same project directory, pass the same

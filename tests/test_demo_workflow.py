@@ -4542,6 +4542,154 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertFalse(proof_status["obtained"])
             self.assertFalse((run_root / "02_plan" / "handoff.md").exists())
 
+    def test_approving_missing_proof_reruns_enrichment_before_plan(self) -> None:
+        class MissingProofRecoveryAgent:
+            name = "missing_proof_recovery_agent"
+
+            def __init__(self) -> None:
+                self.requests: list[StageRequest] = []
+                self.enrichment_calls = 0
+
+            def run_stage(self, request: StageRequest) -> AgentTurn:
+                self.requests.append(request)
+                output_dir = Path(request.repo_root) / request.output_dir
+                output_dir.mkdir(parents=True, exist_ok=True)
+
+                if request.stage == BackendStage.ENRICHMENT:
+                    self.enrichment_calls += 1
+                    (output_dir / "handoff.md").write_text(
+                        "# Enrichment Handoff\n\nThe theorem statement is clear.\n",
+                        encoding="utf-8",
+                    )
+                    (output_dir / "natural_language_statement.md").write_text(
+                        "# Natural-Language Statement\n\nFor every natural number n, 0 + n = n.\n",
+                        encoding="utf-8",
+                    )
+                    if self.enrichment_calls == 1:
+                        (output_dir / "proof_status.json").write_text(
+                            json.dumps(
+                                {
+                                    "obtained": False,
+                                    "source": "missing",
+                                    "notes": "Ask the human for the natural-language proof.",
+                                }
+                            ),
+                            encoding="utf-8",
+                        )
+                    else:
+                        review_text = Path(request.repo_root, request.review_notes_path or "").read_text(
+                            encoding="utf-8"
+                        )
+                        assert "Nat.zero_add" in review_text
+                        (output_dir / "natural_language_proof.md").write_text(
+                            "# Natural-Language Proof\n\nUse `Nat.zero_add`.\n",
+                            encoding="utf-8",
+                        )
+                        (output_dir / "proof_status.json").write_text(
+                            json.dumps({"obtained": True, "source": "human_review", "notes": ""}),
+                            encoding="utf-8",
+                        )
+                elif request.stage == BackendStage.PLAN:
+                    (output_dir / "handoff.md").write_text("# Plan Handoff\n\nPlan is now grounded.\n", encoding="utf-8")
+                else:
+                    raise ValueError(f"Unsupported stage {request.stage.value}")
+
+                return AgentTurn(
+                    request_payload={"stage": request.stage.value},
+                    prompt=f"{request.stage.value} prompt",
+                    raw_response=f"{request.stage.value} response",
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("Some theorem statement without a proof.\n", encoding="utf-8")
+            agent = MissingProofRecoveryAgent()
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=agent,
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+            manifest = workflow.prove(source_path=source_path, run_id="recover-proof", auto_approve=False)
+            run_root = temp_root / "artifacts" / "runs" / "recover-proof"
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+
+            self._write_review(
+                run_root,
+                "01_enrichment",
+                "approve",
+                "Natural-language proof: use Nat.zero_add and restate the argument plainly.",
+            )
+            manifest = workflow.resume("recover-proof", auto_approve=False)
+
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+            self.assertEqual([request.stage for request in agent.requests], [BackendStage.ENRICHMENT, BackendStage.ENRICHMENT])
+            self.assertTrue(agent.requests[1].review_notes_path.endswith("01_enrichment/review.md"))
+            self.assertTrue((run_root / "01_enrichment" / "natural_language_proof.md").exists())
+            proof_status = json.loads((run_root / "01_enrichment" / "proof_status.json").read_text(encoding="utf-8"))
+            self.assertTrue(proof_status["obtained"])
+            self.assertFalse((run_root / "02_plan" / "handoff.md").exists())
+
+            self._write_review(run_root, "01_enrichment", "approve", "Proof is on disk now.")
+            manifest = workflow.resume("recover-proof", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
+
+    def test_enrichment_rerun_clears_stale_proof_before_validation(self) -> None:
+        class StaleProofAgent:
+            name = "stale_proof_agent"
+
+            def __init__(self) -> None:
+                self.enrichment_calls = 0
+
+            def run_stage(self, request: StageRequest) -> AgentTurn:
+                output_dir = Path(request.repo_root) / request.output_dir
+                output_dir.mkdir(parents=True, exist_ok=True)
+                if request.stage != BackendStage.ENRICHMENT:
+                    raise ValueError(f"Unsupported stage {request.stage.value}")
+                self.enrichment_calls += 1
+                (output_dir / "handoff.md").write_text("# Enrichment Handoff\n\nScoped over Nat.\n", encoding="utf-8")
+                (output_dir / "natural_language_statement.md").write_text(
+                    "# Natural-Language Statement\n\nFor every natural number n, 0 + n = n.\n",
+                    encoding="utf-8",
+                )
+                (output_dir / "proof_status.json").write_text(
+                    json.dumps({"obtained": True, "source": "input", "notes": ""}),
+                    encoding="utf-8",
+                )
+                if self.enrichment_calls == 1:
+                    (output_dir / "natural_language_proof.md").write_text(
+                        "# Natural-Language Proof\n\nUse `Nat.zero_add`.\n",
+                        encoding="utf-8",
+                    )
+                return AgentTurn(
+                    request_payload={"stage": request.stage.value},
+                    prompt=f"{request.stage.value} prompt",
+                    raw_response=f"{request.stage.value} response",
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            agent = StaleProofAgent()
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=agent,
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+            manifest = workflow.prove(source_path=source_path, run_id="stale-proof-rerun", auto_approve=False)
+            run_root = temp_root / "artifacts" / "runs" / "stale-proof-rerun"
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+            self.assertTrue((run_root / "01_enrichment" / "natural_language_proof.md").exists())
+
+            self._write_review(run_root, "01_enrichment", "reject", "Refresh the enrichment package.")
+            with self.assertRaisesRegex(RuntimeError, "natural_language_proof.md` is missing"):
+                workflow.resume("stale-proof-rerun", auto_approve=False)
+
+            self.assertFalse((run_root / "01_enrichment" / "natural_language_proof.md").exists())
+
     def test_rejecting_enrichment_reruns_enrichment_stage(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
