@@ -7,24 +7,27 @@ known architecture gap in Terry itself but the review gate on the shared-cache f
 The current branch fixed the latest concrete cache/runtime findings too: same-repo runs
 now have an explicit `--workdir` / `--repo-root` CLI surface, sibling local path
 dependencies are mirrored into `.terry/` so shared-cache relocation does not break
-`path = "../..."`, vendored packed refs are read correctly, and nested vendored build
-garbage no longer counts as source readiness. The backlog is still open because the
-detached local `codex review --base main` rerun on `7b4bcfc` is again taking the
+`path = "../..."`, stale copied mirrors are removed when the real source disappears,
+path-dependency mirrors are constrained to Terry-owned `.terry/` paths instead of
+escaping into repo or parent directories, vendored packed refs are read correctly, and
+nested vendored build garbage no longer counts as source readiness. The backlog is still
+open because the detached local `codex review --base main` rerun is again taking the
 runtime-probe path without returning a terminal clean/fail verdict yet, so the review
 gate is not honestly closed.
 
 Current verification:
 
-- `PYTHONPATH=src python3 -m unittest discover -s tests` (`96` tests, all passing)
+- `PYTHONPATH=src python3 -m unittest discover -s tests` (`98` tests, all passing)
 - targeted CLI e2e tests still pass on the current head:
   `DemoWorkflowTest.test_cli_demo_backend_e2e`
   `DemoWorkflowTest.test_cli_command_backend_e2e`
 - new workdir/cache e2e also passes on the current head:
   `DemoWorkflowTest.test_cli_demo_backend_e2e_accepts_workdir_after_subcommand`
-- direct local `codex review --base main` on `7b4bcfc` is still unresolved:
-  repeated local reruns found and closed real cache bugs, the addressed PR review
-  threads are resolved, and live `@codex review` was requeued on the current PR head,
-  but the detached local rerun has not emitted a terminal clean/fail verdict yet
+- direct local `codex review --base main` on current head `dac4253` is still unresolved:
+  repeated local reruns found and closed real cache bugs, the latest live path-mirror
+  P1s are fixed on `257ba64` and `dac4253`, and live `@codex review` was requeued on
+  the current PR head, but the detached local rerun still has not emitted a terminal
+  clean/fail verdict yet
 
 ## Orchestrator-Only Refactor
 
@@ -54,6 +57,7 @@ carry their own lockfile or vendored dependency state. The newest regressions no
 same-path toolchain changes, vendored package edits, incomplete vendored trees, nested
 vendored build-output stripping, dirty git-backed vendored packages, `lakefile.lean`
 templates, explicit `--workdir` CLI routing, sibling local path dependencies, vendored
-packed refs, and nested vendored build-only trees. The next product work still lives in
-`docs/roadmap.md` under Milestones 2 and 3, but this cache branch is not review-closed
-yet.
+packed refs, nested vendored build-only trees, stale copied mirror removal after source
+deletion, and the safety guard that keeps multi-`..` path dependencies from rewriting
+non-cache directories. The next product work still lives in `docs/roadmap.md` under
+Milestones 2 and 3, but this cache branch is not review-closed yet.
