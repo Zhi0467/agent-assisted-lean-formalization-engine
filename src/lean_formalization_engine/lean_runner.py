@@ -466,6 +466,7 @@ class LeanRunner:
 
     def _ensure_path_dependency_mirror(self, source_package_dir: Path, target_package_dir: Path) -> None:
         if not source_package_dir.exists():
+            self._remove_path_dependency_mirror(target_package_dir)
             return
         source_target = source_package_dir.resolve()
         if target_package_dir.exists() or target_package_dir.is_symlink():
@@ -474,10 +475,7 @@ class LeanRunner:
                     return
             except OSError:
                 pass
-            if target_package_dir.is_symlink() or target_package_dir.is_file():
-                target_package_dir.unlink(missing_ok=True)
-            else:
-                shutil.rmtree(target_package_dir)
+            self._remove_path_dependency_mirror(target_package_dir)
         target_package_dir.parent.mkdir(parents=True, exist_ok=True)
         try:
             target_package_dir.symlink_to(source_target, target_is_directory=True)
@@ -488,6 +486,13 @@ class LeanRunner:
                 symlinks=True,
                 ignore=lambda directory, names: self._copy_package_ignore(source_package_dir, directory, names),
             )
+
+    def _remove_path_dependency_mirror(self, target_package_dir: Path) -> None:
+        if target_package_dir.is_symlink() or target_package_dir.is_file():
+            target_package_dir.unlink(missing_ok=True)
+            return
+        if target_package_dir.exists():
+            shutil.rmtree(target_package_dir)
 
     def _copy_package_ignore(self, package_root: Path, directory: str, names: list[str]) -> set[str]:
         relative_dir = Path(directory).relative_to(package_root)
