@@ -40,3 +40,6 @@ lean_formalization_engine = [
   "workspace_template/*",
   "workspace_template/FormalizationEngineWorkspace/*",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
