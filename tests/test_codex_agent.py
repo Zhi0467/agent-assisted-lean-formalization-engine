@@ -260,8 +260,8 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
 
             command = run_mock.call_args.args[0]
             prompt = run_mock.call_args.kwargs["input"]
-            self.assertIn("--full-auto", command)
-            self.assertEqual(command[:6], ["codex", "exec", "--ephemeral", "--skip-git-repo-check", "--full-auto", "-C"])
+            self.assertIn("--dangerously-bypass-approvals-and-sandbox", command)
+            self.assertEqual(command[:6], ["codex", "exec", "--ephemeral", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "-C"])
             self.assertNotEqual(command[6], str(repo_root))
             self.assertIn("Required outputs:", prompt)
             self.assertIn("artifacts/runs/demo/02_plan/handoff.md", prompt)
