@@ -1664,11 +1664,18 @@ class DemoWorkflowTest(unittest.TestCase):
                 Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
             ).resolve()
             shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
-            (temp_root / "lean_workspace_template" / "lake-manifest.json").write_text("{}", encoding="utf-8")
+            (temp_root / "lean_workspace_template" / "lake-manifest.json").write_text(
+                "{\"packages\": [{\"name\": \"mathlib\", \"rev\": \"rev1\"}]}\n",
+                encoding="utf-8",
+            )
             mathlib_dir = temp_root / "lean_workspace_template" / ".lake" / "packages" / "mathlib"
             mathlib_dir.mkdir(parents=True, exist_ok=True)
             (mathlib_dir / "Mathlib.lean").write_text("-- vendored mathlib\n", encoding="utf-8")
             (mathlib_dir / "lakefile.toml").write_text("name = \"mathlib\"\n", encoding="utf-8")
+            git_dir = mathlib_dir / ".git" / "refs" / "heads"
+            git_dir.mkdir(parents=True, exist_ok=True)
+            (mathlib_dir / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+            (git_dir / "main").write_text("rev1\n", encoding="utf-8")
             fake_lake = temp_root / "lake-vendored-manifest"
             fake_lake.write_text(
                 "\n".join(
@@ -1785,6 +1792,165 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertFalse(result.passed)
             shared_manifest = temp_root / ".terry" / "lean_workspace" / "lake-manifest.json"
             self.assertEqual(shared_manifest.read_text(encoding="utf-8"), manifest_text)
+
+    def test_lean_runner_updates_when_requirements_are_unknown_and_vendored_tree_exists(self) -> None:
+        class UnknownRequirementLeanRunner(LeanRunner):
+            def _required_packages(self, _workspace: Path) -> list[object] | None:
+                return None
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            (temp_root / "lean_workspace_template" / "lake-manifest.json").write_text("{}", encoding="utf-8")
+            mathlib_dir = temp_root / "lean_workspace_template" / ".lake" / "packages" / "mathlib"
+            mathlib_dir.mkdir(parents=True, exist_ok=True)
+            (mathlib_dir / "Mathlib.lean").write_text("-- vendored mathlib\n", encoding="utf-8")
+            fake_lake = temp_root / "lake-unknown"
+            fake_lake.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env python3",
+                        "import pathlib",
+                        "import sys",
+                        "",
+                        "def main() -> int:",
+                        "    args = sys.argv[1:]",
+                        "    if args[:1] == ['--version']:",
+                        "        print('lake-unknown')",
+                        "        return 0",
+                        "    if args[:1] == ['update']:",
+                        "        cwd = pathlib.Path.cwd()",
+                        "        (cwd / '.lake' / 'packages' / 'mathlib').mkdir(parents=True, exist_ok=True)",
+                        "        return 0",
+                        "    if args[:2] == ['build', 'FormalizationEngineWorkspace']:",
+                        "        return 0",
+                        "    return 1",
+                        "",
+                        "if __name__ == '__main__':",
+                        "    raise SystemExit(main())",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_lake.chmod(0o755)
+            runner = UnknownRequirementLeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            store = RunStore(temp_root / "artifacts", "unknown-requirements")
+            store.ensure_new()
+            store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem unknown_requirements (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+
+            result = runner.compile_candidate(store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(result.passed)
+            self.assertEqual(result.command, ["lake-unknown update", "lake-unknown build FormalizationEngineWorkspace"])
+
+    def test_lean_runner_updates_when_vendored_package_revision_is_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            (temp_root / "lean_workspace_template" / "lake-manifest.json").write_text(
+                "{\"packages\": [{\"name\": \"mathlib\", \"rev\": \"rev2\"}]}\n",
+                encoding="utf-8",
+            )
+            mathlib_dir = temp_root / "lean_workspace_template" / ".lake" / "packages" / "mathlib"
+            mathlib_dir.mkdir(parents=True, exist_ok=True)
+            (mathlib_dir / "Pkg.lean").write_text("-- rev1\n", encoding="utf-8")
+            git_dir = mathlib_dir / ".git" / "refs" / "heads"
+            git_dir.mkdir(parents=True, exist_ok=True)
+            (mathlib_dir / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+            (git_dir / "main").write_text("rev1\n", encoding="utf-8")
+            fake_lake = temp_root / "lake-stale-rev"
+            fake_lake.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env python3",
+                        "import json",
+                        "import pathlib",
+                        "import sys",
+                        "",
+                        "def main() -> int:",
+                        "    args = sys.argv[1:]",
+                        "    cwd = pathlib.Path.cwd()",
+                        "    if args[:1] == ['--version']:",
+                        "        print('lake-stale-rev')",
+                        "        return 0",
+                        "    if args[:1] == ['update']:",
+                        "        manifest = json.loads((cwd / 'lake-manifest.json').read_text(encoding='utf-8'))",
+                        "        rev = manifest['packages'][0]['rev']",
+                        "        pkg = cwd / '.lake' / 'packages' / 'mathlib'",
+                        "        pkg.mkdir(parents=True, exist_ok=True)",
+                        "        (pkg / 'Pkg.lean').write_text(f'-- {rev}\\n', encoding='utf-8')",
+                        "        git_dir = pkg / '.git' / 'refs' / 'heads'",
+                        "        git_dir.mkdir(parents=True, exist_ok=True)",
+                        "        (pkg / '.git' / 'HEAD').write_text('ref: refs/heads/main\\n', encoding='utf-8')",
+                        "        (git_dir / 'main').write_text(f'{rev}\\n', encoding='utf-8')",
+                        "        return 0",
+                        "    if args[:2] == ['build', 'FormalizationEngineWorkspace']:",
+                        "        manifest = json.loads((cwd / 'lake-manifest.json').read_text(encoding='utf-8'))",
+                        "        rev = manifest['packages'][0]['rev']",
+                        "        text = (cwd / '.lake' / 'packages' / 'mathlib' / 'Pkg.lean').read_text(encoding='utf-8')",
+                        "        if rev not in text:",
+                        "            print(f'vendored package is stale: wanted {rev}, saw {text.strip()}', file=sys.stderr)",
+                        "            return 1",
+                        "        return 0",
+                        "    return 1",
+                        "",
+                        "if __name__ == '__main__':",
+                        "    raise SystemExit(main())",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_lake.chmod(0o755)
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            store = RunStore(temp_root / "artifacts", "stale-revision")
+            store.ensure_new()
+            store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem stale_revision (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+
+            result = runner.compile_candidate(store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(result.passed)
+            self.assertEqual(
+                result.command,
+                ["lake-stale-rev update", "lake-stale-rev build FormalizationEngineWorkspace"],
+            )
 
     def test_lean_runner_skips_lake_update_for_local_path_dependencies(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

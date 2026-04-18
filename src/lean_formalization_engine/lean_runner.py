@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -238,6 +239,7 @@ class LeanRunner:
             workspace,
             ignore=self._copy_template_ignore,
         )
+        self._write_vendored_revision_snapshot(workspace)
         self._write_workspace_metadata(fingerprint)
         return workspace, True
 
@@ -260,6 +262,9 @@ class LeanRunner:
 
     def _workspace_fallback_lock_path(self) -> Path:
         return self.repo_root / ".terry" / "lean_workspace.lockdir"
+
+    def _vendored_revision_snapshot_path(self, workspace: Path) -> Path:
+        return workspace / ".terry-vendored-revisions.json"
 
     def _git_exclude_path(self) -> Path | None:
         git_path = self.repo_root / ".git"
@@ -538,7 +543,10 @@ class LeanRunner:
     ) -> bool:
         dependency_state = self._dependency_state(workspace)
         if not dependency_state.requirements_known:
-            return bootstrap_ready or manifest_exists
+            if bootstrap_ready:
+                return True
+            vendored_packages_path = workspace / ".lake" / "packages"
+            return manifest_exists and not vendored_packages_path.exists()
         if not dependency_state.path_dependencies_ready:
             return False
         if dependency_state.has_external_dependency:
@@ -606,10 +614,125 @@ class LeanRunner:
         vendored_packages_path = workspace / ".lake" / "packages"
         if not vendored_packages_path.exists():
             return False
+        manifest_revisions = self._manifest_package_revisions(workspace)
+        vendored_revision_snapshot = self._workspace_vendored_revisions(workspace)
         return all(
-            self._vendored_package_has_sources(vendored_packages_path / package_name)
+            self._vendored_package_ready(
+                vendored_packages_path / package_name,
+                manifest_revisions.get(package_name) if manifest_revisions is not None else None,
+                vendored_revision_snapshot.get(package_name),
+            )
             for package_name in required_package_names
         )
+
+    def _vendored_package_ready(
+        self,
+        package_dir: Path,
+        expected_revision: str | None,
+        snapshot_revision: str | None,
+    ) -> bool:
+        if not self._vendored_package_has_sources(package_dir):
+            return False
+        if expected_revision is None:
+            return True
+        actual_revision = self._vendored_package_revision(package_dir) or snapshot_revision
+        return actual_revision == expected_revision
+
+    def _write_vendored_revision_snapshot(self, workspace: Path) -> None:
+        snapshot_path = self._vendored_revision_snapshot_path(workspace)
+        snapshot_path.write_text(
+            json.dumps(self._template_vendored_revisions(), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    def _workspace_vendored_revisions(self, workspace: Path) -> dict[str, str]:
+        snapshot_path = self._vendored_revision_snapshot_path(workspace)
+        if not snapshot_path.exists():
+            return {}
+        try:
+            payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        return {
+            name: revision
+            for name, revision in payload.items()
+            if isinstance(name, str) and name and isinstance(revision, str) and revision
+        }
+
+    def _template_vendored_revisions(self) -> dict[str, str]:
+        vendored_packages_path = self.template_dir / ".lake" / "packages"
+        if not vendored_packages_path.exists():
+            return {}
+        revisions: dict[str, str] = {}
+        for package_dir in sorted(child for child in vendored_packages_path.iterdir() if child.is_dir()):
+            revision = self._vendored_package_revision(package_dir)
+            if revision is not None:
+                revisions[package_dir.name] = revision
+        return revisions
+
+    def _manifest_package_revisions(self, workspace: Path) -> dict[str, str] | None:
+        manifest_path = workspace / "lake-manifest.json"
+        if not manifest_path.exists():
+            return None
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        packages = payload.get("packages")
+        if not isinstance(packages, list):
+            return {}
+        revisions: dict[str, str] = {}
+        for entry in packages:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            for key in ("rev", "inputRev", "revision"):
+                value = entry.get(key)
+                if isinstance(value, str) and value:
+                    revisions[name] = value
+                    break
+        return revisions
+
+    def _vendored_package_revision(self, package_dir: Path) -> str | None:
+        git_dir = self._git_dir_for_package(package_dir)
+        if git_dir is None:
+            return None
+        head_path = git_dir / "HEAD"
+        try:
+            head = head_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+        if head.startswith("ref: "):
+            ref_path = git_dir / head[5:].strip()
+            try:
+                return ref_path.read_text(encoding="utf-8").strip() or None
+            except OSError:
+                return None
+        return head or None
+
+    def _git_dir_for_package(self, package_dir: Path) -> Path | None:
+        git_path = package_dir / ".git"
+        if git_path.is_dir():
+            return git_path
+        if not git_path.is_file():
+            return None
+        try:
+            first_line = git_path.read_text(encoding="utf-8").splitlines()[0]
+        except (IndexError, OSError):
+            return None
+        prefix = "gitdir:"
+        if not first_line.startswith(prefix):
+            return None
+        git_dir = Path(first_line[len(prefix) :].strip())
+        if not git_dir.is_absolute():
+            git_dir = (package_dir / git_dir).resolve()
+        return git_dir
 
     def _required_packages(self, workspace: Path) -> list[PackageRequirement] | None:
         toml_lakefile_path = workspace / "lakefile.toml"
