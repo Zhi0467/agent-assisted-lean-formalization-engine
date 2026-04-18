@@ -840,12 +840,31 @@ class LeanRunner:
         except OSError:
             return None
         if head.startswith("ref: "):
-            ref_path = git_dir / head[5:].strip()
-            try:
-                return ref_path.read_text(encoding="utf-8").strip() or None
-            except OSError:
-                return None
+            return self._read_git_reference(git_dir, head[5:].strip())
         return head or None
+
+    def _read_git_reference(self, git_dir: Path, reference_name: str) -> str | None:
+        ref_path = git_dir / reference_name
+        try:
+            return ref_path.read_text(encoding="utf-8").strip() or None
+        except OSError:
+            pass
+        packed_refs_path = git_dir / "packed-refs"
+        try:
+            packed_refs_lines = packed_refs_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return None
+        for line in packed_refs_lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or stripped.startswith("^"):
+                continue
+            parts = stripped.split(maxsplit=1)
+            if len(parts) != 2:
+                continue
+            revision, packed_reference_name = parts
+            if packed_reference_name == reference_name:
+                return revision or None
+        return None
 
     def _git_dir_for_package(self, package_dir: Path) -> Path | None:
         git_path = package_dir / ".git"
@@ -1000,6 +1019,16 @@ class LeanRunner:
         if parts and parts[0] == "build":
             return True
         if len(parts) >= 2 and parts[0] == ".lake" and parts[1] == "build":
+            return True
+        if len(parts) >= 4 and parts[0] == ".lake" and parts[1] == "packages" and parts[3] == "build":
+            return True
+        if any(
+            part == ".lake"
+            and index + 3 < len(parts)
+            and parts[index + 1] == "packages"
+            and parts[index + 3] == "build"
+            for index, part in enumerate(parts[:-3])
+        ):
             return True
         return any(part == ".lake" and parts[index + 1] == "build" for index, part in enumerate(parts[:-1]))
 

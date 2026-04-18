@@ -1728,6 +1728,86 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertTrue(result.passed)
             self.assertEqual(result.command, ["lake-vendored-manifest build FormalizationEngineWorkspace"])
 
+    def test_lean_runner_reuses_checked_in_manifest_with_packed_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            (temp_root / "lean_workspace_template" / "lake-manifest.json").write_text(
+                "{\"packages\": [{\"name\": \"mathlib\", \"rev\": \"rev1\"}]}\n",
+                encoding="utf-8",
+            )
+            mathlib_dir = temp_root / "lean_workspace_template" / ".lake" / "packages" / "mathlib"
+            mathlib_dir.mkdir(parents=True, exist_ok=True)
+            (mathlib_dir / "Mathlib.lean").write_text("-- vendored mathlib\n", encoding="utf-8")
+            (mathlib_dir / "lakefile.toml").write_text("name = \"mathlib\"\n", encoding="utf-8")
+            git_dir = mathlib_dir / ".git"
+            git_dir.mkdir(parents=True, exist_ok=True)
+            (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+            (git_dir / "packed-refs").write_text(
+                "\n".join(
+                    [
+                        "# pack-refs with: peeled fully-peeled sorted",
+                        "rev1 refs/heads/main",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_lake = temp_root / "lake-packed-refs"
+            fake_lake.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env python3",
+                        "import sys",
+                        "",
+                        "def main() -> int:",
+                        "    args = sys.argv[1:]",
+                        "    if args[:1] == ['--version']:",
+                        "        print('lake-packed-refs')",
+                        "        return 0",
+                        "    if args[:1] == ['update']:",
+                        "        print('update should not run', file=sys.stderr)",
+                        "        return 1",
+                        "    if args[:2] == ['build', 'FormalizationEngineWorkspace']:",
+                        "        return 0",
+                        "    return 1",
+                        "",
+                        "if __name__ == '__main__':",
+                        "    raise SystemExit(main())",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_lake.chmod(0o755)
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            store = RunStore(temp_root / "artifacts", "manifest-vendored-packed-refs")
+            store.ensure_new()
+            store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem manifest_vendored_packed_refs (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+
+            result = runner.compile_candidate(store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(result.passed)
+            self.assertEqual(result.command, ["lake-packed-refs build FormalizationEngineWorkspace"])
+
     def test_lean_runner_preserves_copied_manifest_when_update_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -1859,6 +1939,81 @@ class DemoWorkflowTest(unittest.TestCase):
             result = runner.compile_candidate(store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
             self.assertTrue(result.passed)
             self.assertEqual(result.command, ["lake-no-git-vendored build FormalizationEngineWorkspace"])
+
+    def test_lean_runner_updates_when_vendored_tree_only_has_nested_build_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            (temp_root / "lean_workspace_template" / "lake-manifest.json").write_text(
+                "{\"packages\": [{\"name\": \"mathlib\", \"rev\": \"rev1\"}]}\n",
+                encoding="utf-8",
+            )
+            mathlib_dir = temp_root / "lean_workspace_template" / ".lake" / "packages" / "mathlib"
+            nested_build_output = mathlib_dir / ".lake" / "packages" / "aux" / "build" / "Nested.c"
+            nested_build_output.parent.mkdir(parents=True, exist_ok=True)
+            nested_build_output.write_text("stale build output\n", encoding="utf-8")
+            (mathlib_dir / "lakefile.toml").write_text("name = \"mathlib\"\n", encoding="utf-8")
+            fake_lake = temp_root / "lake-nested-vendored"
+            fake_lake.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env python3",
+                        "import pathlib",
+                        "import sys",
+                        "",
+                        "def main() -> int:",
+                        "    args = sys.argv[1:]",
+                        "    if args[:1] == ['--version']:",
+                        "        print('lake-nested-vendored')",
+                        "        return 0",
+                        "    if args[:1] == ['update']:",
+                        "        cwd = pathlib.Path.cwd()",
+                        "        pkg = cwd / '.lake' / 'packages' / 'mathlib'",
+                        "        pkg.mkdir(parents=True, exist_ok=True)",
+                        "        (pkg / 'Mathlib.lean').write_text('-- repaired vendored tree\\n', encoding='utf-8')",
+                        "        return 0",
+                        "    if args[:2] == ['build', 'FormalizationEngineWorkspace']:",
+                        "        return 0",
+                        "    return 1",
+                        "",
+                        "if __name__ == '__main__':",
+                        "    raise SystemExit(main())",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_lake.chmod(0o755)
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            store = RunStore(temp_root / "artifacts", "nested-vendored-build-only")
+            store.ensure_new()
+            store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem nested_vendored_build_only (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+
+            result = runner.compile_candidate(store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(result.passed)
+            self.assertEqual(
+                result.command,
+                ["lake-nested-vendored update", "lake-nested-vendored build FormalizationEngineWorkspace"],
+            )
 
     def test_lean_runner_updates_when_requirements_are_unknown_and_vendored_tree_exists(self) -> None:
         class UnknownRequirementLeanRunner(LeanRunner):
