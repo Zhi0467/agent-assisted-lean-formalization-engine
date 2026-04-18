@@ -286,6 +286,7 @@ class LeanRunner:
         self._ensure_repo_git_exclude()
         workspace = self._workspace_path()
         if workspace.exists() and self._workspace_ready(workspace) and self._read_workspace_metadata() == fingerprint:
+            self._materialize_path_dependencies(workspace, self.template_dir)
             return workspace, False
 
         if workspace.exists():
@@ -296,6 +297,7 @@ class LeanRunner:
             workspace,
             ignore=self._copy_template_ignore,
         )
+        self._materialize_path_dependencies(workspace, self.template_dir)
         self._write_vendored_revision_snapshot(workspace)
         self._write_workspace_metadata(fingerprint)
         return workspace, True
@@ -439,6 +441,68 @@ class LeanRunner:
             for name in names
             if self._ignore_template_path(relative_dir / name)
         }
+
+    def _materialize_path_dependencies(
+        self,
+        workspace: Path,
+        source_workspace: Path,
+        seen: set[Path] | None = None,
+    ) -> None:
+        resolved_source_workspace = source_workspace.resolve()
+        if seen is not None and resolved_source_workspace in seen:
+            return
+        required_packages = self._required_packages(source_workspace)
+        if not required_packages:
+            return
+        next_seen = (seen or set()) | {resolved_source_workspace}
+        for requirement in required_packages:
+            source_package_dir = self._resolve_package_dir(source_workspace, requirement)
+            target_package_dir = self._resolve_package_dir(workspace, requirement)
+            if source_package_dir is None or target_package_dir is None:
+                continue
+            if not self._is_within_path(source_package_dir, self.template_dir):
+                self._ensure_path_dependency_mirror(source_package_dir, target_package_dir)
+            self._materialize_path_dependencies(target_package_dir, source_package_dir, next_seen)
+
+    def _ensure_path_dependency_mirror(self, source_package_dir: Path, target_package_dir: Path) -> None:
+        if not source_package_dir.exists():
+            return
+        source_target = source_package_dir.resolve()
+        if target_package_dir.exists() or target_package_dir.is_symlink():
+            try:
+                if target_package_dir.resolve() == source_target:
+                    return
+            except OSError:
+                pass
+            if target_package_dir.is_symlink() or target_package_dir.is_file():
+                target_package_dir.unlink(missing_ok=True)
+            else:
+                shutil.rmtree(target_package_dir)
+        target_package_dir.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            target_package_dir.symlink_to(source_target, target_is_directory=True)
+        except OSError:
+            shutil.copytree(
+                source_package_dir,
+                target_package_dir,
+                symlinks=True,
+                ignore=lambda directory, names: self._copy_package_ignore(source_package_dir, directory, names),
+            )
+
+    def _copy_package_ignore(self, package_root: Path, directory: str, names: list[str]) -> set[str]:
+        relative_dir = Path(directory).relative_to(package_root)
+        return {
+            name
+            for name in names
+            if self._ignore_package_path(relative_dir / name)
+        }
+
+    def _is_within_path(self, path: Path, root: Path) -> bool:
+        try:
+            path.resolve().relative_to(root.resolve())
+        except ValueError:
+            return False
+        return True
 
     def _vendored_package_signature(self, package_dir: Path) -> str:
         git_dir = package_dir / ".git"

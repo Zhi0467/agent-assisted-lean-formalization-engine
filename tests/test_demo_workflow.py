@@ -2269,6 +2269,120 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertTrue(result.passed)
             self.assertEqual(result.command, ["lake-path-only build FormalizationEngineWorkspace"])
 
+    def test_lean_runner_mirrors_sibling_local_path_dependencies_into_shared_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            (temp_root / "lean_workspace_template" / "lakefile.toml").write_text(
+                "\n".join(
+                    [
+                        "name = \"FormalizationEngineWorkspace\"",
+                        "version = \"0.1.0\"",
+                        "defaultTargets = [\"FormalizationEngineWorkspace\"]",
+                        "",
+                        "[[require]]",
+                        "name = \"LocalDep\"",
+                        "path = \"../LocalDep\"",
+                        "",
+                        "[[lean_lib]]",
+                        "name = \"FormalizationEngineWorkspace\"",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            local_dep_dir = temp_root / "LocalDep"
+            local_dep_dir.mkdir(parents=True, exist_ok=True)
+            (local_dep_dir / "Dep.lean").write_text("-- sibling local path dependency\n", encoding="utf-8")
+            (local_dep_dir / "lakefile.toml").write_text("name = \"LocalDep\"\n", encoding="utf-8")
+            fake_lake = temp_root / "lake-sibling-path-only"
+            fake_lake.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env python3",
+                        "import pathlib",
+                        "import re",
+                        "import sys",
+                        "",
+                        "def deps(cwd: pathlib.Path) -> list[dict[str, str]]:",
+                        "    txt = (cwd / 'lakefile.toml').read_text(encoding='utf-8')",
+                        "    current: dict[str, str] = {}",
+                        "    in_require = False",
+                        "    out: list[dict[str, str]] = []",
+                        "    for line in txt.splitlines():",
+                        "        stripped = line.strip()",
+                        "        if stripped.startswith('[['):",
+                        "            if in_require and 'name' in current:",
+                        "                out.append(current.copy())",
+                        "            current = {}",
+                        "            in_require = stripped.startswith('[[require]]')",
+                        "            continue",
+                        "        if not in_require:",
+                        "            continue",
+                        "        match = re.match(r'^(name|path)\\s*=\\s*[\"\\']([^\"\\']+)[\"\\']', stripped)",
+                        "        if match:",
+                        "            current[match.group(1)] = match.group(2)",
+                        "    if in_require and 'name' in current:",
+                        "        out.append(current.copy())",
+                        "    return out",
+                        "",
+                        "def main() -> int:",
+                        "    args = sys.argv[1:]",
+                        "    cwd = pathlib.Path.cwd()",
+                        "    if args[:1] == ['--version']:",
+                        "        print('lake-sibling-path-only')",
+                        "        return 0",
+                        "    if args[:1] == ['update']:",
+                        "        print('update should not run', file=sys.stderr)",
+                        "        return 1",
+                        "    if args[:2] == ['build', 'FormalizationEngineWorkspace']:",
+                        "        for dep in deps(cwd):",
+                        "            if 'path' not in dep:",
+                        "                continue",
+                        "            package_dir = (cwd / dep['path']).resolve()",
+                        "            if not package_dir.exists():",
+                        "                print(f'missing path dep {dep[\"name\"]}: {package_dir}', file=sys.stderr)",
+                        "                return 2",
+                        "        return 0",
+                        "    return 1",
+                        "",
+                        "if __name__ == '__main__':",
+                        "    raise SystemExit(main())",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_lake.chmod(0o755)
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            store = RunStore(temp_root / "artifacts", "sibling-path-dependency")
+            store.ensure_new()
+            store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem sibling_path_dependency (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+
+            result = runner.compile_candidate(store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(result.passed)
+            self.assertEqual(result.command, ["lake-sibling-path-only build FormalizationEngineWorkspace"])
+            self.assertTrue((temp_root / ".terry" / "LocalDep").exists())
+
     def test_lean_runner_skips_lake_update_for_multiline_lakefile_lean_path_dependencies(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
