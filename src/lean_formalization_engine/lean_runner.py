@@ -285,8 +285,10 @@ class LeanRunner:
     def _prepare_workspace(self, fingerprint: dict[str, str]) -> tuple[Path, bool]:
         self._ensure_repo_git_exclude()
         workspace = self._workspace_path()
+        self._sync_workspace_alias(workspace)
         if workspace.exists() and self._workspace_ready(workspace) and self._read_workspace_metadata() == fingerprint:
             self._materialize_path_dependencies(workspace, self.template_dir)
+            self._sync_workspace_alias(workspace)
             return workspace, False
 
         if workspace.exists():
@@ -300,6 +302,7 @@ class LeanRunner:
         self._materialize_path_dependencies(workspace, self.template_dir)
         self._write_vendored_revision_snapshot(workspace)
         self._write_workspace_metadata(fingerprint)
+        self._sync_workspace_alias(workspace)
         return workspace, True
 
     def _workspace_fingerprint(self, lake_executable: str) -> dict[str, str]:
@@ -308,13 +311,47 @@ class LeanRunner:
             "lake_signature": self._lake_signature(lake_executable),
             "template_dir": str(self.template_dir.resolve()),
             "template_hash": self._template_hash(),
+            "workspace_padding_depth": str(self._workspace_padding_depth()),
         }
 
     def _cache_root(self) -> Path:
         return self.repo_root / ".terry"
 
-    def _workspace_path(self) -> Path:
+    def _workspace_alias_path(self) -> Path:
         return self._cache_root() / "lean_workspace"
+
+    def _workspace_padding_depth(self) -> int:
+        return max(0, self._required_path_parent_traversals(self.template_dir) - 1)
+
+    def _workspace_layout_root(self) -> Path:
+        return self._cache_root() / "_workspace_layout"
+
+    def _workspace_path(self) -> Path:
+        padding_depth = self._workspace_padding_depth()
+        if padding_depth == 0:
+            return self._workspace_alias_path()
+        return self._workspace_layout_root().joinpath(
+            *(["pad"] * padding_depth),
+            "lean_workspace",
+        )
+
+    def _sync_workspace_alias(self, workspace: Path) -> None:
+        alias_path = self._workspace_alias_path()
+        if workspace == alias_path:
+            if alias_path.is_symlink() or alias_path.is_file():
+                alias_path.unlink(missing_ok=True)
+            return
+        if alias_path.is_symlink():
+            try:
+                if alias_path.resolve() == workspace.resolve():
+                    return
+            except OSError:
+                pass
+            alias_path.unlink(missing_ok=True)
+        elif alias_path.exists():
+            shutil.rmtree(alias_path)
+        alias_path.parent.mkdir(parents=True, exist_ok=True)
+        alias_path.symlink_to(os.path.relpath(workspace, alias_path.parent), target_is_directory=True)
 
     def _workspace_metadata_path(self) -> Path:
         return self._cache_root() / "lean_workspace.json"
@@ -468,7 +505,7 @@ class LeanRunner:
             self._materialize_path_dependencies(target_package_dir, source_package_dir, next_seen)
 
     def _ensure_path_dependency_mirror(self, source_package_dir: Path, target_package_dir: Path) -> None:
-        if not self._is_within_path(target_package_dir, self._cache_root()):
+        if not self._is_lexically_within_path(target_package_dir, self._cache_root()):
             return
         if not source_package_dir.exists():
             self._remove_path_dependency_mirror(target_package_dir)
@@ -507,9 +544,49 @@ class LeanRunner:
             if self._ignore_package_path(relative_dir / name)
         }
 
+    def _required_path_parent_traversals(self, workspace: Path, seen: set[Path] | None = None) -> int:
+        resolved_workspace = workspace.resolve()
+        if seen is not None and resolved_workspace in seen:
+            return 0
+        required_packages = self._required_packages(workspace)
+        if not required_packages:
+            return 0
+        next_seen = (seen or set()) | {resolved_workspace}
+        max_parent_traversals = 0
+        for requirement in required_packages:
+            max_parent_traversals = max(max_parent_traversals, self._leading_parent_traversals(requirement.path))
+            source_package_dir = self._resolve_package_dir(workspace, requirement)
+            if source_package_dir is None or not source_package_dir.exists():
+                continue
+            max_parent_traversals = max(
+                max_parent_traversals,
+                self._required_path_parent_traversals(source_package_dir, next_seen),
+            )
+        return max_parent_traversals
+
+    def _leading_parent_traversals(self, path_text: str | None) -> int:
+        if not path_text:
+            return 0
+        normalized = path_text.replace("\\", "/")
+        if normalized.startswith("/"):
+            return 0
+        traversals = 0
+        for part in normalized.split("/"):
+            if part != "..":
+                break
+            traversals += 1
+        return traversals
+
     def _is_within_path(self, path: Path, root: Path) -> bool:
         try:
             path.resolve().relative_to(root.resolve())
+        except ValueError:
+            return False
+        return True
+
+    def _is_lexically_within_path(self, path: Path, root: Path) -> bool:
+        try:
+            Path(os.path.abspath(path)).relative_to(Path(os.path.abspath(root)))
         except ValueError:
             return False
         return True
@@ -1002,7 +1079,7 @@ class LeanRunner:
         package_dir = Path(requirement.path)
         if not package_dir.is_absolute():
             package_dir = workspace / package_dir
-        return package_dir
+        return Path(os.path.abspath(package_dir))
 
     def _vendored_package_has_sources(self, package_dir: Path) -> bool:
         return self._package_has_sources(package_dir)
