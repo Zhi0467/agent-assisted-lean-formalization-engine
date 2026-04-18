@@ -15,3 +15,7 @@ merged `main` that genuinely needed repair turns before Lean accepted the proof.
   final Lean output are otherwise preserved from the original run.
 - Build dependencies and shared caches remain excluded from Git, including `.terry/`,
   `.lake/`, and `build/`.
+- If you want to compile `04_final/final.lean` manually outside Terry, restore the Lean
+  dependency state first with `lake update` or by reusing Terry's warmed
+  `.terry/lean_workspace/`. The tracked template intentionally omits downloaded
+  mathlib/build state.
