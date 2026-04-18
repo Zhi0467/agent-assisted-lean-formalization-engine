@@ -1657,6 +1657,135 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertTrue(result.passed)
             self.assertEqual(result.command, ["lake-manifest-only build FormalizationEngineWorkspace"])
 
+    def test_lean_runner_reuses_checked_in_manifest_with_complete_vendored_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            (temp_root / "lean_workspace_template" / "lake-manifest.json").write_text("{}", encoding="utf-8")
+            mathlib_dir = temp_root / "lean_workspace_template" / ".lake" / "packages" / "mathlib"
+            mathlib_dir.mkdir(parents=True, exist_ok=True)
+            (mathlib_dir / "Mathlib.lean").write_text("-- vendored mathlib\n", encoding="utf-8")
+            (mathlib_dir / "lakefile.toml").write_text("name = \"mathlib\"\n", encoding="utf-8")
+            fake_lake = temp_root / "lake-vendored-manifest"
+            fake_lake.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env python3",
+                        "import sys",
+                        "",
+                        "def main() -> int:",
+                        "    args = sys.argv[1:]",
+                        "    if args[:1] == ['--version']:",
+                        "        print('lake-vendored-manifest')",
+                        "        return 0",
+                        "    if args[:1] == ['update']:",
+                        "        print('update should not run', file=sys.stderr)",
+                        "        return 1",
+                        "    if args[:2] == ['build', 'FormalizationEngineWorkspace']:",
+                        "        return 0",
+                        "    return 1",
+                        "",
+                        "if __name__ == '__main__':",
+                        "    raise SystemExit(main())",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_lake.chmod(0o755)
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            store = RunStore(temp_root / "artifacts", "manifest-vendored")
+            store.ensure_new()
+            store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem manifest_vendored (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+
+            result = runner.compile_candidate(store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(result.passed)
+            self.assertEqual(result.command, ["lake-vendored-manifest build FormalizationEngineWorkspace"])
+
+    def test_lean_runner_preserves_copied_manifest_when_update_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            manifest_text = "{\"version\": 7}\n"
+            (temp_root / "lean_workspace_template" / "lake-manifest.json").write_text(manifest_text, encoding="utf-8")
+            mathlib_dir = temp_root / "lean_workspace_template" / ".lake" / "packages" / "mathlib"
+            mathlib_dir.mkdir(parents=True, exist_ok=True)
+            (mathlib_dir / "README.md").write_text("# incomplete vendored tree\n", encoding="utf-8")
+            fake_lake = temp_root / "lake-preserve-manifest"
+            fake_lake.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env python3",
+                        "import sys",
+                        "",
+                        "def main() -> int:",
+                        "    args = sys.argv[1:]",
+                        "    if args[:1] == ['--version']:",
+                        "        print('lake-preserve-manifest')",
+                        "        return 0",
+                        "    if args[:1] == ['update']:",
+                        "        print('update failed', file=sys.stderr)",
+                        "        return 1",
+                        "    if args[:2] == ['build', 'FormalizationEngineWorkspace']:",
+                        "        return 0",
+                        "    return 1",
+                        "",
+                        "if __name__ == '__main__':",
+                        "    raise SystemExit(main())",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_lake.chmod(0o755)
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            store = RunStore(temp_root / "artifacts", "preserve-manifest")
+            store.ensure_new()
+            store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem preserve_manifest (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+
+            result = runner.compile_candidate(store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertFalse(result.passed)
+            shared_manifest = temp_root / ".terry" / "lean_workspace" / "lake-manifest.json"
+            self.assertEqual(shared_manifest.read_text(encoding="utf-8"), manifest_text)
+
     def test_lean_runner_skips_lake_update_for_local_path_dependencies(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -2354,6 +2483,60 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertFalse(failures)
             self.assertIn("saw A", outputs["A"])
             self.assertIn("saw B", outputs["B"])
+
+    def test_lean_runner_breaks_stale_fallback_lock(self) -> None:
+        class UnsupportedFcntl:
+            LOCK_EX = 1
+            LOCK_UN = 2
+
+            @staticmethod
+            def flock(_fd: int, operation: int) -> None:
+                if operation == UnsupportedFcntl.LOCK_EX:
+                    raise OSError("operation not supported")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            stale_lock_dir = temp_root / ".terry" / "lean_workspace.lockdir"
+            stale_lock_dir.mkdir(parents=True, exist_ok=True)
+            (stale_lock_dir / "owner").write_text("999999\n0\n", encoding="utf-8")
+            fake_lake = self._write_fake_lake(temp_root)
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            original_fcntl = lean_runner_module.fcntl
+            original_msvcrt = lean_runner_module.msvcrt
+            lean_runner_module.fcntl = UnsupportedFcntl()
+            lean_runner_module.msvcrt = None
+            try:
+                store = RunStore(temp_root / "artifacts", "stale-fallback-lock")
+                store.ensure_new()
+                candidate_relative_path = "03_proof/attempts/attempt_0001/candidate.lean"
+                store.write_text(
+                    candidate_relative_path,
+                    "\n".join(
+                        [
+                            "import FormalizationEngineWorkspace.Basic",
+                            "",
+                            "theorem stale_fallback_lock (n : Nat) : 0 + n = n := by",
+                            "  simpa using Nat.zero_add n",
+                            "",
+                        ]
+                    ),
+                )
+                result = runner.compile_candidate(store, candidate_relative_path, 1)
+            finally:
+                lean_runner_module.fcntl = original_fcntl
+                lean_runner_module.msvcrt = original_msvcrt
+
+            self.assertTrue(result.passed)
+            self.assertFalse(stale_lock_dir.exists())
 
     def test_resume_reuses_existing_plan_handoff_after_enrichment_approval(self) -> None:
         class PlanCountingAgent:

@@ -76,6 +76,7 @@ class DependencyState:
     path_dependencies_ready: bool
     has_external_dependency: bool
     requirements_known: bool
+    external_package_names: frozenset[str] = frozenset()
 
 
 class LeanRunner:
@@ -508,6 +509,7 @@ class LeanRunner:
         bootstrap_marker = self._dependency_bootstrap_marker(workspace)
         if self._workspace_dependencies_ready(workspace, bootstrap_marker.exists(), manifest_path.exists()):
             return None
+        manifest_backup = manifest_path.read_bytes() if manifest_path.exists() else None
         result = subprocess.run(
             [lake_path, "update"],
             cwd=workspace,
@@ -518,7 +520,10 @@ class LeanRunner:
         if result.returncode == 0:
             bootstrap_marker.write_text("ready\n", encoding="utf-8")
         else:
-            manifest_path.unlink(missing_ok=True)
+            if manifest_backup is None:
+                manifest_path.unlink(missing_ok=True)
+            else:
+                manifest_path.write_bytes(manifest_backup)
             bootstrap_marker.unlink(missing_ok=True)
         return result
 
@@ -540,7 +545,9 @@ class LeanRunner:
             if bootstrap_ready:
                 return True
             vendored_packages_path = workspace / ".lake" / "packages"
-            return manifest_exists and not vendored_packages_path.exists()
+            if manifest_exists and not vendored_packages_path.exists():
+                return True
+            return manifest_exists and self._vendored_packages_ready(workspace, dependency_state.external_package_names)
         return True
 
     def _dependency_state(self, workspace: Path, seen: set[Path] | None = None) -> DependencyState:
@@ -550,6 +557,7 @@ class LeanRunner:
                 path_dependencies_ready=True,
                 has_external_dependency=False,
                 requirements_known=True,
+                external_package_names=frozenset(),
             )
 
         required_packages = self._required_packages(workspace)
@@ -558,22 +566,26 @@ class LeanRunner:
                 path_dependencies_ready=True,
                 has_external_dependency=False,
                 requirements_known=False,
+                external_package_names=frozenset(),
             )
         if not required_packages:
             return DependencyState(
                 path_dependencies_ready=True,
                 has_external_dependency=False,
                 requirements_known=True,
+                external_package_names=frozenset(),
             )
 
         next_seen = (seen or set()) | {resolved_workspace}
         path_dependencies_ready = True
         has_external_dependency = False
         requirements_known = True
+        external_package_names: set[str] = set()
         for requirement in required_packages:
             package_dir = self._resolve_package_dir(workspace, requirement)
             if package_dir is None:
                 has_external_dependency = True
+                external_package_names.add(requirement.name)
                 continue
             if not self._package_has_sources(package_dir):
                 path_dependencies_ready = False
@@ -582,10 +594,21 @@ class LeanRunner:
             path_dependencies_ready = path_dependencies_ready and nested_state.path_dependencies_ready
             has_external_dependency = has_external_dependency or nested_state.has_external_dependency
             requirements_known = requirements_known and nested_state.requirements_known
+            external_package_names.update(nested_state.external_package_names)
         return DependencyState(
             path_dependencies_ready=path_dependencies_ready,
             has_external_dependency=has_external_dependency,
             requirements_known=requirements_known,
+            external_package_names=frozenset(external_package_names),
+        )
+
+    def _vendored_packages_ready(self, workspace: Path, required_package_names: frozenset[str]) -> bool:
+        vendored_packages_path = workspace / ".lake" / "packages"
+        if not vendored_packages_path.exists():
+            return False
+        return all(
+            self._vendored_package_has_sources(vendored_packages_path / package_name)
+            for package_name in required_package_names
         )
 
     def _required_packages(self, workspace: Path) -> list[PackageRequirement] | None:
@@ -776,12 +799,48 @@ class LeanRunner:
         while True:
             try:
                 fallback_lock_path.mkdir()
+                (fallback_lock_path / "owner").write_text(f"{os.getpid()}\n{time.time()}\n", encoding="utf-8")
                 return True
             except FileExistsError:
+                if self._workspace_fallback_lock_is_stale(fallback_lock_path):
+                    shutil.rmtree(fallback_lock_path, ignore_errors=True)
+                    continue
                 time.sleep(0.05)
 
     def _release_workspace_fallback_lock(self) -> None:
-        self._workspace_fallback_lock_path().rmdir()
+        fallback_lock_path = self._workspace_fallback_lock_path()
+        (fallback_lock_path / "owner").unlink(missing_ok=True)
+        fallback_lock_path.rmdir()
+
+    def _workspace_fallback_lock_is_stale(self, fallback_lock_path: Path) -> bool:
+        owner_path = fallback_lock_path / "owner"
+        try:
+            if owner_path.exists():
+                lines = owner_path.read_text(encoding="utf-8").splitlines()
+                if lines:
+                    try:
+                        owner_pid = int(lines[0])
+                    except ValueError:
+                        owner_pid = None
+                    if owner_pid is not None and self._process_exists(owner_pid):
+                        return False
+                    return True
+            return time.time() - fallback_lock_path.stat().st_mtime > 1.0
+        except OSError:
+            return False
+
+    def _process_exists(self, pid: int) -> bool:
+        if pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+        return True
 
     def _resolve_lake(self) -> str | None:
         if self.lake_path:
