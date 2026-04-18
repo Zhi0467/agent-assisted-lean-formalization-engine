@@ -15,6 +15,30 @@ review file for the active checkpoint, and continue with `terry resume`.
 - `.terry/lean_workspace/` is Terry's local compile cache. It stays out of Git, keeps the warmed `.lake` state between runs in the same repo, and gets rebuilt when the template or the actual toolchain behind `lake` changes.
 - `docs/` holds the durable workflow contract, backlog, roadmap, and walkthroughs.
 
+## Flow
+
+```mermaid
+flowchart TD
+    A[terry prove] --> B[00_input]
+    B --> C[01_enrichment]
+    C --> C1[natural_language_statement.md]
+    C --> C2[natural_language_proof.md or proof gap]
+    C --> C3[proof_status.json]
+    C3 -->|obtained: false| C4[human supplies or points to proof]
+    C4 --> C
+    C3 -->|obtained: true| D[human approves enrichment]
+    D --> E[02_plan]
+    E --> F[human approves plan]
+    F --> G[03_proof attempt 1]
+    G --> H[attempt review artifacts]
+    H --> I{compile passed?}
+    I -->|no| J[next proof attempt or terry retry]
+    J --> H
+    I -->|yes| K[04_final]
+    K --> L[human approves final]
+    L --> M[final.lean]
+```
+
 ## Install
 
 1. Install Lean:
@@ -63,8 +87,8 @@ terry prove examples/inputs/right_add_zero.md \
 
 Terry pauses at three human checkpoints:
 
-1. enrichment approval: scope and missing prerequisites
-2. plan approval: mathematical meaning plus Lean theorem statement and proof plan
+1. enrichment approval: scope, proof provenance, and whether Terry has an existing natural-language proof
+2. plan approval: mathematical meaning plus Lean theorem statement and proof plan grounded in that proof
 3. final approval: the compiling Lean candidate
 
 The first real Lean compile in a repo can still be slow because it establishes the
@@ -78,6 +102,12 @@ At each pause Terry writes:
 - `checkpoint.md` with the files to inspect and the exact resume command
 - `review.md` where the human writes the decision and notes
 
+The enrichment stage is now proof-gated. Terry will not open the plan stage unless
+`01_enrichment/proof_status.json` reports `obtained: true` and the backend also wrote
+both `01_enrichment/natural_language_statement.md` and
+`01_enrichment/natural_language_proof.md`. If the proof is missing, the enrichment
+handoff should ask the human for it instead of inventing one.
+
 After editing the review file, continue with:
 
 ```bash
@@ -88,6 +118,19 @@ Use this if you want a quick summary of where a run stopped:
 
 ```bash
 terry status right-add-zero
+```
+
+If you want Terry to regenerate the review artifacts for a completed proof attempt:
+
+```bash
+terry review right-add-zero --attempt 1
+```
+
+If the proof loop is blocked and you want to approve exactly one more attempt without
+editing `03_proof/review.md` manually:
+
+```bash
+terry retry right-add-zero
 ```
 
 If you resume or inspect a run from outside that same project directory, pass the same
@@ -103,9 +146,9 @@ terry status right-add-zero --workdir /path/to/project
 Each run lives under `artifacts/runs/<run_id>/`:
 
 - `00_input/` — original source text and provenance
-- `01_enrichment/` — backend-owned enrichment handoff plus Terry's checkpoint files
+- `01_enrichment/` — backend-owned enrichment handoff, natural-language statement/proof files, proof status, plus Terry's checkpoint files
 - `02_plan/` — backend-owned merged meaning+plan handoff plus Terry's checkpoint files
-- `03_proof/` — prove-and-repair attempts, backend-written Lean candidates, compile results, and proof-blocked handoff if needed
+- `03_proof/` — prove-and-repair attempts, backend-written Lean candidates, attempt review artifacts, compile results, and proof-blocked handoff if needed
 - `04_final/` — final candidate, final review files, and approved output
 - `logs/` — readable `timeline.md` plus structured `workflow.jsonl`
 

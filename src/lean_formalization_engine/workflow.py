@@ -13,6 +13,7 @@ from .models import (
     CompileAttempt,
     DEFAULT_WORKFLOW_TAGS,
     DEFAULT_WORKFLOW_VERSION,
+    NaturalLanguageProofStatus,
     ReviewDecision,
     RunManifest,
     RunStage,
@@ -30,10 +31,21 @@ PROOF_DIR = "03_proof"
 FINAL_DIR = "04_final"
 
 ENRICHMENT_HANDOFF = f"{ENRICHMENT_DIR}/handoff.md"
+ENRICHMENT_PROOF_STATUS = f"{ENRICHMENT_DIR}/proof_status.json"
+ENRICHMENT_NATURAL_LANGUAGE_STATEMENT = f"{ENRICHMENT_DIR}/natural_language_statement.md"
+ENRICHMENT_NATURAL_LANGUAGE_PROOF = f"{ENRICHMENT_DIR}/natural_language_proof.md"
 PLAN_HANDOFF = f"{PLAN_DIR}/handoff.md"
 PROOF_BLOCKER = f"{PROOF_DIR}/blocker.md"
 PROOF_LOOP = f"{PROOF_DIR}/loop.md"
 FINAL_CANDIDATE = f"{FINAL_DIR}/final_candidate.lean"
+ATTEMPT_WALKTHROUGH = "walkthrough.md"
+ATTEMPT_READABLE_CANDIDATE = "readable_candidate.lean"
+ATTEMPT_ERROR_REPORT = "error.md"
+ATTEMPT_REVIEW_OUTPUTS = [
+    ATTEMPT_WALKTHROUGH,
+    ATTEMPT_READABLE_CANDIDATE,
+    ATTEMPT_ERROR_REPORT,
+]
 
 LEGACY_ENRICHMENT_DIR = "03_enrichment"
 LEGACY_SPEC_DIR = "04_spec"
@@ -153,7 +165,7 @@ class FormalizationWorkflow:
                 continue_decision="approve",
                 auto_approve=auto_approve,
             )
-            if decision is None:
+            if decision is None or decision.decision != "approve":
                 return self._pause_for_legacy_enrichment(store, manifest)
             store.append_log(
                 "checkpoint_approved",
@@ -166,6 +178,7 @@ class FormalizationWorkflow:
                 manifest,
                 auto_approve=auto_approve,
                 review_notes_relative_path=f"{LEGACY_ENRICHMENT_DIR}/review.md",
+                allow_missing_proof=True,
             )
 
         if manifest.current_stage == RunStage.LEGACY_AWAITING_SPEC_REVIEW:
@@ -175,7 +188,7 @@ class FormalizationWorkflow:
                 continue_decision="approve",
                 auto_approve=auto_approve,
             )
-            if decision is None:
+            if decision is None or decision.decision != "approve":
                 return self._pause_for_legacy_spec_review(store, manifest)
             store.append_log(
                 "checkpoint_approved",
@@ -188,6 +201,7 @@ class FormalizationWorkflow:
                 manifest,
                 auto_approve=auto_approve,
                 review_notes_relative_path=f"{LEGACY_SPEC_DIR}/review.md",
+                allow_missing_proof=True,
             )
 
         if manifest.current_stage == RunStage.LEGACY_AWAITING_PLAN_REVIEW:
@@ -197,7 +211,7 @@ class FormalizationWorkflow:
                 continue_decision="approve",
                 auto_approve=auto_approve,
             )
-            if decision is None:
+            if decision is None or decision.decision != "approve":
                 return self._pause_for_legacy_plan_review(store, manifest)
             store.append_log(
                 "checkpoint_approved",
@@ -223,6 +237,19 @@ class FormalizationWorkflow:
                 if self._checkpoint_surface_missing(store, ENRICHMENT_DIR):
                     return self._pause_for_enrichment(store, manifest)
                 return manifest
+            if decision.decision == "reject":
+                store.append_log(
+                    "checkpoint_rejected",
+                    "Enrichment checkpoint rejected; Terry is rerunning enrichment.",
+                    stage="enrichment",
+                    details={"notes": decision.notes},
+                )
+                return self._run_enrichment_stage(
+                    store,
+                    manifest,
+                    auto_approve=auto_approve,
+                    review_notes_relative_path=f"{ENRICHMENT_DIR}/review.md",
+                )
             store.append_log(
                 "checkpoint_approved",
                 "Enrichment checkpoint approved.",
@@ -247,6 +274,20 @@ class FormalizationWorkflow:
                 if self._checkpoint_surface_missing(store, PLAN_DIR):
                     return self._pause_for_plan(store, manifest)
                 return manifest
+            if decision.decision == "reject":
+                store.append_log(
+                    "checkpoint_rejected",
+                    "Plan checkpoint rejected; Terry is rerunning the plan stage.",
+                    stage="plan",
+                    details={"notes": decision.notes},
+                )
+                return self._run_plan_stage(
+                    store,
+                    manifest,
+                    auto_approve=auto_approve,
+                    review_notes_relative_path=f"{PLAN_DIR}/review.md",
+                    force_rerun=True,
+                )
             store.append_log(
                 "checkpoint_approved",
                 "Plan checkpoint approved.",
@@ -285,14 +326,15 @@ class FormalizationWorkflow:
                         latest_candidate_path,
                         latest_compile,
                         auto_approve=auto_approve,
-                    )
+            )
             if store.exists(FINAL_CANDIDATE):
-                if self._resolve_checkpoint_decision(
+                decision = self._resolve_checkpoint_decision(
                     store,
                     FINAL_DIR,
                     continue_decision="approve",
                     auto_approve=auto_approve,
-                ):
+                )
+                if decision is not None and decision.decision == "approve":
                     return self._complete_from_candidate(store, manifest)
                 return self._pause_for_final(store, manifest)
             return self._prove_loop(store, manifest, auto_approve=auto_approve)
@@ -307,7 +349,7 @@ class FormalizationWorkflow:
                 continue_decision="retry",
                 auto_approve=auto_approve,
             )
-            if decision is None:
+            if decision is None or decision.decision != "retry":
                 if self._checkpoint_surface_missing(store, PROOF_DIR):
                     return self._pause_for_proof_blocked(
                         store,
@@ -340,7 +382,7 @@ class FormalizationWorkflow:
                 continue_decision="retry",
                 auto_approve=auto_approve,
             )
-            if decision is None:
+            if decision is None or decision.decision != "retry":
                 return self._pause_for_legacy_stall_review(store, manifest)
             store.append_log(
                 "proof_retry_approved",
@@ -363,7 +405,7 @@ class FormalizationWorkflow:
                 continue_decision="approve",
                 auto_approve=auto_approve,
             )
-            if decision is None:
+            if decision is None or decision.decision != "approve":
                 if self._checkpoint_surface_missing(store, FINAL_DIR):
                     return self._pause_for_final(store, manifest)
                 return manifest
@@ -382,7 +424,7 @@ class FormalizationWorkflow:
                 continue_decision="approve",
                 auto_approve=auto_approve,
             )
-            if decision is None:
+            if decision is None or decision.decision != "approve":
                 return self._pause_for_legacy_final_review(store, manifest)
             store.append_log(
                 "checkpoint_approved",
@@ -398,6 +440,15 @@ class FormalizationWorkflow:
         store = RunStore(self.artifacts_root, run_id)
         return self._load_manifest(store)
 
+    def review_attempt(self, run_id: str, attempt: int | None = None) -> int:
+        store = RunStore(self.artifacts_root, run_id)
+        manifest = self._load_manifest(store)
+        selected_attempt = attempt or manifest.attempt_count
+        if selected_attempt <= 0:
+            raise ValueError("Terry review needs a completed proof attempt.")
+        self._run_attempt_review(store, manifest, selected_attempt)
+        return selected_attempt
+
     def _resume_from_created(
         self,
         store: RunStore,
@@ -410,12 +461,13 @@ class FormalizationWorkflow:
             FINAL_DIR,
             ["final_candidate.lean", "compile_result.json", "provenance.json"],
         ):
-            if self._resolve_checkpoint_decision(
+            decision = self._resolve_checkpoint_decision(
                 store,
                 FINAL_DIR,
                 continue_decision="approve",
                 auto_approve=auto_approve,
-            ):
+            )
+            if decision is not None and decision.decision == "approve":
                 return self._complete_from_candidate(store, manifest)
             return self._pause_for_final(store, manifest)
 
@@ -426,24 +478,39 @@ class FormalizationWorkflow:
                 continue_decision="approve",
                 auto_approve=auto_approve,
             )
-            if decision is not None:
+            if decision is not None and decision.decision == "approve":
                 return self._prove_loop(
                     store,
                     manifest,
                     auto_approve=auto_approve,
                     review_notes_relative_path=f"{PLAN_DIR}/review.md",
                 )
+            if decision is not None and decision.decision == "reject":
+                return self._run_plan_stage(
+                    store,
+                    manifest,
+                    auto_approve=auto_approve,
+                    review_notes_relative_path=f"{PLAN_DIR}/review.md",
+                    force_rerun=True,
+                )
             return self._pause_for_plan(store, manifest)
 
-        if self._turn_artifacts_ready(store, ENRICHMENT_DIR, ["handoff.md"]):
+        if self._enrichment_stage_ready(store):
             decision = self._resolve_checkpoint_decision(
                 store,
                 ENRICHMENT_DIR,
                 continue_decision="approve",
                 auto_approve=auto_approve,
             )
-            if decision is not None:
+            if decision is not None and decision.decision == "approve":
                 return self._run_plan_stage(
+                    store,
+                    manifest,
+                    auto_approve=auto_approve,
+                    review_notes_relative_path=f"{ENRICHMENT_DIR}/review.md",
+                )
+            if decision is not None and decision.decision == "reject":
+                return self._run_enrichment_stage(
                     store,
                     manifest,
                     auto_approve=auto_approve,
@@ -459,22 +526,41 @@ class FormalizationWorkflow:
         manifest: RunManifest,
         *,
         auto_approve: bool,
+        review_notes_relative_path: str | None = None,
     ) -> RunManifest:
         request = self._build_stage_request(
             store,
             manifest,
             stage=BackendStage.ENRICHMENT,
             output_dir=ENRICHMENT_DIR,
-            required_outputs=["handoff.md"],
+            required_outputs=["handoff.md", "proof_status.json", "natural_language_statement.md"],
+            review_notes_relative_path=review_notes_relative_path,
         )
         self._run_backend_stage(store, request, ENRICHMENT_DIR)
+        proof_status = self._load_proof_status(store)
+        if proof_status is None:
+            raise RuntimeError("Enrichment stage did not write a valid `01_enrichment/proof_status.json`.")
+        if not store.exists(ENRICHMENT_NATURAL_LANGUAGE_STATEMENT):
+            raise RuntimeError("Enrichment stage did not write `01_enrichment/natural_language_statement.md`.")
+        if not proof_status.obtained and store.exists(ENRICHMENT_NATURAL_LANGUAGE_PROOF):
+            store.path(ENRICHMENT_NATURAL_LANGUAGE_PROOF).unlink()
+        if proof_status.obtained and not store.exists(ENRICHMENT_NATURAL_LANGUAGE_PROOF):
+            raise RuntimeError(
+                "Enrichment reported that a natural-language proof was obtained, but "
+                "`01_enrichment/natural_language_proof.md` is missing."
+            )
         store.append_log(
             "enrichment_ready",
             "Prepared the backend-owned enrichment handoff.",
             stage="enrichment",
+            details={
+                "natural_language_proof_obtained": proof_status.obtained,
+                "proof_source": proof_status.source,
+            },
         )
+        self._reset_checkpoint_surface(store, ENRICHMENT_DIR)
 
-        if auto_approve:
+        if auto_approve and proof_status.obtained:
             self._write_decision(
                 store,
                 ENRICHMENT_DIR,
@@ -500,8 +586,17 @@ class FormalizationWorkflow:
         *,
         auto_approve: bool,
         review_notes_relative_path: str | None = None,
+        force_rerun: bool = False,
+        allow_missing_proof: bool = False,
     ) -> RunManifest:
-        if self._turn_artifacts_ready(store, PLAN_DIR, ["handoff.md"]):
+        if not allow_missing_proof and not self._natural_language_proof_ready(store):
+            raise RuntimeError(
+                "Terry cannot start the plan stage without `01_enrichment/natural_language_statement.md`, "
+                "`01_enrichment/natural_language_proof.md`, and `01_enrichment/proof_status.json` "
+                "reporting `obtained: true`."
+            )
+
+        if not force_rerun and self._turn_artifacts_ready(store, PLAN_DIR, ["handoff.md"]):
             store.append_log(
                 "plan_reused",
                 "Reused the existing backend-owned plan handoff.",
@@ -522,6 +617,7 @@ class FormalizationWorkflow:
                 "Prepared the backend-owned plan handoff.",
                 stage="plan",
             )
+            self._reset_checkpoint_surface(store, PLAN_DIR)
 
         if auto_approve:
             self._write_decision(
@@ -619,9 +715,16 @@ class FormalizationWorkflow:
 
             compile_result = self.lean_runner.compile_candidate(store, candidate_relative_path, attempt)
             self._write_compile_result(store, attempt, compile_result)
-
             manifest.attempt_count = attempt
             manifest.updated_at = utc_now()
+            self._save_manifest(store, manifest)
+            self._run_attempt_review(
+                store,
+                manifest,
+                attempt,
+                review_notes_relative_path=review_notes_relative_path,
+                max_attempts=attempt_limit,
+            )
 
             if compile_result.passed:
                 manifest.latest_error = None
@@ -693,7 +796,12 @@ class FormalizationWorkflow:
         request: StageRequest,
         turn_dir: str,
     ) -> AgentTurn:
-        self._clear_turn_artifacts(store, turn_dir, request.required_outputs)
+        self._clear_turn_artifacts(
+            store,
+            turn_dir,
+            request.required_outputs,
+            clear_compile_outputs=request.stage == BackendStage.PROOF,
+        )
         turn = self.agent.run_stage(request)
         store.write_json(f"{turn_dir}/request.json", turn.request_payload)
         store.write_text(f"{turn_dir}/prompt.md", turn.prompt)
@@ -771,14 +879,28 @@ class FormalizationWorkflow:
         return manifest
 
     def _pause_for_enrichment(self, store: RunStore, manifest: RunManifest) -> RunManifest:
+        proof_status = self._load_proof_status(store)
+        summary = "Terry is waiting for enrichment approval before locking the formalization scope."
+        if proof_status is not None and not proof_status.obtained:
+            summary = (
+                "Terry still needs an existing natural-language proof before it can open the plan stage. "
+                "Use the enrichment review notes to supply that proof or point Terry at it, then rerun enrichment."
+            )
+        artifact_paths = [
+            ENRICHMENT_HANDOFF,
+            ENRICHMENT_PROOF_STATUS,
+            ENRICHMENT_NATURAL_LANGUAGE_STATEMENT,
+        ]
+        if store.exists(ENRICHMENT_NATURAL_LANGUAGE_PROOF):
+            artifact_paths.append(ENRICHMENT_NATURAL_LANGUAGE_PROOF)
         return self._pause_for_checkpoint(
             store,
             manifest,
             stage=RunStage.AWAITING_ENRICHMENT_APPROVAL,
             stage_dir=ENRICHMENT_DIR,
             title="Enrichment Approval",
-            summary="Terry is waiting for enrichment approval before locking the formalization scope.",
-            artifact_paths=[ENRICHMENT_HANDOFF],
+            summary=summary,
+            artifact_paths=artifact_paths,
             continue_decision="approve",
         )
 
@@ -861,6 +983,7 @@ class FormalizationWorkflow:
                     self._attempt_result_path(manifest.attempt_count),
                 ]
             )
+            artifact_paths.extend(self._existing_attempt_review_artifacts(store, manifest.attempt_count))
         return self._pause_for_checkpoint(
             store,
             manifest,
@@ -893,6 +1016,8 @@ class FormalizationWorkflow:
         final_compile_path = f"{FINAL_DIR}/compile_result.json"
         if store.exists(final_compile_path):
             artifact_paths.append(final_compile_path)
+        if manifest.attempt_count > 0:
+            artifact_paths.extend(self._existing_attempt_review_artifacts(store, manifest.attempt_count))
         return self._pause_for_checkpoint(
             store,
             manifest,
@@ -1002,8 +1127,21 @@ class FormalizationWorkflow:
         }
         if normalized_source is not None:
             input_paths["normalized_source"] = self._repo_relative(store.path(normalized_source))
-        if stage in {BackendStage.PLAN, BackendStage.PROOF}:
+        if stage in {BackendStage.PLAN, BackendStage.PROOF, BackendStage.REVIEW}:
             self._maybe_add_input_path(store, input_paths, "enrichment_handoff", ENRICHMENT_HANDOFF)
+            self._maybe_add_input_path(
+                store,
+                input_paths,
+                "natural_language_statement",
+                ENRICHMENT_NATURAL_LANGUAGE_STATEMENT,
+            )
+            self._maybe_add_input_path(
+                store,
+                input_paths,
+                "natural_language_proof",
+                ENRICHMENT_NATURAL_LANGUAGE_PROOF,
+            )
+            self._maybe_add_input_path(store, input_paths, "proof_status", ENRICHMENT_PROOF_STATUS)
             self._maybe_add_input_path(
                 store,
                 input_paths,
@@ -1029,7 +1167,7 @@ class FormalizationWorkflow:
                 "legacy_enrichment_review",
                 f"{LEGACY_ENRICHMENT_DIR}/review.md",
             )
-        if stage == BackendStage.PROOF:
+        if stage in {BackendStage.PROOF, BackendStage.REVIEW}:
             self._maybe_add_input_path(store, input_paths, "plan_handoff", PLAN_HANDOFF)
             self._maybe_add_input_path(
                 store,
@@ -1063,6 +1201,14 @@ class FormalizationWorkflow:
                 input_paths["previous_candidate"] = self._repo_relative(
                     store.path(f"{previous_attempt_dir}/candidate.lean")
                 )
+                for key, filename in (
+                    ("previous_walkthrough", ATTEMPT_WALKTHROUGH),
+                    ("previous_readable_candidate", ATTEMPT_READABLE_CANDIDATE),
+                    ("previous_error_report", ATTEMPT_ERROR_REPORT),
+                ):
+                    previous_review_path = f"{previous_attempt_dir}/{filename}"
+                    if store.exists(previous_review_path):
+                        input_paths[key] = self._repo_relative(store.path(previous_review_path))
             elif attempt is not None and attempt > 1:
                 self._maybe_add_input_path(
                     store,
@@ -1077,6 +1223,15 @@ class FormalizationWorkflow:
                     f"07_draft/attempt_{attempt - 1:04d}/parsed_output.json",
                 )
             self._maybe_add_review_input_path(store, input_paths, "proof_review", f"{PROOF_DIR}/review.md")
+        if stage == BackendStage.REVIEW and attempt is not None:
+            current_attempt_dir = f"{PROOF_DIR}/attempts/attempt_{attempt:04d}"
+            self._maybe_add_input_path(store, input_paths, "attempt_candidate", f"{current_attempt_dir}/candidate.lean")
+            self._maybe_add_input_path(
+                store,
+                input_paths,
+                "attempt_compile_result",
+                f"{current_attempt_dir}/compile_result.json",
+            )
         if stage == BackendStage.PLAN:
             self._maybe_add_input_path(
                 store,
@@ -1096,6 +1251,10 @@ class FormalizationWorkflow:
             if latest_compile_result_path and store.exists(latest_compile_result_path)
             else None
         )
+        if compile_result_relative is None and stage in {BackendStage.PROOF, BackendStage.REVIEW} and attempt is not None:
+            current_compile_relative = f"{PROOF_DIR}/attempts/attempt_{attempt:04d}/compile_result.json"
+            if store.exists(current_compile_relative):
+                compile_result_relative = self._repo_relative(store.path(current_compile_relative))
         if compile_result_relative is None and stage == BackendStage.PROOF and attempt is not None and attempt > 1:
             legacy_compile_relative = f"08_compile/attempt_{attempt - 1:04d}/result.json"
             if store.exists(legacy_compile_relative):
@@ -1145,6 +1304,90 @@ class FormalizationWorkflow:
         if meaningful_path is not None:
             input_paths[key] = meaningful_path
 
+    def _run_attempt_review(
+        self,
+        store: RunStore,
+        manifest: RunManifest,
+        attempt: int,
+        *,
+        review_notes_relative_path: str | None = None,
+        max_attempts: int | None = None,
+    ) -> None:
+        attempt_dir = f"{PROOF_DIR}/attempts/attempt_{attempt:04d}"
+        candidate_path = f"{attempt_dir}/candidate.lean"
+        compile_path = f"{attempt_dir}/compile_result.json"
+        if not store.exists(candidate_path) or not store.exists(compile_path):
+            raise ValueError(
+                "Terry review needs both the candidate and compile result for the selected attempt."
+            )
+        request = self._build_stage_request(
+            store,
+            manifest,
+            stage=BackendStage.REVIEW,
+            output_dir=attempt_dir,
+            required_outputs=ATTEMPT_REVIEW_OUTPUTS,
+            review_notes_relative_path=review_notes_relative_path,
+            latest_compile_result_path=compile_path,
+            attempt=attempt,
+            max_attempts=max_attempts or manifest.attempt_count or self.max_attempts,
+        )
+        self._run_backend_stage(store, request, attempt_dir)
+        store.append_log(
+            "attempt_review_ready",
+            f"Wrote Terry review artifacts for attempt {attempt}.",
+            stage="proof",
+            details={"attempt": attempt},
+        )
+
+    def _attempt_review_paths(self, attempt: int) -> list[str]:
+        attempt_dir = f"{PROOF_DIR}/attempts/attempt_{attempt:04d}"
+        return [f"{attempt_dir}/{relative_path}" for relative_path in ATTEMPT_REVIEW_OUTPUTS]
+
+    def _existing_attempt_review_artifacts(self, store: RunStore, attempt: int) -> list[str]:
+        return [relative_path for relative_path in self._attempt_review_paths(attempt) if store.exists(relative_path)]
+
+    def _load_proof_status(self, store: RunStore) -> NaturalLanguageProofStatus | None:
+        if not store.exists(ENRICHMENT_PROOF_STATUS):
+            return None
+        payload = store.read_json(ENRICHMENT_PROOF_STATUS)
+        obtained = payload.get("obtained")
+        if not isinstance(obtained, bool):
+            raise ValueError("`01_enrichment/proof_status.json` must contain a boolean `obtained` field.")
+        source = str(payload.get("source") or "unknown")
+        notes = str(payload.get("notes") or "")
+        return NaturalLanguageProofStatus(obtained=obtained, source=source, notes=notes)
+
+    def _natural_language_proof_ready(self, store: RunStore) -> bool:
+        proof_status = self._load_proof_status(store)
+        return (
+            proof_status is not None
+            and proof_status.obtained
+            and store.exists(ENRICHMENT_NATURAL_LANGUAGE_STATEMENT)
+            and store.exists(ENRICHMENT_NATURAL_LANGUAGE_PROOF)
+        )
+
+    def _enrichment_stage_ready(self, store: RunStore) -> bool:
+        if not self._turn_artifacts_ready(
+            store,
+            ENRICHMENT_DIR,
+            ["handoff.md", "proof_status.json", "natural_language_statement.md"],
+        ):
+            return False
+        proof_status = self._load_proof_status(store)
+        if proof_status is None:
+            return False
+        if proof_status.obtained and not store.exists(ENRICHMENT_NATURAL_LANGUAGE_PROOF):
+            raise RuntimeError(
+                "Enrichment recorded `obtained: true` without writing `01_enrichment/natural_language_proof.md`."
+            )
+        return True
+
+    def _reset_checkpoint_surface(self, store: RunStore, stage_dir: str) -> None:
+        for relative_path in (f"{stage_dir}/review.md", f"{stage_dir}/decision.json"):
+            target = store.path(relative_path)
+            if target.exists():
+                target.unlink()
+
     def _render_loop_summary(self, store: RunStore, latest_attempt: int) -> str:
         sections = [
             "# Prove-And-Repair Loop",
@@ -1163,6 +1406,9 @@ class FormalizationWorkflow:
             sections.append(f"- attempt {attempt}: {status}")
             if diagnostics:
                 sections.append(f"  diagnostics: {' | '.join(str(item) for item in diagnostics)}")
+            review_artifacts = self._existing_attempt_review_artifacts(store, attempt)
+            if review_artifacts:
+                sections.append(f"  review: {' | '.join(review_artifacts)}")
         sections.append("")
         return "\n".join(sections)
 
@@ -1276,16 +1522,12 @@ class FormalizationWorkflow:
             decision = self._parse_review_file(store.read_text(review_path))
             if decision is not None:
                 self._write_decision(store, stage_dir, decision)
-                if decision.decision == continue_decision:
-                    return decision
-                return None
+                return decision
 
         existing = self._load_decision(store, f"{stage_dir}/decision.json")
         if existing is not None:
-            if existing.decision == continue_decision:
-                return existing
             if existing.decision != "pending":
-                return None
+                return existing
 
         if auto_approve:
             decision = ReviewDecision(continue_decision, utc_now(), "Auto-approved.")
@@ -1463,6 +1705,8 @@ class FormalizationWorkflow:
         store: RunStore,
         turn_dir: str,
         required_outputs: list[str],
+        *,
+        clear_compile_outputs: bool = False,
     ) -> None:
         stale_paths = [
             f"{turn_dir}/request.json",
@@ -1470,7 +1714,7 @@ class FormalizationWorkflow:
             f"{turn_dir}/response.txt",
         ]
         stale_paths.extend(f"{turn_dir}/{relative_path}" for relative_path in required_outputs)
-        if turn_dir.startswith(f"{PROOF_DIR}/attempts/"):
+        if clear_compile_outputs and turn_dir.startswith(f"{PROOF_DIR}/attempts/"):
             stale_paths.extend(
                 [
                     f"{turn_dir}/compile_result.json",

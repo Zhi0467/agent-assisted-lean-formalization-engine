@@ -17,10 +17,12 @@ and attempt `3` passed.
 
 Current verification:
 
-- `PYTHONPATH=src:. pytest -q` (`107` tests, all passing)
+- `PYTHONPATH=src python3 -m unittest discover -s tests` (`112` tests, all passing)
 - targeted CLI e2e tests still pass on the merged head:
   `DemoWorkflowTest.test_cli_demo_backend_e2e`
   `DemoWorkflowTest.test_cli_command_backend_e2e`
+  `DemoWorkflowTest.test_cli_review_command_writes_attempt_artifacts`
+  `DemoWorkflowTest.test_cli_retry_command_allows_one_more_attempt`
 - `DemoWorkflowTest.test_cli_demo_backend_e2e_accepts_workdir_after_subcommand`
 - real same-`--workdir` Terry CLI e2e on two elementary analysis theorems passed after
   the final cache hardening pass:
@@ -45,6 +47,7 @@ Open follow-ups:
 - [ ] Decide whether Terry's default `3`-attempt proof budget should become a CLI-level knob instead of a code default.
 - [ ] Decide whether final approval should add a second fresh-workspace verification pass instead of trusting one passing Terry compile.
 - [ ] Build a small checked-in benchmark set beyond `convergent-seq-bounded` so proof-loop behavior is not judged from one theorem.
+- [ ] Decide whether `proof_status.json` should grow a stricter provenance enum or stay as the current minimal control-plane gate.
 
 ## Orchestrator-Only Refactor
 

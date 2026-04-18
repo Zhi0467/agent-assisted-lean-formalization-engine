@@ -153,6 +153,38 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    review_parser = subparsers.add_parser(
+        "review",
+        help="Generate Terry review artifacts for a completed proof attempt.",
+    )
+    review_parser.add_argument("run_id", nargs="?")
+    review_parser.add_argument("--run-id", dest="legacy_run_id", help=argparse.SUPPRESS)
+    review_parser.add_argument(
+        "--attempt",
+        type=int,
+        help="Attempt number to review. Defaults to the latest completed attempt.",
+    )
+    _add_backend_arguments(
+        review_parser,
+        command_help=(
+            "Provider command for command-backed Terry runs when generating review artifacts."
+        ),
+    )
+
+    retry_parser = subparsers.add_parser(
+        "retry",
+        help="Approve exactly one more Terry proof attempt after a blocked proof loop.",
+    )
+    retry_parser.add_argument("run_id", nargs="?")
+    retry_parser.add_argument("--run-id", dest="legacy_run_id", help=argparse.SUPPRESS)
+    retry_parser.add_argument("--notes", default="Retry requested by CLI.")
+    _add_backend_arguments(
+        retry_parser,
+        command_help=(
+            "Provider command for legacy command-backed runs that need one more Terry attempt."
+        ),
+    )
+
     status_parser = subparsers.add_parser("status", help="Show the current Terry run summary.")
     status_parser.add_argument("run_id", nargs="?")
     status_parser.add_argument("--run-id", dest="legacy_run_id", help=argparse.SUPPRESS)
@@ -479,6 +511,20 @@ def render_resume_command(
     return " ".join(shlex.quote(part) for part in command)
 
 
+def render_review_summary(run_id: str, attempt: int, repo_root: Path) -> str:
+    attempt_dir = repo_root / "artifacts" / "runs" / run_id / "03_proof" / "attempts" / f"attempt_{attempt:04d}"
+    lines = [
+        f"Run: {run_id}",
+        f"Working directory: {repo_root.resolve()}",
+        f"Reviewed attempt: {attempt}",
+        "Artifacts:",
+        f"- {attempt_dir.relative_to(repo_root) / 'walkthrough.md'}",
+        f"- {attempt_dir.relative_to(repo_root) / 'readable_candidate.lean'}",
+        f"- {attempt_dir.relative_to(repo_root) / 'error.md'}",
+    ]
+    return "\n".join(lines)
+
+
 def _resolve_status_surface(manifest: RunManifest, repo_root: Path) -> tuple[str, str] | None:
     candidates = _STATUS_SURFACE_CANDIDATES.get(manifest.current_stage)
     if candidates is None:
@@ -629,6 +675,7 @@ def main() -> None:
     args = parser.parse_args(_normalize_global_options(sys.argv[1:]))
     repo_root = args.repo_root.resolve()
     lake_path = _resolve_lake_path(args.lake_path, repo_root)
+    review_output: str | None = None
 
     try:
         if args.command in {"prove", "formalize", "run"}:
@@ -671,6 +718,45 @@ def main() -> None:
             )
             manifest = workflow.resume(run_id, auto_approve=args.auto_approve)
 
+        elif args.command == "review":
+            run_id = _resolve_run_id_argument(args)
+            manifest = _load_manifest(repo_root, run_id)
+            lake_path = lake_path or _resolve_lake_path(manifest.lake_path, repo_root)
+            agent_config = _resume_agent_config(manifest, args, repo_root)
+            workflow = FormalizationWorkflow(
+                repo_root=repo_root,
+                agent=build_agent(agent_config, repo_root),
+                agent_config=agent_config,
+                lean_runner=LeanRunner(
+                    template_dir=Path(manifest.template_dir),
+                    repo_root=repo_root,
+                    lake_path=lake_path,
+                ),
+            )
+            reviewed_attempt = workflow.review_attempt(run_id, args.attempt)
+            manifest = workflow.status(run_id)
+            review_output = render_review_summary(run_id, reviewed_attempt, repo_root)
+
+        elif args.command == "retry":
+            run_id = _resolve_run_id_argument(args)
+            manifest = _load_manifest(repo_root, run_id)
+            if manifest.current_stage not in {RunStage.PROOF_BLOCKED, RunStage.LEGACY_AWAITING_STALL_REVIEW}:
+                raise ValueError("`terry retry` only works when Terry is blocked inside the proof loop.")
+            manifest = _write_compatibility_approval(repo_root, run_id, "approve-stall", args.notes)
+            lake_path = lake_path or _resolve_lake_path(manifest.lake_path, repo_root)
+            agent_config = _resume_agent_config(manifest, args, repo_root)
+            workflow = FormalizationWorkflow(
+                repo_root=repo_root,
+                agent=build_agent(agent_config, repo_root),
+                agent_config=agent_config,
+                lean_runner=LeanRunner(
+                    template_dir=Path(manifest.template_dir),
+                    repo_root=repo_root,
+                    lake_path=lake_path,
+                ),
+            )
+            manifest = workflow.resume(run_id, auto_approve=False)
+
         elif args.command.startswith("approve-"):
             run_id = args.run_id
             manifest = _write_compatibility_approval(repo_root, run_id, args.command, args.notes)
@@ -695,7 +781,9 @@ def main() -> None:
                 print(json.dumps(to_jsonable(manifest), indent=2))
                 return
 
-        if _legacy_json_output(args):
+        if review_output is not None:
+            print(review_output)
+        elif _legacy_json_output(args):
             print(json.dumps(_render_legacy_manifest_payload(manifest), indent=2))
         else:
             print(render_manifest_summary(manifest, repo_root))

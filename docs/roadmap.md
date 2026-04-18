@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-04-18 04:36 UTC
+Last updated: 2026-04-18 06:39 UTC
 
 ## Current Status
 
@@ -10,9 +10,10 @@ payload schemas, theorem parsing, or backend-facing plan objects. The current re
 centers the orchestrator-only contract directly:
 
 - the installable CLI is now `terry`
-- the human path is `terry prove` plus `terry resume`
+- the human path is now `terry prove`, `terry resume`, `terry review`, `terry retry`, and `terry status`
 - the workflow has three approvals only: enrichment, merged plan, and final
 - plan approval now locks the backend-owned merged theorem meaning / Lean plan handoff
+- plan generation is now hard-gated behind an obtained natural-language proof from enrichment
 - the proof phase is an explicit prove-and-repair loop between plan approval and final approval
 - each checkpoint writes `checkpoint.md` plus `review.md`
 - each run now has `logs/timeline.md` and `logs/workflow.jsonl`
@@ -25,10 +26,12 @@ centers the orchestrator-only contract directly:
   first theorem in a repo can warm mathlib once and later Terry runs reuse it
 - the backend now writes `01_enrichment/handoff.md`, `02_plan/handoff.md`, and
   `03_proof/attempts/attempt_<n>/candidate.lean` directly
+- each proof attempt now also carries Terry review artifacts:
+  `walkthrough.md`, `readable_candidate.lean`, and `error.md`
 - Terry now stores only the narrow control-plane request / prompt / response beside those
   outputs, then validates that the required file exists before continuing
 
-The final local verification surface on the merged head is now `107/107`, and that
+The final local verification surface on the merged head is now `112/112`, and that
 suite is deliberately rewritten around the file-first contract rather than the removed
 Terry-owned JSON payload layer. It covers the demo workflow, the subprocess repair loop,
 the file-first stage request shape, legacy-resume compatibility, legacy compatibility
@@ -39,9 +42,11 @@ cache refresh, incomplete-vendored-tree repair, `lakefile.lean` vendored-templat
 support, in-place toolchain refresh behind the same `lake` path, fallback lock recovery,
 best-effort cache-alias and git-exclude setup, the legacy pending-review-template
 filters, explicit `--workdir` routing, sibling local path dependency mirroring,
-ancestor-overlay cleanup, packed-ref vendored revisions, and nested vendored build-only
-readiness checks. The targeted CLI e2e tests for the demo backend, the scripted command
-backend, and the explicit workdir path still pass on fresh temp repo roots.
+ancestor-overlay cleanup, packed-ref vendored revisions, nested vendored build-only
+readiness checks, proof-gated enrichment, rejected enrichment/plan reruns, attempt
+review regeneration, and the explicit `terry retry` CLI. The targeted CLI e2e tests for
+the demo backend, the scripted command backend, explicit workdir routing, proof review,
+and proof retry still pass on fresh temp repo roots.
 
 PR `#4` is merged into `main` now as `b352acc`, so Milestone 1 is closed again on the
 shipped repo surface rather than a pending PR branch. The final cache-hardening pass
@@ -56,10 +61,12 @@ subcommand, and that chosen working directory owns `artifacts/`,
 
 Final validation on the merged surface is now:
 
-- `PYTHONPATH=src:. pytest -q` (`107/107` passing)
+- `PYTHONPATH=src python3 -m unittest discover -s tests` (`112/112` passing)
 - targeted CLI e2e tests still pass:
   - `DemoWorkflowTest.test_cli_demo_backend_e2e`
   - `DemoWorkflowTest.test_cli_command_backend_e2e`
+  - `DemoWorkflowTest.test_cli_review_command_writes_attempt_artifacts`
+  - `DemoWorkflowTest.test_cli_retry_command_allows_one_more_attempt`
   - `DemoWorkflowTest.test_cli_demo_backend_e2e_accepts_workdir_after_subcommand`
 - real same-`--workdir` Terry CLI e2e on two elementary analysis theorems:
   - `0 <= |x|` completed with `lake update` then `lake build`
@@ -96,6 +103,9 @@ Gate:
 
 ### Activity Log
 
+- [2026-04-18 06:39 UTC] Terry now treats the natural-language proof as a real gate instead of a prompt-only preference. Enrichment must write `proof_status.json`, plan generation refuses to start until that status reports `obtained: true` and `natural_language_proof.md` is on disk, and rejected enrichment or plan handoffs now rerun the rejected stage instead of leaving Terry parked on stale artifacts.
+- [2026-04-18 06:39 UTC] Added Terry's explicit proof-review surface. Every proof attempt now triggers a backend-owned review pass that writes `walkthrough.md`, `readable_candidate.lean`, and `error.md` beside the attempt candidate, the CLI exposes `terry review <run_id> --attempt <n>` to regenerate those artifacts, and `terry retry <run_id>` now approves exactly one more blocked proof attempt without hand-editing `03_proof/review.md`.
+- [2026-04-18 06:39 UTC] Re-ran the full local suite after the proof-gate / review-surface patch: `PYTHONPATH=src python3 -m unittest discover -s tests` is now `112/112`, including new coverage for missing-proof blocking, rejected-stage reruns, review artifact generation, and the explicit CLI retry path.
 - [2026-04-18 03:17 UTC] Merged PR `#4` (`Reuse Terry Lean cache across runs`) into `main` as `b352acc` after one more detached bug pass and a real same-`--workdir` Terry CLI walk on two elementary analysis theorems. The first run (`0 <= |x|`) warmed the shared workspace with `lake update` then `lake build`; the second run (`0 <= x^2`) in the same directory finished with `lake build` only, which is the exact cache-reuse behavior Wangzhi asked for.
 - [2026-04-18 03:17 UTC] The final code delta before merge was `428b4d4`, which closed two last shared-workspace recovery bugs: stale nested files under ancestor-overlay path dependencies are now removed before reuse, and a partially deleted `.terry/lean_workspace/` now recopies itself instead of limping into repeated broken builds. The full local test surface is now `107/107`, all live GitHub review threads on PR `#4` are resolved, and the project checkout was cleaned of untracked Terry test junk after the final e2e.
 - [2026-04-18 01:09 UTC] Added the explicit Terry working-directory surface that Wangzhi asked for. `terry` now accepts `--workdir` as an alias for `--repo-root`, that flag can appear before or after the subcommand, status output now prints the working directory explicitly, and the README / manual walkthrough / architecture docs now explain that this directory owns `artifacts/`, `lean_workspace_template/`, and `.terry/lean_workspace/`.

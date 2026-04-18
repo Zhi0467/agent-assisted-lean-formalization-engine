@@ -244,7 +244,7 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
             )
 
             def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
-                sandbox_root = Path(command[5])
+                sandbox_root = Path(command[command.index("-C") + 1])
                 (sandbox_root / request.output_dir).mkdir(parents=True, exist_ok=True)
                 (sandbox_root / request.output_dir / "handoff.md").write_text("# Plan Handoff\n", encoding="utf-8")
                 return subprocess.CompletedProcess(
@@ -260,9 +260,9 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
 
             command = run_mock.call_args.args[0]
             prompt = run_mock.call_args.kwargs["input"]
-            self.assertIn("workspace-write", command)
-            self.assertEqual(command[:5], ["codex", "exec", "--ephemeral", "--skip-git-repo-check", "-C"])
-            self.assertNotEqual(command[5], str(repo_root))
+            self.assertIn("--dangerously-bypass-approvals-and-sandbox", command)
+            self.assertEqual(command[:6], ["codex", "exec", "--ephemeral", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "-C"])
+            self.assertNotEqual(command[6], str(repo_root))
             self.assertIn("Required outputs:", prompt)
             self.assertIn("artifacts/runs/demo/02_plan/handoff.md", prompt)
             self.assertIn("enrichment_handoff", prompt)
@@ -294,7 +294,7 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
             )
 
             def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
-                sandbox_root = Path(command[5])
+                sandbox_root = Path(command[command.index("-C") + 1])
                 (sandbox_root / "README.md").write_text("mutated", encoding="utf-8")
                 output_dir = sandbox_root / request.output_dir
                 output_dir.mkdir(parents=True, exist_ok=True)

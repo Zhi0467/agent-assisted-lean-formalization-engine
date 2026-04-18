@@ -33,10 +33,9 @@ class CodexCliFormalizationAgent:
                 "exec",
                 "--ephemeral",
                 "--skip-git-repo-check",
+                "--dangerously-bypass-approvals-and-sandbox",
                 "-C",
                 str(sandbox_root),
-                "-s",
-                "workspace-write",
             ]
             if self.model:
                 command.extend(["-m", self.model])
@@ -104,6 +103,9 @@ class CodexCliFormalizationAgent:
         for path in request.required_outputs:
             lines.append(f"- {request.output_dir}/{path}")
 
+        lines.extend(["", "Stage-specific instructions:"])
+        lines.extend(self._stage_instructions(request))
+
         if request.review_notes_path:
             lines.extend(
                 [
@@ -140,6 +142,42 @@ class CodexCliFormalizationAgent:
             ]
         )
         return "\n".join(lines)
+
+    def _stage_instructions(self, request: StageRequest) -> list[str]:
+        if request.stage.value == "enrichment":
+            return [
+                "- Read the source and decide whether an existing natural-language proof is already available.",
+                "- Do not invent a proof. Terry should formalize an existing proof, not author a new one.",
+                "- Always write `handoff.md`, `natural_language_statement.md`, and `proof_status.json`.",
+                "- `proof_status.json` must contain JSON with `obtained` (boolean), `source` (string), and optional `notes`.",
+                "- `natural_language_statement.md` should restate the theorem in plain language, not Lean syntax.",
+                "- If a natural-language proof is available from the source, prior notes, or a trustworthy cited reference, write it to `natural_language_proof.md` and set `obtained: true`.",
+                "- If no proof is available yet, set `obtained: false`, explain the gap in `handoff.md`, and ask the human for the missing proof surface or citation.",
+            ]
+        if request.stage.value == "plan":
+            return [
+                "- Treat the natural-language proof as the cornerstone for the Lean plan.",
+                "- Keep the natural-language statement and natural-language proof visible while planning.",
+                "- Do not invent a new proof route that is not grounded in the available natural-language proof.",
+                "- Use `handoff.md` to lock the formal statement, imports, and the Lean proof route.",
+            ]
+        if request.stage.value == "proof":
+            return [
+                "- Formalize the approved plan into Lean.",
+                "- On repair attempts, read the previous candidate and compile result before editing.",
+                "- Read any previous walkthrough, readable-candidate, or error-report pointers before repairing.",
+                "- Keep the theorem surface aligned with the approved statement unless reviewer notes explicitly change it.",
+            ]
+        if request.stage.value == "review":
+            return [
+                "- Keep the natural-language statement and proof visible while reviewing the attempt.",
+                "- Read the current attempt's `candidate.lean` and compile result carefully.",
+                "- Write `walkthrough.md` that maps the Lean code to the underlying proof steps in plain language.",
+                "- Write `readable_candidate.lean` as a human-readable rewrite with comments and cleaner organization, without changing the theorem's mathematical content.",
+                "- Write `error.md` describing the concrete Lean/compiler issue in this attempt, or explicitly say that the attempt compiled cleanly.",
+                "- Do not overwrite `candidate.lean`.",
+            ]
+        return []
 
     def _prepare_sandbox_request(self, sandbox_root: Path, request: StageRequest) -> StageRequest:
         sandbox_root.mkdir(parents=True, exist_ok=True)

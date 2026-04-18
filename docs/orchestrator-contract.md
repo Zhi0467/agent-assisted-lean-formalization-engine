@@ -15,6 +15,7 @@ the run directory, and Terry compiles only the current `candidate.lean`.
 - `checkpoint.md`, `review.md`, and persisted `decision.json` at each human handoff
 - `logs/timeline.md` and `logs/workflow.jsonl`
 - Lean workspace discovery / bootstrap and the compile invocation
+- the hard gate that keeps plan generation behind an obtained natural-language proof
 - retry-cap accounting, proof-loop pause / resume, and final approval state
 - persisted backend selection in the manifest so resumed runs do not drift
 
@@ -58,17 +59,35 @@ launch the backend, but theorem content itself should travel only through files.
 - `01_enrichment/handoff.md`
   The default human review target for stage 1. The backend may add any supporting files
   beside it.
+- `01_enrichment/natural_language_statement.md`
+  Plain-language statement surface that later plan/proof/review workers can reference by
+  path.
+- `01_enrichment/proof_status.json`
+  Control-plane proof gate for stage 1. Terry reads only whether the natural-language
+  proof was obtained, not the theorem content itself.
 - `02_plan/handoff.md`
   The default human review target for stage 2. The backend may add any supporting files
   beside it.
 - `03_proof/attempts/attempt_<n>/candidate.lean`
   The Lean file Terry compiles for that attempt.
+- `03_proof/attempts/attempt_<n>/walkthrough.md`
+- `03_proof/attempts/attempt_<n>/readable_candidate.lean`
+- `03_proof/attempts/attempt_<n>/error.md`
+  Terry review artifacts for that proof attempt.
+
+- `01_enrichment/natural_language_proof.md`
+  Required in practice whenever `proof_status.json` reports `obtained: true`.
+- `03_proof/attempts/attempt_<n>/walkthrough.md`
+- `03_proof/attempts/attempt_<n>/readable_candidate.lean`
+- `03_proof/attempts/attempt_<n>/error.md`
+  These review artifacts should also be passed back into later proof turns by pointer
+  when Terry asks the backend for a repair attempt.
 
 ### Optional backend-written files
 
 - `01_enrichment/*`
 - `02_plan/*`
-- `03_proof/attempts/attempt_<n>/*` other than the required `candidate.lean`
+- `03_proof/attempts/attempt_<n>/*` other than the required `candidate.lean` plus review artifacts above
 - `04_final/handoff.md`
 - any other files the backend wants to preserve for replay or human review
 
@@ -85,6 +104,7 @@ should stay narrow:
 - output directory for this stage or attempt
 - paths to prior stage files that the backend should inspect
 - attempt metadata such as attempt number / retry cap
+- the current attempt's compile result when Terry is asking for an attempt review
 - path to the latest compile result file when Terry is asking for a repair attempt
 - human review notes file path when the stage resumes from a handoff
 
