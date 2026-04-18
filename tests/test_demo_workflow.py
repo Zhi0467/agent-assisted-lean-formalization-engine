@@ -3742,3 +3742,36 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, msg=result.stderr)
             self.assertIn("Attempts: 2", result.stdout)
             self.assertTrue((temp_root / "artifacts" / "runs" / "cli-command" / "04_final" / "final.lean").exists())
+
+    def test_cli_demo_backend_e2e_accepts_workdir_after_subcommand(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            fake_lake = self._write_fake_lake(temp_root)
+
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+            command = [
+                sys.executable,
+                "-m",
+                "lean_formalization_engine",
+                "prove",
+                str(source_path),
+                "--workdir",
+                str(temp_root),
+                "--lake-path",
+                str(fake_lake),
+                "--run-id",
+                "cli-demo-workdir",
+                "--agent-backend",
+                "demo",
+                "--auto-approve",
+            ]
+            result = subprocess.run(command, capture_output=True, text=True, env=env, check=False)
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertIn("Working directory:", result.stdout)
+            self.assertTrue((temp_root / ".terry" / "lean_workspace").exists())
+            self.assertTrue(
+                (temp_root / "artifacts" / "runs" / "cli-demo-workdir" / "04_final" / "final.lean").exists()
+            )

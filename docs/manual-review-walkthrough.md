@@ -44,6 +44,19 @@ Run from the repo root after Lean and the Codex CLI are available:
 15. Finish the run:
     `terry resume right-add-zero`
 
+If you prefer to launch Terry from elsewhere but keep reusing one warmed local cache,
+pass the project directory explicitly on every command:
+
+```bash
+terry prove examples/inputs/right_add_zero.md --run-id right-add-zero --workdir /path/to/project
+terry resume right-add-zero --workdir /path/to/project
+terry status right-add-zero --workdir /path/to/project
+```
+
+`--workdir` is the same knob as `--repo-root`. It tells Terry where to put
+`artifacts/`, where to discover or create `lean_workspace_template/`, and where to keep
+the shared `.terry/lean_workspace/` cache warm between runs.
+
 At the end, the canonical output is:
 
 - `artifacts/runs/right-add-zero/04_final/final.lean`

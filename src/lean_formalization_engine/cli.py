@@ -68,6 +68,12 @@ _LEGACY_STAGE_BY_CURRENT = {
     RunStage.FAILED: RunStage.FAILED.value,
 }
 
+_GLOBAL_OPTIONS_WITH_VALUES = (
+    "--repo-root",
+    "--workdir",
+    "--lake-path",
+)
+
 
 class _MissingCommandAgent:
     name = "command-backend-missing-command"
@@ -102,9 +108,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--repo-root",
+        "--workdir",
         type=Path,
         default=Path.cwd(),
-        help="Project root that contains artifacts/ and, optionally, lean_workspace_template/.",
+        help=(
+            "Terry working directory. This repo root owns artifacts/, optional "
+            "lean_workspace_template/, and the shared .terry/lean_workspace cache."
+        ),
     )
     parser.add_argument(
         "--lake-path",
@@ -155,6 +165,35 @@ def build_parser() -> argparse.ArgumentParser:
     _add_legacy_approve_parser(subparsers, "approve-stall", "Approved one more repair attempt.")
 
     return parser
+
+
+def _normalize_global_options(argv: list[str]) -> list[str]:
+    extracted: list[str] = []
+    remaining: list[str] = []
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        matched_option = None
+        for option in _GLOBAL_OPTIONS_WITH_VALUES:
+            if token == option:
+                matched_option = option
+                extracted.append(token)
+                if index + 1 < len(argv):
+                    extracted.append(argv[index + 1])
+                    index += 2
+                else:
+                    index += 1
+                break
+            if token.startswith(f"{option}="):
+                matched_option = option
+                extracted.append(token)
+                index += 1
+                break
+        if matched_option is not None:
+            continue
+        remaining.append(token)
+        index += 1
+    return extracted + remaining
 
 
 def _add_prove_arguments(parser: argparse.ArgumentParser) -> None:
@@ -423,12 +462,13 @@ def render_resume_command(
 ) -> str:
     command = [
         "terry",
-        "--repo-root",
+        "resume",
+        run_id,
+        "--workdir",
         str(repo_root.resolve()),
     ]
     if lake_path:
         command.extend(["--lake-path", lake_path])
-    command.extend(["resume", run_id])
     if agent_config is not None and agent_config.backend == "command":
         provider_command = (
             shlex.join(agent_config.command)
@@ -454,6 +494,7 @@ def _resolve_status_surface(manifest: RunManifest, repo_root: Path) -> tuple[str
 def render_manifest_summary(manifest: RunManifest, repo_root: Path) -> str:
     lines = [
         f"Run: {manifest.run_id}",
+        f"Working directory: {repo_root.resolve()}",
         f"Stage: {manifest.current_stage.value}",
         f"Backend: {manifest.agent_config.backend}",
         f"Attempts: {manifest.attempt_count}",
@@ -585,7 +626,7 @@ def _render_legacy_manifest_payload(manifest: RunManifest) -> dict[str, object]:
 
 def main() -> None:
     parser = build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(_normalize_global_options(sys.argv[1:]))
     repo_root = args.repo_root.resolve()
     lake_path = _resolve_lake_path(args.lake_path, repo_root)
 

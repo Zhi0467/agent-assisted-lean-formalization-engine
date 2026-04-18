@@ -477,6 +477,40 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
             self.assertEqual(output["run_id"], "demo")
             self.assertEqual(output["current_stage"], "awaiting_enrichment_approval")
 
+    def test_cli_status_accepts_workdir_after_subcommand(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            run_root = repo_root / "artifacts" / "runs" / "demo"
+            run_root.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "run_id": "demo",
+                "source": {"path": "input.md", "kind": "markdown"},
+                "agent_name": "demo_zero_add_agent",
+                "agent_config": {"backend": "demo"},
+                "template_dir": str((repo_root / "lean_workspace_template").resolve()),
+                "created_at": "2026-04-16T00:00:00Z",
+                "updated_at": "2026-04-16T00:00:00Z",
+                "current_stage": "awaiting_enrichment_approval",
+                "attempt_count": 0,
+            }
+            (run_root / "manifest.json").write_text(json.dumps(payload), encoding="utf-8")
+
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+            command = [
+                sys.executable,
+                "-m",
+                "lean_formalization_engine",
+                "status",
+                "demo",
+                "--workdir",
+                str(repo_root),
+            ]
+            result = subprocess.run(command, capture_output=True, text=True, env=env, check=False)
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertIn(f"Working directory: {repo_root.resolve()}", result.stdout)
+            self.assertIn("Resume with: terry resume demo --workdir", result.stdout)
+
     def test_legacy_status_json_uses_legacy_stage_names(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)

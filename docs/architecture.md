@@ -123,7 +123,7 @@ Terry persists the backend call beside those outputs as `request.json`, `prompt.
 
 ## Template Discovery
 
-`terry prove` searches the current project root at depth 1 for an eligible
+`terry prove` searches the Terry working directory at depth 1 for an eligible
 `lean_workspace_template/` directory. A template is eligible when:
 
 - it contains the Terry scaffold files (`FormalizationEngineWorkspace/Basic.lean` and `Generated.lean`)
@@ -134,6 +134,10 @@ and then overlays the shipped Terry workspace scaffold onto that new directory. 
 bootstrap fails with the known mathlib revision mismatch (`revision not found 'v4.29.1'`),
 Terry falls back to the packaged workspace template, records the full `lake` stderr in
 the structured workflow log, and continues. Other `lake new` failures still stop the run.
+
+The CLI knob for that working directory is `--workdir` (alias `--repo-root`). Terry
+accepts it before or after the subcommand, so `terry prove ... --workdir /path/to/repo`
+and `terry --repo-root /path/to/repo prove ...` both target the same directory.
 
 ## Compile Cache
 

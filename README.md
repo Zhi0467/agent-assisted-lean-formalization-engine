@@ -33,6 +33,22 @@ Start a run:
 terry prove examples/inputs/right_add_zero.md --run-id right-add-zero
 ```
 
+If you want Terry to keep reusing the same warmed Lean cache while you run commands from
+some other shell location, point it at the cache-owning project directory explicitly:
+
+```bash
+terry prove examples/inputs/right_add_zero.md \
+  --run-id right-add-zero \
+  --workdir /path/to/project
+```
+
+`--workdir` is an alias for `--repo-root`, and Terry accepts it either before or after
+the subcommand. That directory owns all three local Terry surfaces:
+
+- `artifacts/`
+- `lean_workspace_template/`
+- `.terry/lean_workspace/`
+
 By default Terry uses the live `codex` backend, so a working `codex` CLI must be on
 `PATH` unless you explicitly pick another backend. To drive Terry through an external
 provider command instead, pass:
@@ -71,6 +87,14 @@ Use this if you want a quick summary of where a run stopped:
 
 ```bash
 terry status right-add-zero
+```
+
+If you resume or inspect a run from outside that same project directory, pass the same
+workdir again so Terry lands on the same artifacts and cache:
+
+```bash
+terry resume right-add-zero --workdir /path/to/project
+terry status right-add-zero --workdir /path/to/project
 ```
 
 ## Run Layout
