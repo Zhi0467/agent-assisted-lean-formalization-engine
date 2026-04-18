@@ -15,12 +15,26 @@ run under `artifacts/runs/convergent-seq-bounded/`, backed by
 default proof attempts: attempts `1` and `2` failed on real Lean theorem-code issues,
 and attempt `3` passed.
 
+There is also an active draft follow-up on PR `#6`
+(`murphy/terry-review-proof-gating`, with the last code-changing fix at `ef80610` and
+later docs-sync commits on top). That branch adds proof-gated
+enrichment/plan flow, explicit per-attempt review artifacts plus `terry review`,
+explicit `terry retry`, prior-review pointers into later proof attempts, legacy review
+fallbacks, and the collaborator-requested full-autonomy Codex worker mode. The latest
+review-driven fixes on that head now also cover wrong continue-decision filtering,
+failed-attempt review regeneration on resume, explicit review attempt `0` rejection,
+legacy pre-gate plan reruns, blocked checkpoints pointing to `terry retry`, and the
+last crash-recovery gap where `_resume_from_created` could still enter plan after
+enrichment approval even though the natural-language proof was still missing.
+
 Current verification:
 
-- `PYTHONPATH=src:. pytest -q` (`107` tests, all passing)
+- `PYTHONPATH=src python3 -m unittest discover -s tests` (`122` tests, all passing on the latest PR `#6` head; latest code-changing fix `ef80610`)
 - targeted CLI e2e tests still pass on the merged head:
   `DemoWorkflowTest.test_cli_demo_backend_e2e`
   `DemoWorkflowTest.test_cli_command_backend_e2e`
+  `DemoWorkflowTest.test_cli_review_command_writes_attempt_artifacts`
+  `DemoWorkflowTest.test_cli_retry_command_allows_one_more_attempt`
 - `DemoWorkflowTest.test_cli_demo_backend_e2e_accepts_workdir_after_subcommand`
 - real same-`--workdir` Terry CLI e2e on two elementary analysis theorems passed after
   the final cache hardening pass:
@@ -33,8 +47,9 @@ Current verification:
   - stale nested files under ancestor-overlay path dependencies are now removed
   - a partially deleted shared workspace now recopies itself instead of being treated as
     reusable
-- all live GitHub review threads on PR `#4` were resolved before merge, and the local
-  project checkout was cleaned of untracked Terry test junk after the final e2e
+- all currently visible GitHub review threads on active draft PR `#6` are resolved
+  again, and the old bounded local review transcript on `5e18e14` has already
+  terminated; its last concrete finding is fixed on `ef80610`
 - the first checked-in nontrivial Terry/Codex archive is now in the repo:
   - input: `examples/inputs/convergent_sequence_bounded.md`
   - run: `artifacts/runs/convergent-seq-bounded/`
@@ -45,6 +60,8 @@ Open follow-ups:
 - [ ] Decide whether Terry's default `3`-attempt proof budget should become a CLI-level knob instead of a code default.
 - [ ] Decide whether final approval should add a second fresh-workspace verification pass instead of trusting one passing Terry compile.
 - [ ] Build a small checked-in benchmark set beyond `convergent-seq-bounded` so proof-loop behavior is not judged from one theorem.
+- [ ] Decide whether `proof_status.json` should grow a stricter provenance enum or stay as the current minimal control-plane gate.
+- [ ] Wait for fresh review feedback on the latest PR `#6` head, then either merge the Terry review / proof-gating branch or take the next concrete follow-up it surfaces.
 
 ## Orchestrator-Only Refactor
 

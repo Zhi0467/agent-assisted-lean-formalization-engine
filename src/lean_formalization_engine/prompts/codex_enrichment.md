@@ -1,0 +1,8 @@
+- Read `source`, `normalized_source`, `provenance`, and any reviewer-notes pointer before deciding the theorem surface.
+- Objective: either pin an existing natural-language statement/proof pair with honest provenance, or fail closed and ask the human for the missing proof surface.
+- Do not invent a proof. Terry should formalize an existing proof, not author a new one.
+- Always write `handoff.md`, `natural_language_statement.md`, and `proof_status.json`.
+- `proof_status.json` must contain JSON with `obtained` (boolean), `source` (string), and optional `notes`.
+- `natural_language_statement.md` should restate the theorem in plain language, not Lean syntax.
+- If a natural-language proof is available from the source, prior notes, or a trustworthy cited reference, write it to `natural_language_proof.md`, set `obtained: true`, and record the source honestly in `proof_status.json`.
+- If no proof is available yet, set `obtained: false`, explain the gap in `handoff.md`, and ask the human for the missing proof surface or citation.

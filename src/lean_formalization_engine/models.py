@@ -53,15 +53,18 @@ class BackendStage(str, Enum):
     ENRICHMENT = "enrichment"
     PLAN = "plan"
     PROOF = "proof"
+    REVIEW = "review"
 
 
-DEFAULT_WORKFLOW_VERSION = "0.4.0"
+DEFAULT_WORKFLOW_VERSION = "0.5.0"
 DEFAULT_WORKFLOW_TAGS = [
     "three-checkpoint",
     "review-files",
     "terry-cli",
     "bounded-prove-loop",
     "backend-owned-stage-files",
+    "proof-gated-plan",
+    "attempt-review",
 ]
 
 
@@ -99,6 +102,13 @@ class AgentTurn:
     request_payload: dict[str, object]
     prompt: str
     raw_response: str
+
+
+@dataclass
+class NaturalLanguageProofStatus:
+    obtained: bool
+    source: str
+    notes: str = ""
 
 
 @dataclass

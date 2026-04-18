@@ -4,9 +4,33 @@
 
 - CLI-first: humans use `terry`, not Python approval helpers
 - Three approval checkpoints: enrichment, merged plan, final
+- Plan stage is proof-gated: Terry only plans once a natural-language proof is on disk
 - Bounded prove-and-repair loop after plan approval
 - Filesystem-first persistence: every checkpoint, attempt, and decision is on disk
 - Readable logging: a human timeline plus a machine-readable event log
+
+## Flow Figure
+
+```mermaid
+flowchart TD
+    A[terry prove] --> B[00_input]
+    B --> C[01_enrichment]
+    C --> C1[natural_language_statement.md]
+    C --> C2[natural_language_proof.md]
+    C --> C3[proof_status.json]
+    C3 -->|obtained: false| C4[human supplies proof via enrichment review]
+    C4 --> C
+    C3 -->|obtained: true| D[02_plan]
+    D --> E[approved plan]
+    E --> F[03_proof attempt n]
+    F --> G[compile]
+    G --> H[attempt walkthrough/readable/error]
+    H --> I{passed?}
+    I -->|no| J[next attempt or terry retry]
+    J --> F
+    I -->|yes| K[04_final]
+    K --> L[approved final]
+```
 
 ## Workflow Shape
 
@@ -15,11 +39,15 @@ Terry runs through five phases:
 1. `00_input/`
    Normalized source text plus provenance
 2. `01_enrichment/`
-   Backend-owned enrichment artifacts plus Terry's checkpoint, review, and decision files
+   Backend-owned enrichment artifacts plus Terry's checkpoint, review, and decision files.
+  Terry expects `handoff.md`, `proof_status.json`, `natural_language_statement.md`,
+  and, when the proof is available, `natural_language_proof.md`.
 3. `02_plan/`
    Backend-owned plan artifacts plus Terry's checkpoint, review, and decision files
 4. `03_proof/`
-   The bounded prove-and-repair loop: backend-written Lean candidates, Terry compile checks, persisted diagnostics, retry if needed
+   The bounded prove-and-repair loop: backend-written Lean candidates, Terry compile
+   checks, backend-written attempt review artifacts under each attempt's `review/`
+   subdirectory, persisted diagnostics, retry if needed
 5. `04_final/`
    The compiling candidate, Terry's final review files, compile results, and the approved final Lean file
 
@@ -32,6 +60,11 @@ The only human approvals Terry expects on the happy path are:
 - enrichment approval
 - plan approval
 - final approval
+
+Terry will not enter `02_plan/` unless the enrichment stage reports that a
+natural-language proof was actually obtained. If the proof is missing, Terry stays at
+the enrichment checkpoint and expects the backend to ask the human for that proof rather
+than inventing one.
 
 The proof loop can open one extra blocked handoff when it hits the retry cap or the Lean
 toolchain is unavailable. That handoff lives under `03_proof/` and uses `decision: retry`
@@ -60,6 +93,13 @@ For proof-loop retries the decision is `retry` instead of `approve`.
 `terry resume` parses `review.md`, records the result into `decision.json`, logs the
 handoff, and continues only when the expected decision value is present.
 
+Current CLI helpers on top of that review-file surface:
+
+- `terry review <run_id> --attempt <n>`
+  Regenerate the backend-owned attempt review artifacts for a completed proof attempt
+- `terry retry <run_id>`
+  Grant more proof attempts when Terry is blocked inside `03_proof/`
+
 ## Logging
 
 Every run writes:
@@ -84,7 +124,7 @@ Events include:
 ## Module Layout
 
 - `src/lean_formalization_engine/cli.py`
-  `terry prove`, `terry resume`, and `terry status`
+  `terry prove`, `terry resume`, `terry review`, `terry retry`, and `terry status`
 - `src/lean_formalization_engine/workflow.py`
   State machine, checkpoint writing, review parsing, stage-output validation, and prove-loop control
 - `src/lean_formalization_engine/template_manager.py`
@@ -115,8 +155,13 @@ Each backend stage call gets a narrow control-plane payload:
 The backend is expected to write the required output file inside that output directory:
 
 - `01_enrichment/handoff.md`
+- `01_enrichment/natural_language_statement.md`
+- `01_enrichment/proof_status.json`
 - `02_plan/handoff.md`
 - `03_proof/attempts/attempt_<n>/candidate.lean`
+- `03_proof/attempts/attempt_<n>/review/walkthrough.md`
+- `03_proof/attempts/attempt_<n>/review/readable_candidate.lean`
+- `03_proof/attempts/attempt_<n>/review/error.md`
 
 Terry persists the backend call beside those outputs as `request.json`, `prompt.md`, and
 `response.txt`, but it does not parse theorem content back into Terry-owned schemas.

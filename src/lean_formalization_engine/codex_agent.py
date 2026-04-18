@@ -7,6 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from .models import AgentTurn, StageRequest, to_jsonable
+from .prompt_loader import load_prompt_template, render_bullet_list, render_prompt_template
 
 
 class CodexCliFormalizationAgent:
@@ -26,6 +27,8 @@ class CodexCliFormalizationAgent:
     def run_stage(self, request: StageRequest) -> AgentTurn:
         prompt = self._build_prompt(request)
         with tempfile.TemporaryDirectory(prefix="terry_codex_stage_") as temp_dir:
+            # Keep Codex outside the project tree so Terry workers do not inherit the
+            # repo's AGENTS.md or other repo-root instruction files as initial context.
             sandbox_root = Path(temp_dir)
             sandbox_request = self._prepare_sandbox_request(sandbox_root, request)
             command = [
@@ -33,10 +36,9 @@ class CodexCliFormalizationAgent:
                 "exec",
                 "--ephemeral",
                 "--skip-git-repo-check",
+                "--dangerously-bypass-approvals-and-sandbox",
                 "-C",
                 str(sandbox_root),
-                "-s",
-                "workspace-write",
             ]
             if self.model:
                 command.extend(["-m", self.model])
@@ -78,68 +80,39 @@ class CodexCliFormalizationAgent:
         )
 
     def _build_prompt(self, request: StageRequest) -> str:
-        lines = [
-            "You are the backend for Terry, a Lean 4 formalization workflow.",
-            "Terry is only the orchestrator. Do the theorem work through files.",
-            "",
-            f"Stage: {request.stage.value}",
-            "Repo root: current working directory",
-            f"Run directory: {request.run_dir}",
-            f"Output directory: {request.output_dir}",
-            "",
-            "Read the listed input files from disk and write the required output files into the output directory.",
-            "Do not edit files outside the output directory.",
-            "",
-            "Stage inputs:",
-        ]
-        for name, path in sorted(request.input_paths.items()):
-            lines.append(f"- {name}: {path}")
+        stage_inputs = render_bullet_list(f"{name}: {path}" for name, path in sorted(request.input_paths.items()))
+        required_outputs = render_bullet_list(f"{request.output_dir}/{path}" for path in request.required_outputs)
+        stage_instructions = load_prompt_template(f"codex_{request.stage.value}.md").strip()
 
-        lines.extend(
-            [
-                "",
-                "Required outputs:",
-            ]
+        return render_prompt_template(
+            "codex_common.md",
+            stage=request.stage.value,
+            run_dir=request.run_dir,
+            output_dir=request.output_dir,
+            stage_inputs=stage_inputs,
+            required_outputs=required_outputs,
+            stage_instructions=stage_instructions,
+            reviewer_notes_section=(
+                f"\nReviewer notes path: {request.review_notes_path}"
+                if request.review_notes_path
+                else ""
+            ),
+            latest_compile_section=(
+                f"\nLatest compile result path: {request.latest_compile_result_path}"
+                if request.latest_compile_result_path
+                else ""
+            ),
+            previous_attempt_section=(
+                f"\nPrevious attempt directory: {request.previous_attempt_dir}"
+                if request.previous_attempt_dir
+                else ""
+            ),
+            attempt_section=(
+                f"\nAttempt: {request.attempt}/{request.max_attempts}"
+                if request.attempt is not None and request.max_attempts is not None
+                else ""
+            ),
         )
-        for path in request.required_outputs:
-            lines.append(f"- {request.output_dir}/{path}")
-
-        if request.review_notes_path:
-            lines.extend(
-                [
-                    "",
-                    f"Reviewer notes path: {request.review_notes_path}",
-                ]
-            )
-
-        if request.latest_compile_result_path:
-            lines.extend(
-                [
-                    f"Latest compile result path: {request.latest_compile_result_path}",
-                ]
-            )
-
-        if request.previous_attempt_dir:
-            lines.extend(
-                [
-                    f"Previous attempt directory: {request.previous_attempt_dir}",
-                ]
-            )
-
-        if request.attempt is not None and request.max_attempts is not None:
-            lines.extend(
-                [
-                    f"Attempt: {request.attempt}/{request.max_attempts}",
-                ]
-            )
-
-        lines.extend(
-            [
-                "",
-                "When you are done, reply with a brief plain-text note describing what you wrote.",
-            ]
-        )
-        return "\n".join(lines)
 
     def _prepare_sandbox_request(self, sandbox_root: Path, request: StageRequest) -> StageRequest:
         sandbox_root.mkdir(parents=True, exist_ok=True)
