@@ -64,7 +64,10 @@ class FormalizationWorkflow:
         self.max_attempts = max_attempts
         self.terry_command = terry_command
         self.artifacts_root = repo_root / "artifacts"
-        self.lean_runner = lean_runner or LeanRunner(repo_root / "lean_workspace_template")
+        self.lean_runner = lean_runner or LeanRunner(
+            repo_root / "lean_workspace_template",
+            repo_root=repo_root,
+        )
 
     def prove(self, source_path: Path, run_id: str, auto_approve: bool = False) -> RunManifest:
         store = RunStore(self.artifacts_root, run_id)
