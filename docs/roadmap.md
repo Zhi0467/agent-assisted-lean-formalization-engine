@@ -79,8 +79,8 @@ but that pass did not surface any new issue beyond the final two cache-recovery 
 fixed before merge, and all live GitHub review threads on PR `#4` were resolved.
 
 There is now an active post-merge follow-up surface on draft PR `#6`
-(`murphy/terry-review-proof-gating`, head `bbd6b00`, with the last code-changing fix at
-`ef80610`). That branch adds proof-gated enrichment/plan flow, backend-owned
+(`murphy/terry-review-proof-gating`, with the last code-changing fix at `ef80610` and
+later docs-sync commits on top). That branch adds proof-gated enrichment/plan flow, backend-owned
 per-attempt `review/` artifacts plus the explicit `terry review` CLI, explicit `terry
 retry`, prior-review pointers into later proof attempts, legacy-provider fallback review
 generation, and the collaborator-requested full-autonomy Codex worker mode. The latest
@@ -97,8 +97,8 @@ Branch-local verification on PR `#6` is now `122/122` via
 review threads on that draft PR are resolved again, and the last bounded local review
 transcript on the older `5e18e14` head has already terminated. Its final concrete
 finding was the `_resume_from_created` crash-recovery hole, which is now fixed on
-`ef80610`, so the honest remaining gate is only fresh review feedback on the new pushed
-head `bbd6b00`.
+`ef80610`, so the honest remaining gate is only fresh review feedback on the latest
+pushed head.
 
 Milestone 2 is now closed on the shipped repo surface as well, not just in a task
 report. The repo now includes `examples/inputs/convergent_sequence_bounded.md` plus the
@@ -203,7 +203,7 @@ Gate:
 
 ## Milestone 3 — Richer Revision Control
 
-Status: in progress on draft PR `#6` (`bbd6b00`, with latest code fix `ef80610`).
+Status: in progress on draft PR `#6` (latest code fix `ef80610`).
 
 Success criteria:
 
@@ -219,4 +219,4 @@ Gate:
 - [2026-04-18 06:39 UTC] Terry now treats the natural-language proof as a real gate rather than a prompt-only preference. Enrichment must write `proof_status.json`, plan generation refuses to start until that status reports `obtained: true` and `natural_language_proof.md` is on disk, and rejected enrichment or plan handoffs now rerun the rejected stage instead of leaving Terry parked on stale artifacts.
 - [2026-04-18 06:39 UTC] Added Terry's explicit proof-review surface. Every proof attempt now triggers a backend-owned review pass that writes `walkthrough.md`, `readable_candidate.lean`, and `error.md` under the attempt's `review/` subdirectory, the CLI exposes `terry review <run_id> --attempt <n>` to regenerate those artifacts, and `terry retry <run_id> --attempts N` now grants extra blocked proof attempts without hand-editing `03_proof/review.md`.
 - [2026-04-18 07:41 UTC] The next review-driven follow-up pass closed four more workflow edges on top of PR `#6`: review outputs moved under `attempt_<n>/review/` so they no longer share a directory with the compiled candidate, proof-blocked checkpoints now point to `terry retry`, enrichment/plan checkpoints ignore the wrong continue decision instead of advancing, `terry review --attempt 0` fails closed, failed-attempt review artifacts regenerate before later proof repairs, and legacy pre-gate `awaiting_plan_approval` runs can still rerun plan without backfilling new proof-gate files. Local verification on that head was `121/121`.
-- [2026-04-18 07:58 UTC] The latest review thread found one last crash-recovery hole: if `resume()` fell back to `_resume_from_created`, an approved enrichment review could still forward into `_run_plan_stage(...)` even though `01_enrichment/proof_status.json` said `obtained: false`, which then raised the proof-gate runtime error. Commit `ef80610` fixes that by rerunning enrichment with the review notes on the recovery path, and the branch-local suite is now `122/122`. Docs-sync commit `bbd6b00` then refreshed the in-repo roadmap/backlog surface to that new head. All currently visible GitHub review threads on PR `#6` are resolved again.
+- [2026-04-18 07:58 UTC] The latest review thread found one last crash-recovery hole: if `resume()` fell back to `_resume_from_created`, an approved enrichment review could still forward into `_run_plan_stage(...)` even though `01_enrichment/proof_status.json` said `obtained: false`, which then raised the proof-gate runtime error. Commit `ef80610` fixes that by rerunning enrichment with the review notes on the recovery path, and the branch-local suite is now `122/122`. Later docs-sync commits then refreshed the in-repo roadmap/backlog surface to match. All currently visible GitHub review threads on PR `#6` are resolved again.

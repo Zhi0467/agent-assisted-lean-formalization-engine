@@ -16,8 +16,8 @@ default proof attempts: attempts `1` and `2` failed on real Lean theorem-code is
 and attempt `3` passed.
 
 There is also an active draft follow-up on PR `#6`
-(`murphy/terry-review-proof-gating`, head `bbd6b00`, with the last code-changing fix at
-`ef80610`). That branch adds proof-gated
+(`murphy/terry-review-proof-gating`, with the last code-changing fix at `ef80610` and
+later docs-sync commits on top). That branch adds proof-gated
 enrichment/plan flow, explicit per-attempt review artifacts plus `terry review`,
 explicit `terry retry`, prior-review pointers into later proof attempts, legacy review
 fallbacks, and the collaborator-requested full-autonomy Codex worker mode. The latest
@@ -29,7 +29,7 @@ enrichment approval even though the natural-language proof was still missing.
 
 Current verification:
 
-- `PYTHONPATH=src python3 -m unittest discover -s tests` (`122` tests, all passing on PR `#6` head `bbd6b00`; latest code-changing fix `ef80610`)
+- `PYTHONPATH=src python3 -m unittest discover -s tests` (`122` tests, all passing on the latest PR `#6` head; latest code-changing fix `ef80610`)
 - targeted CLI e2e tests still pass on the merged head:
   `DemoWorkflowTest.test_cli_demo_backend_e2e`
   `DemoWorkflowTest.test_cli_command_backend_e2e`
@@ -61,7 +61,7 @@ Open follow-ups:
 - [ ] Decide whether final approval should add a second fresh-workspace verification pass instead of trusting one passing Terry compile.
 - [ ] Build a small checked-in benchmark set beyond `convergent-seq-bounded` so proof-loop behavior is not judged from one theorem.
 - [ ] Decide whether `proof_status.json` should grow a stricter provenance enum or stay as the current minimal control-plane gate.
-- [ ] Wait for fresh review feedback on PR `#6` head `bbd6b00`, then either merge the Terry review / proof-gating branch or take the next concrete follow-up it surfaces.
+- [ ] Wait for fresh review feedback on the latest PR `#6` head, then either merge the Terry review / proof-gating branch or take the next concrete follow-up it surfaces.
 
 ## Orchestrator-Only Refactor
 
