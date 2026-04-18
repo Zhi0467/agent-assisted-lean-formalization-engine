@@ -333,13 +333,13 @@ class FormalizationWorkflow:
                 and store.exists(latest_candidate_path)
             ):
                 latest_compile = self._load_compile_attempt(store, latest_compile_path)
+                self._ensure_attempt_review_ready(
+                    store,
+                    manifest,
+                    manifest.attempt_count,
+                    review_notes_relative_path=self._default_attempt_review_notes_path(store),
+                )
                 if latest_compile.passed:
-                    self._ensure_attempt_review_ready(
-                        store,
-                        manifest,
-                        manifest.attempt_count,
-                        review_notes_relative_path=self._default_attempt_review_notes_path(store),
-                    )
                     return self._queue_final_review(
                         store,
                         manifest,
@@ -458,7 +458,7 @@ class FormalizationWorkflow:
     def review_attempt(self, run_id: str, attempt: int | None = None) -> int:
         store = RunStore(self.artifacts_root, run_id)
         manifest = self._load_manifest(store)
-        selected_attempt = attempt or manifest.attempt_count
+        selected_attempt = manifest.attempt_count if attempt is None else attempt
         if selected_attempt <= 0:
             raise ValueError("Terry review needs a completed proof attempt.")
         self._run_attempt_review(store, manifest, selected_attempt)
@@ -609,7 +609,14 @@ class FormalizationWorkflow:
         force_rerun: bool = False,
         allow_missing_proof: bool = False,
     ) -> RunManifest:
-        if not allow_missing_proof and not self._natural_language_proof_ready(store):
+        proof_ready = self._natural_language_proof_ready(store)
+        legacy_plan_rerun = (
+            force_rerun
+            and not allow_missing_proof
+            and not proof_ready
+            and store.exists(PLAN_HANDOFF)
+        )
+        if not allow_missing_proof and not legacy_plan_rerun and not proof_ready:
             raise RuntimeError(
                 "Terry cannot start the plan stage without `01_enrichment/natural_language_statement.md`, "
                 "`01_enrichment/natural_language_proof.md`, and `01_enrichment/proof_status.json` "
@@ -1654,12 +1661,16 @@ class FormalizationWorkflow:
             decision = self._parse_review_file(store.read_text(review_path))
             if decision is not None:
                 self._write_decision(store, stage_dir, decision)
-                return decision
+                if decision.decision in {continue_decision, "reject"}:
+                    return decision
+                return None
 
         existing = self._load_decision(store, f"{stage_dir}/decision.json")
         if existing is not None:
             if existing.decision != "pending":
-                return existing
+                if existing.decision in {continue_decision, "reject"}:
+                    return existing
+                return None
 
         if auto_approve:
             decision = ReviewDecision(continue_decision, utc_now(), "Auto-approved.")

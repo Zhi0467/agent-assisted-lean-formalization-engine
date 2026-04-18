@@ -4521,6 +4521,47 @@ class DemoWorkflowTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "terry retry"):
                 workflow.resume("stale-retry", auto_approve=False)
 
+    def test_retry_decision_does_not_advance_enrichment_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RecordingRepairAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+            manifest = workflow.prove(source_path=source_path, run_id="retry-enrichment", auto_approve=False)
+            run_root = temp_root / "artifacts" / "runs" / "retry-enrichment"
+
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+            self._write_review(run_root, "01_enrichment", "retry", "Not approved yet.")
+
+            manifest = workflow.resume("retry-enrichment", auto_approve=False)
+
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+            self.assertFalse((run_root / "02_plan" / "handoff.md").exists())
+
+    def test_review_attempt_rejects_zero_even_when_attempts_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=DemoFormalizationAgent(),
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+            manifest = workflow.prove(source_path=source_path, run_id="review-zero", auto_approve=True)
+
+            self.assertEqual(manifest.attempt_count, 1)
+            with self.assertRaisesRegex(ValueError, "completed proof attempt"):
+                workflow.review_attempt("review-zero", attempt=0)
+
     def test_missing_natural_language_proof_blocks_plan_stage_even_with_auto_approve(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -4924,6 +4965,51 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertNotIn("legacy_plan_review", proof_request.input_paths)
             self.assertIsNone(proof_request.review_notes_path)
 
+    def test_legacy_plan_rejection_reruns_without_new_proof_gate_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            run_root = temp_root / "artifacts" / "runs" / "legacy-plan-rerun"
+            (run_root / "00_input").mkdir(parents=True, exist_ok=True)
+            (run_root / "02_plan").mkdir(parents=True, exist_ok=True)
+            (run_root / "00_input" / "source.txt").write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            (run_root / "00_input" / "normalized.md").write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            (run_root / "00_input" / "provenance.json").write_text("{}", encoding="utf-8")
+            (run_root / "02_plan" / "handoff.md").write_text("# Old Plan Handoff\n\nLegacy plan.\n", encoding="utf-8")
+            (run_root / "02_plan" / "review.md").write_text(
+                "# Plan Approval\n\ndecision: reject\n\nNotes:\nrefresh the plan\n",
+                encoding="utf-8",
+            )
+            (run_root / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "legacy-plan-rerun",
+                        "source": {"path": "input.md", "kind": "markdown"},
+                        "agent_name": "recording_repair_agent",
+                        "agent_config": {"backend": "demo"},
+                        "template_dir": str((temp_root / "lean_workspace_template").resolve()),
+                        "created_at": "2026-04-16T00:00:00Z",
+                        "updated_at": "2026-04-16T00:00:00Z",
+                        "current_stage": "awaiting_plan_approval",
+                        "attempt_count": 0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            agent = RecordingRepairAgent()
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=agent,
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=ContentCheckingLeanRunner(),
+                max_attempts=1,
+            )
+            manifest = workflow.resume("legacy-plan-rerun", auto_approve=False)
+
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
+            self.assertEqual(agent.requests[0].stage, BackendStage.PLAN)
+            self.assertTrue(agent.requests[0].review_notes_path.endswith("02_plan/review.md"))
+
     def test_legacy_spec_review_stays_legacy_until_plan_is_migrated(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -5121,6 +5207,56 @@ class DemoWorkflowTest(unittest.TestCase):
             review_dir = run_root / "03_proof" / "attempts" / "attempt_0001" / "review"
             self.assertTrue((review_dir / "walkthrough.md").exists())
             self.assertTrue((review_dir / "error.md").exists())
+
+    def test_resume_regenerates_missing_failed_attempt_review_before_retrying(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+            runner = ContentCheckingLeanRunner()
+            agent = RecordingRepairAgent()
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=agent,
+                agent_config=AgentConfig(backend="demo"),
+                lean_runner=runner,
+            )
+            workflow.prove(source_path=source_path, run_id="failed-review-crash", auto_approve=False)
+            run_root = temp_root / "artifacts" / "runs" / "failed-review-crash"
+            self._write_review(run_root, "01_enrichment", "approve", "")
+            workflow.resume("failed-review-crash", auto_approve=False)
+            self._write_review(run_root, "02_plan", "approve", "")
+
+            store = RunStore(temp_root / "artifacts", "failed-review-crash")
+            manifest = workflow.status("failed-review-crash")
+            request = workflow._build_stage_request(
+                store,
+                manifest,
+                stage=BackendStage.PROOF,
+                output_dir="03_proof/attempts/attempt_0001",
+                required_outputs=["candidate.lean"],
+                review_notes_relative_path="02_plan/review.md",
+                attempt=1,
+                max_attempts=3,
+            )
+            workflow._run_backend_stage(store, request, "03_proof/attempts/attempt_0001")
+            compile_result = runner.compile_candidate(store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            workflow._write_compile_result(store, 1, compile_result)
+            manifest.current_stage = RunStage.PROVING
+            manifest.attempt_count = 1
+            manifest.latest_error = compile_result.stderr.strip() or compile_result.status
+            workflow._save_manifest(store, manifest)
+
+            agent.requests.clear()
+            manifest = workflow.resume("failed-review-crash", auto_approve=False)
+
+            self.assertEqual(manifest.current_stage, RunStage.PROOF_BLOCKED)
+            review_dir = run_root / "03_proof" / "attempts" / "attempt_0001" / "review"
+            self.assertTrue((review_dir / "walkthrough.md").exists())
+            proof_requests = [request for request in agent.requests if request.stage == BackendStage.PROOF]
+            self.assertGreaterEqual(len(proof_requests), 1)
+            self.assertIn("previous_walkthrough", proof_requests[0].input_paths)
+            self.assertIn("previous_error_report", proof_requests[0].input_paths)
 
     def test_legacy_three_stage_provider_gets_fallback_attempt_review(self) -> None:
         class LegacyThreeStageAgent:
