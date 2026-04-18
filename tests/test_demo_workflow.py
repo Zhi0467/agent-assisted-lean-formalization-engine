@@ -2105,6 +2105,88 @@ class DemoWorkflowTest(unittest.TestCase):
                 ],
             )
 
+    def test_lean_runner_repairs_deleted_packages_from_shared_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            fake_lake = temp_root / "lake-repair-packages"
+            fake_lake.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env python3",
+                        "import pathlib",
+                        "import sys",
+                        "",
+                        "def main() -> int:",
+                        "    args = sys.argv[1:]",
+                        "    cwd = pathlib.Path.cwd()",
+                        "    if args[:1] == ['--version']:",
+                        "        print('lake-repair-packages')",
+                        "        return 0",
+                        "    if args[:1] == ['update']:",
+                        "        (cwd / 'lake-manifest.json').write_text('{}', encoding='utf-8')",
+                        "        pkg = cwd / '.lake' / 'packages' / 'mathlib'",
+                        "        pkg.mkdir(parents=True, exist_ok=True)",
+                        "        (pkg / 'Pkg.lean').write_text('-- dep\\n', encoding='utf-8')",
+                        "        return 0",
+                        "    if args[:2] == ['build', 'FormalizationEngineWorkspace']:",
+                        "        if not (cwd / '.lake' / 'packages' / 'mathlib').exists():",
+                        "            print('missing dep', file=sys.stderr)",
+                        "            return 1",
+                        "        return 0",
+                        "    return 1",
+                        "",
+                        "if __name__ == '__main__':",
+                        "    raise SystemExit(main())",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_lake.chmod(0o755)
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            def compile_candidate(run_id: str) -> object:
+                store = RunStore(temp_root / "artifacts", run_id)
+                store.ensure_new()
+                candidate_relative_path = "03_proof/attempts/attempt_0001/candidate.lean"
+                store.write_text(
+                    candidate_relative_path,
+                    "\n".join(
+                        [
+                            "import FormalizationEngineWorkspace.Basic",
+                            "",
+                            "theorem repaired_packages : True := by",
+                            "  trivial",
+                            "",
+                        ]
+                    ),
+                )
+                return runner.compile_candidate(store, candidate_relative_path, 1)
+
+            first_result = compile_candidate("repair-a")
+            self.assertTrue(first_result.passed)
+            self.assertEqual(
+                first_result.command,
+                ["lake-repair-packages update", "lake-repair-packages build FormalizationEngineWorkspace"],
+            )
+
+            shutil.rmtree(temp_root / ".terry" / "lean_workspace" / ".lake" / "packages")
+
+            second_result = compile_candidate("repair-b")
+            self.assertTrue(second_result.passed)
+            self.assertEqual(
+                second_result.command,
+                ["lake-repair-packages update", "lake-repair-packages build FormalizationEngineWorkspace"],
+            )
+
     def test_lean_runner_skips_lake_update_for_local_path_dependencies(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)

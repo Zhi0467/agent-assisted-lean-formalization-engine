@@ -608,17 +608,16 @@ class LeanRunner:
         manifest_exists: bool,
     ) -> bool:
         dependency_state = self._dependency_state(workspace)
+        vendored_packages_path = workspace / ".lake" / "packages"
         if not dependency_state.requirements_known:
             if bootstrap_ready:
-                return True
-            vendored_packages_path = workspace / ".lake" / "packages"
+                return not manifest_exists or vendored_packages_path.exists()
             return manifest_exists and not vendored_packages_path.exists()
         if not dependency_state.path_dependencies_ready:
             return False
         if dependency_state.has_external_dependency:
             if bootstrap_ready:
-                return True
-            vendored_packages_path = workspace / ".lake" / "packages"
+                return self._vendored_packages_ready(workspace, dependency_state.external_package_names)
             if manifest_exists and not vendored_packages_path.exists():
                 return True
             return manifest_exists and self._vendored_packages_ready(workspace, dependency_state.external_package_names)
