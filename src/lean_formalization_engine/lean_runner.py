@@ -120,6 +120,7 @@ class LeanRunner:
         command_texts: list[str] = []
         stdout_sections: list[str] = []
         stderr_sections: list[str] = []
+        display_command_text = " ".join(display_command)
         workspace_fingerprint = self._workspace_fingerprint(lake_path)
         with self._workspace_lock():
             workspace, rebuilt_workspace = self._prepare_workspace(workspace_fingerprint)
@@ -178,34 +179,90 @@ class LeanRunner:
                 text=True,
                 check=False,
             )
+            command_texts.append(display_command_text)
+            stdout_sections.append(
+                self._format_process_output(
+                    display_command_text,
+                    build_result.stdout,
+                    store,
+                    workspace,
+                    lake_path,
+                    candidate_relative_path,
+                )
+            )
+            stderr_sections.append(
+                self._format_process_output(
+                    display_command_text,
+                    build_result.stderr,
+                    store,
+                    workspace,
+                    lake_path,
+                    candidate_relative_path,
+                )
+            )
+            if (
+                build_result.returncode != 0
+                and update_result is None
+                and self._should_retry_build_after_update(workspace)
+            ):
+                retry_update_command_text = " ".join([self._display_lake(), "update"])
+                retry_update_result = self._run_workspace_update(workspace, lake_path)
+                command_texts.append(retry_update_command_text)
+                stdout_sections.append(
+                    self._format_process_output(
+                        retry_update_command_text,
+                        retry_update_result.stdout,
+                        store,
+                        workspace,
+                        lake_path,
+                        candidate_relative_path,
+                    )
+                )
+                stderr_sections.append(
+                    self._format_process_output(
+                        retry_update_command_text,
+                        retry_update_result.stderr,
+                        store,
+                        workspace,
+                        lake_path,
+                        candidate_relative_path,
+                    )
+                )
+                if retry_update_result.returncode == 0:
+                    build_result = subprocess.run(
+                        build_command,
+                        cwd=workspace,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    command_texts.append(display_command_text)
+                    stdout_sections.append(
+                        self._format_process_output(
+                            display_command_text,
+                            build_result.stdout,
+                            store,
+                            workspace,
+                            lake_path,
+                            candidate_relative_path,
+                        )
+                    )
+                    stderr_sections.append(
+                        self._format_process_output(
+                            display_command_text,
+                            build_result.stderr,
+                            store,
+                            workspace,
+                            lake_path,
+                            candidate_relative_path,
+                        )
+                    )
 
         contains_sorry = "sorry" in content
         fast_check_passed = build_result.returncode == 0
         build_passed = build_result.returncode == 0
         quality_gate_passed = not contains_sorry
         passed = fast_check_passed and build_passed and quality_gate_passed
-        display_command_text = " ".join(display_command)
-        command_texts.append(display_command_text)
-        stdout_sections.append(
-            self._format_process_output(
-                display_command_text,
-                build_result.stdout,
-                store,
-                workspace,
-                lake_path,
-                candidate_relative_path,
-            )
-        )
-        stderr_sections.append(
-            self._format_process_output(
-                display_command_text,
-                build_result.stderr,
-                store,
-                workspace,
-                lake_path,
-                candidate_relative_path,
-            )
-        )
         stdout = "".join(stdout_sections)
         stderr = "".join(stderr_sections)
 
@@ -514,6 +571,15 @@ class LeanRunner:
         bootstrap_marker = self._dependency_bootstrap_marker(workspace)
         if self._workspace_dependencies_ready(workspace, bootstrap_marker.exists(), manifest_path.exists()):
             return None
+        return self._run_workspace_update(workspace, lake_path)
+
+    def _run_workspace_update(
+        self,
+        workspace: Path,
+        lake_path: str,
+    ) -> subprocess.CompletedProcess[str]:
+        manifest_path = workspace / "lake-manifest.json"
+        bootstrap_marker = self._dependency_bootstrap_marker(workspace)
         manifest_backup = manifest_path.read_bytes() if manifest_path.exists() else None
         result = subprocess.run(
             [lake_path, "update"],
@@ -636,6 +702,8 @@ class LeanRunner:
         if expected_revision is None:
             return True
         actual_revision = self._vendored_package_revision(package_dir) or snapshot_revision
+        if actual_revision is None:
+            return True
         return actual_revision == expected_revision
 
     def _write_vendored_revision_snapshot(self, workspace: Path) -> None:
@@ -951,6 +1019,13 @@ class LeanRunner:
             return time.time() - fallback_lock_path.stat().st_mtime > 1.0
         except OSError:
             return False
+
+    def _should_retry_build_after_update(self, workspace: Path) -> bool:
+        return (
+            not self._dependency_bootstrap_marker(workspace).exists()
+            and (workspace / "lake-manifest.json").exists()
+            and (workspace / ".lake" / "packages").exists()
+        )
 
     def _process_exists(self, pid: int) -> bool:
         if pid <= 0:
