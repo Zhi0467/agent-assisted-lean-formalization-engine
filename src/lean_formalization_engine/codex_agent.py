@@ -27,6 +27,8 @@ class CodexCliFormalizationAgent:
     def run_stage(self, request: StageRequest) -> AgentTurn:
         prompt = self._build_prompt(request)
         with tempfile.TemporaryDirectory(prefix="terry_codex_stage_") as temp_dir:
+            # Keep Codex outside the project tree so Terry workers do not inherit the
+            # repo's AGENTS.md or other repo-root instruction files as initial context.
             sandbox_root = Path(temp_dir)
             sandbox_request = self._prepare_sandbox_request(sandbox_root, request)
             command = [

@@ -419,6 +419,43 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
             self.assertEqual((repo_root / "README.md").read_text(encoding="utf-8"), "original")
             self.assertEqual((run_root / "01_enrichment" / "handoff.md").read_text(encoding="utf-8"), "# Enrichment\n")
 
+    def test_codex_agent_sandbox_excludes_project_agents_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            (repo_root / "AGENTS.md").write_text("project instructions", encoding="utf-8")
+            run_root = repo_root / "artifacts" / "runs" / "demo"
+            (run_root / "00_input").mkdir(parents=True, exist_ok=True)
+            (run_root / "00_input" / "source.txt").write_text("source", encoding="utf-8")
+            (run_root / "00_input" / "normalized.md").write_text("normalized", encoding="utf-8")
+            (run_root / "00_input" / "provenance.json").write_text("{}", encoding="utf-8")
+
+            request = StageRequest(
+                stage=BackendStage.ENRICHMENT,
+                run_id="demo",
+                repo_root=str(repo_root),
+                run_dir="artifacts/runs/demo",
+                output_dir="artifacts/runs/demo/01_enrichment",
+                input_paths={
+                    "source": "artifacts/runs/demo/00_input/source.txt",
+                    "normalized_source": "artifacts/runs/demo/00_input/normalized.md",
+                    "provenance": "artifacts/runs/demo/00_input/provenance.json",
+                },
+                required_outputs=["handoff.md"],
+            )
+
+            def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+                sandbox_root = Path(command[command.index("-C") + 1]).resolve()
+                self.assertNotIn(repo_root.resolve(), sandbox_root.parents)
+                self.assertFalse((sandbox_root / "AGENTS.md").exists())
+                output_dir = sandbox_root / request.output_dir
+                output_dir.mkdir(parents=True, exist_ok=True)
+                (output_dir / "handoff.md").write_text("# Enrichment\n", encoding="utf-8")
+                return subprocess.CompletedProcess(args=command, returncode=0, stdout="ok", stderr="")
+
+            with patch("lean_formalization_engine.codex_agent.subprocess.run", side_effect=fake_run):
+                agent = CodexCliFormalizationAgent(repo_root=repo_root, executable="codex")
+                agent.run_stage(request)
+
     def test_codex_agent_missing_cli_raises(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
