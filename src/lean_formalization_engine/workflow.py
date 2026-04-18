@@ -518,6 +518,13 @@ class FormalizationWorkflow:
                 auto_approve=auto_approve,
             )
             if decision is not None and decision.decision == "approve":
+                if not self._natural_language_proof_ready(store):
+                    return self._run_enrichment_stage(
+                        store,
+                        manifest,
+                        auto_approve=auto_approve,
+                        review_notes_relative_path=f"{ENRICHMENT_DIR}/review.md",
+                    )
                 return self._run_plan_stage(
                     store,
                     manifest,
