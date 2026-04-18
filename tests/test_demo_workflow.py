@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
 import os
 import shutil
 import subprocess
@@ -2241,6 +2242,118 @@ class DemoWorkflowTest(unittest.TestCase):
                 lean_runner_module.msvcrt = original_msvcrt
 
             self.assertTrue(result.passed)
+
+    def test_lean_runner_uses_cross_process_fallback_lock_when_flock_is_unsupported(self) -> None:
+        try:
+            ctx = multiprocessing.get_context("fork")
+        except ValueError:
+            self.skipTest("fork multiprocessing is unavailable on this platform")
+
+        class UnsupportedFcntl:
+            LOCK_EX = 1
+            LOCK_UN = 2
+
+            @staticmethod
+            def flock(_fd: int, operation: int) -> None:
+                if operation == UnsupportedFcntl.LOCK_EX:
+                    raise OSError("operation not supported")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            fake_lake = temp_root / "race-lake"
+            fake_lake.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env python3",
+                        "import pathlib",
+                        "import sys",
+                        "import time",
+                        "",
+                        "def main() -> int:",
+                        "    args = sys.argv[1:]",
+                        "    cwd = pathlib.Path.cwd()",
+                        "    if args[:1] == ['--version']:",
+                        "        print('race-lake')",
+                        "        return 0",
+                        "    if args[:1] == ['update']:",
+                        "        (cwd / 'lake-manifest.json').write_text('{}', encoding='utf-8')",
+                        "        return 0",
+                        "    if args[:2] == ['build', 'FormalizationEngineWorkspace']:",
+                        "        time.sleep(0.3)",
+                        "        text = (cwd / 'FormalizationEngineWorkspace' / 'Generated.lean').read_text(encoding='utf-8')",
+                        "        if 'theorem A' in text:",
+                        "            print('saw A', file=sys.stderr)",
+                        "        elif 'theorem B' in text:",
+                        "            print('saw B', file=sys.stderr)",
+                        "        else:",
+                        "            print(text, file=sys.stderr)",
+                        "        return 0",
+                        "    return 1",
+                        "",
+                        "if __name__ == '__main__':",
+                        "    raise SystemExit(main())",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_lake.chmod(0o755)
+
+            def run(theorem_name: str, queue: multiprocessing.queues.Queue) -> None:
+                import lean_formalization_engine.lean_runner as lean_runner_process_module
+
+                lean_runner_process_module.fcntl = UnsupportedFcntl()
+                lean_runner_process_module.msvcrt = None
+                runner = LeanRunner(
+                    temp_root / "lean_workspace_template",
+                    repo_root=temp_root,
+                    lake_path=str(fake_lake),
+                )
+                store = RunStore(temp_root / "artifacts", f"race-{theorem_name.lower()}")
+                store.ensure_new()
+                candidate_relative_path = "03_proof/attempts/attempt_0001/candidate.lean"
+                store.write_text(
+                    candidate_relative_path,
+                    "\n".join(
+                        [
+                            "import FormalizationEngineWorkspace.Basic",
+                            "",
+                            f"theorem {theorem_name} : True := by",
+                            "  trivial",
+                            "",
+                        ]
+                    ),
+                )
+                try:
+                    result = runner.compile_candidate(store, candidate_relative_path, 1)
+                    queue.put((theorem_name, result.stderr, None))
+                except BaseException as exc:  # pragma: no cover - process failure forwarding
+                    queue.put((theorem_name, "", repr(exc)))
+
+            queue = ctx.Queue()
+            first_process = ctx.Process(target=run, args=("A", queue))
+            second_process = ctx.Process(target=run, args=("B", queue))
+            first_process.start()
+            second_process.start()
+            first_process.join()
+            second_process.join()
+
+            outputs: dict[str, str] = {}
+            failures: list[str] = []
+            for _ in range(2):
+                theorem_name, stderr, failure = queue.get(timeout=1)
+                if failure is not None:
+                    failures.append(failure)
+                else:
+                    outputs[theorem_name] = stderr
+
+            self.assertFalse(failures)
+            self.assertIn("saw A", outputs["A"])
+            self.assertIn("saw B", outputs["B"])
 
     def test_resume_reuses_existing_plan_handoff_after_enrichment_approval(self) -> None:
         class PlanCountingAgent:

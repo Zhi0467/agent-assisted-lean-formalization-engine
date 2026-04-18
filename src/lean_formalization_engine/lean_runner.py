@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -255,6 +256,9 @@ class LeanRunner:
 
     def _workspace_lock_path(self) -> Path:
         return self.repo_root / ".terry" / "lean_workspace.lock"
+
+    def _workspace_fallback_lock_path(self) -> Path:
+        return self.repo_root / ".terry" / "lean_workspace.lockdir"
 
     def _git_exclude_path(self) -> Path | None:
         git_path = self.repo_root / ".git"
@@ -736,12 +740,13 @@ class LeanRunner:
             with lock_path.open("a+", encoding="utf-8") as handle:
                 posix_lock_acquired = False
                 windows_lock_acquired = False
+                fallback_lock_acquired = False
                 if fcntl is not None:
                     try:
                         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
                         posix_lock_acquired = True
                     except OSError:
-                        posix_lock_acquired = False
+                        fallback_lock_acquired = self._acquire_workspace_fallback_lock()
                 elif msvcrt is not None:
                     handle.seek(0)
                     if handle.tell() == 0:
@@ -752,7 +757,9 @@ class LeanRunner:
                         msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
                         windows_lock_acquired = True
                     except OSError:
-                        windows_lock_acquired = False
+                        fallback_lock_acquired = self._acquire_workspace_fallback_lock()
+                else:
+                    fallback_lock_acquired = self._acquire_workspace_fallback_lock()
                 try:
                     yield
                 finally:
@@ -761,6 +768,20 @@ class LeanRunner:
                     elif windows_lock_acquired and msvcrt is not None:
                         handle.seek(0)
                         msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                    elif fallback_lock_acquired:
+                        self._release_workspace_fallback_lock()
+
+    def _acquire_workspace_fallback_lock(self) -> bool:
+        fallback_lock_path = self._workspace_fallback_lock_path()
+        while True:
+            try:
+                fallback_lock_path.mkdir()
+                return True
+            except FileExistsError:
+                time.sleep(0.05)
+
+    def _release_workspace_fallback_lock(self) -> None:
+        self._workspace_fallback_lock_path().rmdir()
 
     def _resolve_lake(self) -> str | None:
         if self.lake_path:
