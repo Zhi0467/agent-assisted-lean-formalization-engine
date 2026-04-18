@@ -153,6 +153,26 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    retry_parser = subparsers.add_parser(
+        "retry",
+        help="Grant more prove-and-repair attempts to a proof-blocked run.",
+    )
+    retry_parser.add_argument("run_id", nargs="?")
+    retry_parser.add_argument("--run-id", dest="legacy_run_id", help=argparse.SUPPRESS)
+    retry_parser.add_argument(
+        "--attempts",
+        type=int,
+        default=3,
+        help="Number of additional prove-and-repair attempts to grant (default: 3).",
+    )
+    retry_parser.add_argument("--auto-approve", action="store_true")
+    _add_backend_arguments(
+        retry_parser,
+        command_help=(
+            "Provider command for command-backed runs."
+        ),
+    )
+
     status_parser = subparsers.add_parser("status", help="Show the current Terry run summary.")
     status_parser.add_argument("run_id", nargs="?")
     status_parser.add_argument("--run-id", dest="legacy_run_id", help=argparse.SUPPRESS)
@@ -479,6 +499,34 @@ def render_resume_command(
     return " ".join(shlex.quote(part) for part in command)
 
 
+def render_retry_command(
+    run_id: str,
+    repo_root: Path,
+    lake_path: str | None,
+    agent_config: AgentConfig | None = None,
+    attempts: int = 3,
+) -> str:
+    command = [
+        "terry",
+        "retry",
+        run_id,
+        "--attempts",
+        str(attempts),
+        "--workdir",
+        str(repo_root.resolve()),
+    ]
+    if lake_path:
+        command.extend(["--lake-path", lake_path])
+    if agent_config is not None and agent_config.backend == "command":
+        provider_command = (
+            shlex.join(agent_config.command)
+            if agent_config.command
+            else "python3 path/to/provider.py"
+        )
+        command.extend(["--agent-command", provider_command])
+    return " ".join(shlex.quote(part) for part in command)
+
+
 def _resolve_status_surface(manifest: RunManifest, repo_root: Path) -> tuple[str, str] | None:
     candidates = _STATUS_SURFACE_CANDIDATES.get(manifest.current_stage)
     if candidates is None:
@@ -502,6 +550,7 @@ def render_manifest_summary(manifest: RunManifest, repo_root: Path) -> str:
     if manifest.latest_error:
         lines.append(f"Latest error: {manifest.latest_error}")
 
+    proof_blocked_stages = {RunStage.PROOF_BLOCKED, RunStage.LEGACY_AWAITING_STALL_REVIEW}
     status_surface = _resolve_status_surface(manifest, repo_root)
     if status_surface is not None:
         checkpoint_relative, review_relative = status_surface
@@ -509,9 +558,14 @@ def render_manifest_summary(manifest: RunManifest, repo_root: Path) -> str:
         checkpoint_path = repo_root / "artifacts" / "runs" / manifest.run_id / checkpoint_relative
         lines.append(f"Checkpoint: {checkpoint_path.relative_to(repo_root)}")
         lines.append(f"Review file: {review_path.relative_to(repo_root)}")
-        lines.append(
-            f"Resume with: {render_resume_command(manifest.run_id, repo_root, manifest.lake_path, manifest.agent_config)}"
-        )
+        if manifest.current_stage in proof_blocked_stages:
+            lines.append(
+                f"Retry with: {render_retry_command(manifest.run_id, repo_root, manifest.lake_path, manifest.agent_config)}"
+            )
+        else:
+            lines.append(
+                f"Resume with: {render_resume_command(manifest.run_id, repo_root, manifest.lake_path, manifest.agent_config)}"
+            )
 
     if manifest.final_output_path:
         final_path = repo_root / "artifacts" / "runs" / manifest.run_id / manifest.final_output_path
@@ -670,6 +724,23 @@ def main() -> None:
                 ),
             )
             manifest = workflow.resume(run_id, auto_approve=args.auto_approve)
+
+        elif args.command == "retry":
+            run_id = _resolve_run_id_argument(args)
+            manifest = _load_manifest(repo_root, run_id)
+            lake_path = lake_path or _resolve_lake_path(manifest.lake_path, repo_root)
+            agent_config = _resume_agent_config(manifest, args, repo_root)
+            workflow = FormalizationWorkflow(
+                repo_root=repo_root,
+                agent=build_agent(agent_config, repo_root),
+                agent_config=agent_config,
+                lean_runner=LeanRunner(
+                    template_dir=Path(manifest.template_dir),
+                    repo_root=repo_root,
+                    lake_path=lake_path,
+                ),
+            )
+            manifest = workflow.retry(run_id, extra_attempts=args.attempts, auto_approve=args.auto_approve)
 
         elif args.command.startswith("approve-"):
             run_id = args.run_id

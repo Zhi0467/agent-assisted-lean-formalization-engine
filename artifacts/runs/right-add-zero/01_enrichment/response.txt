@@ -1,0 +1,1 @@
+Wrote `artifacts/runs/right-add-zero/01_enrichment/handoff.md` with a concise enrichment handoff: the normalized theorem as `theorem right_add_zero (n : Nat) : n + 0 = n`, the universal-quantification interpretation over `Nat`, source provenance, and Lean guidance recommending `Nat.add_zero` with induction on `n` as the fallback proof strategy.

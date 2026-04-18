@@ -1,0 +1,29 @@
+{
+  "agent_config": {
+    "backend": "codex",
+    "codex_model": null,
+    "command": null
+  },
+  "agent_name": "codex_cli:default",
+  "attempt_count": 0,
+  "created_at": "2026-04-18T04:19:17Z",
+  "current_stage": "created",
+  "final_output_path": null,
+  "lake_path": null,
+  "latest_error": null,
+  "run_id": "smoke-test",
+  "source": {
+    "kind": "markdown",
+    "path": "examples/inputs/right_add_zero.md"
+  },
+  "template_dir": "/Users/zhiwang/Desktop/research/agent-assisted-lean-formalization-engine/lean_workspace_template",
+  "updated_at": "2026-04-18T04:19:17Z",
+  "workflow_tags": [
+    "three-checkpoint",
+    "review-files",
+    "terry-cli",
+    "bounded-prove-loop",
+    "backend-owned-stage-files"
+  ],
+  "workflow_version": "0.4.0"
+}

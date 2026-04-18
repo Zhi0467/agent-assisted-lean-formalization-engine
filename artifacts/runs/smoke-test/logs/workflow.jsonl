@@ -1,0 +1,1 @@
+{"details": {"agent": "codex_cli:default", "template_dir": "/Users/zhiwang/Desktop/research/agent-assisted-lean-formalization-engine/lean_workspace_template"}, "event_type": "run_started", "stage": "input", "summary": "Started run `smoke-test` from `examples/inputs/right_add_zero.md`.", "timestamp": "2026-04-18T04:19:17Z"}
