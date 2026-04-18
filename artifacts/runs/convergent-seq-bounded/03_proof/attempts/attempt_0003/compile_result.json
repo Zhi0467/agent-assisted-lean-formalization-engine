@@ -1,0 +1,19 @@
+{
+  "attempt": 3,
+  "build_passed": true,
+  "command": [
+    "lake build FormalizationEngineWorkspace"
+  ],
+  "contains_sorry": false,
+  "diagnostics": [
+    "$ lake build FormalizationEngineWorkspace"
+  ],
+  "fast_check_passed": true,
+  "missing_toolchain": false,
+  "passed": true,
+  "quality_gate_passed": true,
+  "returncode": 0,
+  "status": "passed",
+  "stderr": "$ lake build FormalizationEngineWorkspace\n",
+  "stdout": "$ lake build FormalizationEngineWorkspace\n\u2714 [8249/8251] Built FormalizationEngineWorkspace.Generated (6.9s)\n\u2714 [8250/8251] Built FormalizationEngineWorkspace (6.5s)\nBuild completed successfully (8251 jobs).\n"
+}

@@ -1,0 +1,1 @@
+Wrote artifacts/runs/convergent-seq-bounded/03_proof/attempts/attempt_0001/candidate.lean with a Lean proof of convergent_sequence_bounded using the ε = 1 tail estimate from Tendsto, a finite prefix sum bound over Finset.range N, and a case split on n < N versus N ≤ n. I could not typecheck it in this workspace because Mathlib is not on the local Lean import path here.

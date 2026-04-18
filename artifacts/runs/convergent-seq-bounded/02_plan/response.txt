@@ -1,0 +1,1 @@
+Wrote `artifacts/runs/convergent-seq-bounded/02_plan/handoff.md` with the locked Lean target, the approved proof strategy based on the `ε = 1` tail estimate and a finite prefix sum, implementation notes for the two-case split, expected lemmas, an execution checklist, and brief risk notes about the exact convergence helper lemma name.

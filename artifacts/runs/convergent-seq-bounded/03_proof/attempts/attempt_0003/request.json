@@ -1,0 +1,26 @@
+{
+  "attempt": 3,
+  "input_paths": {
+    "enrichment_handoff": "artifacts/runs/convergent-seq-bounded/01_enrichment/handoff.md",
+    "enrichment_review": "artifacts/runs/convergent-seq-bounded/01_enrichment/review.md",
+    "normalized_source": "artifacts/runs/convergent-seq-bounded/00_input/normalized.md",
+    "plan_handoff": "artifacts/runs/convergent-seq-bounded/02_plan/handoff.md",
+    "plan_review": "artifacts/runs/convergent-seq-bounded/02_plan/review.md",
+    "previous_candidate": "artifacts/runs/convergent-seq-bounded/03_proof/attempts/attempt_0002/candidate.lean",
+    "previous_compile_result": "artifacts/runs/convergent-seq-bounded/03_proof/attempts/attempt_0002/compile_result.json",
+    "provenance": "artifacts/runs/convergent-seq-bounded/00_input/provenance.json",
+    "source": "artifacts/runs/convergent-seq-bounded/00_input/source.txt"
+  },
+  "latest_compile_result_path": "artifacts/runs/convergent-seq-bounded/03_proof/attempts/attempt_0002/compile_result.json",
+  "max_attempts": 3,
+  "output_dir": "artifacts/runs/convergent-seq-bounded/03_proof/attempts/attempt_0003",
+  "previous_attempt_dir": "artifacts/runs/convergent-seq-bounded/03_proof/attempts/attempt_0002",
+  "repo_root": ".",
+  "required_outputs": [
+    "candidate.lean"
+  ],
+  "review_notes_path": null,
+  "run_dir": "artifacts/runs/convergent-seq-bounded",
+  "run_id": "convergent-seq-bounded",
+  "stage": "proof"
+}

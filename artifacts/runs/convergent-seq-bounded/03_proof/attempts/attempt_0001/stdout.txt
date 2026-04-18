@@ -1,0 +1,20 @@
+$ lake update
+Fetching ProofWidgets cloud release... done!
+Current branch: HEAD
+Using cache (Azure) from origin: leanprover-community/mathlib4
+No files to download
+Decompressing 8058 file(s) (174 already decompressed)
+Decompressed in 7072 ms
+Completed successfully!
+$ lake build FormalizationEngineWorkspace
+✖ [8248/8251] Building FormalizationEngineWorkspace.Generated (24s)
+trace: .> LEAN_PATH=.terry/lean_workspace/.lake/packages/Cli/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/batteries/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/Qq/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/aesop/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/proofwidgets/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/importGraph/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/LeanSearchClient/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/plausible/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/mathlib/.lake/build/lib/lean:.terry/lean_workspace/.lake/build/lib/lean ~/.elan/toolchains/leanprover--lean4---v4.29.0/bin/lean artifacts/runs/convergent-seq-bounded/03_proof/attempts/attempt_0001/candidate.lean -o .terry/lean_workspace/.lake/build/lib/lean/FormalizationEngineWorkspace/Generated.olean -i .terry/lean_workspace/.lake/build/lib/lean/FormalizationEngineWorkspace/Generated.ilean -c .terry/lean_workspace/.lake/build/ir/FormalizationEngineWorkspace/Generated.c --setup .terry/lean_workspace/.lake/build/ir/FormalizationEngineWorkspace/Generated.setup.json --json
+error: FormalizationEngineWorkspace/Generated.lean:10:18: unexpected token 'in'; expected ','
+error: FormalizationEngineWorkspace/Generated.lean:5:9: Unknown identifier `Tendsto`
+
+Note: It is not possible to treat `Tendsto` as an implicitly bound variable here because it has multiple characters while the `relaxedAutoImplicit` option is set to `false`.
+error: FormalizationEngineWorkspace/Generated.lean:7:25: Unknown identifier `atTop`
+error: Lean exited with code 1
+✔ [8249/8251] Built FormalizationEngineWorkspace.Basic (25s)
+Some required targets logged failures:
+- FormalizationEngineWorkspace.Generated

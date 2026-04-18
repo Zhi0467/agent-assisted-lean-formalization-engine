@@ -1,0 +1,4 @@
+$ lake build FormalizationEngineWorkspace
+✔ [8249/8251] Built FormalizationEngineWorkspace.Generated (6.9s)
+✔ [8250/8251] Built FormalizationEngineWorkspace (6.5s)
+Build completed successfully (8251 jobs).

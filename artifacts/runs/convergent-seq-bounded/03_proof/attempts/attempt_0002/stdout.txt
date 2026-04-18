@@ -1,0 +1,13 @@
+$ lake build FormalizationEngineWorkspace
+✖ [8249/8251] Building FormalizationEngineWorkspace.Generated (6.2s)
+trace: .> LEAN_PATH=.terry/lean_workspace/.lake/packages/Cli/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/batteries/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/Qq/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/aesop/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/proofwidgets/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/importGraph/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/LeanSearchClient/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/plausible/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/mathlib/.lake/build/lib/lean:.terry/lean_workspace/.lake/build/lib/lean ~/.elan/toolchains/leanprover--lean4---v4.29.0/bin/lean artifacts/runs/convergent-seq-bounded/03_proof/attempts/attempt_0002/candidate.lean -o .terry/lean_workspace/.lake/build/lib/lean/FormalizationEngineWorkspace/Generated.olean -i .terry/lean_workspace/.lake/build/lib/lean/FormalizationEngineWorkspace/Generated.ilean -c .terry/lean_workspace/.lake/build/ir/FormalizationEngineWorkspace/Generated.c --setup .terry/lean_workspace/.lake/build/ir/FormalizationEngineWorkspace/Generated.setup.json --json
+error: FormalizationEngineWorkspace/Generated.lean:29:45: Unknown identifier `abs_add`
+error: FormalizationEngineWorkspace/Generated.lean:31:10: Type mismatch
+  add_lt_add_right (hN n hn') |a|
+has type
+  |a| + |u n - a| < |a| + 1
+but is expected to have type
+  |u n - a| + |a| < 1 + |a|
+error: Lean exited with code 1
+Some required targets logged failures:
+- FormalizationEngineWorkspace.Generated

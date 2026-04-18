@@ -1,0 +1,20 @@
+{
+  "attempt": 2,
+  "build_passed": false,
+  "command": [
+    "lake build FormalizationEngineWorkspace"
+  ],
+  "contains_sorry": false,
+  "diagnostics": [
+    "$ lake build FormalizationEngineWorkspace",
+    "error: build failed"
+  ],
+  "fast_check_passed": false,
+  "missing_toolchain": false,
+  "passed": false,
+  "quality_gate_passed": true,
+  "returncode": 1,
+  "status": "compile_failed",
+  "stderr": "$ lake build FormalizationEngineWorkspace\nerror: build failed\n",
+  "stdout": "$ lake build FormalizationEngineWorkspace\n\u2716 [8249/8251] Building FormalizationEngineWorkspace.Generated (6.2s)\ntrace: .> LEAN_PATH=.terry/lean_workspace/.lake/packages/Cli/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/batteries/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/Qq/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/aesop/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/proofwidgets/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/importGraph/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/LeanSearchClient/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/plausible/.lake/build/lib/lean:.terry/lean_workspace/.lake/packages/mathlib/.lake/build/lib/lean:.terry/lean_workspace/.lake/build/lib/lean ~/.elan/toolchains/leanprover--lean4---v4.29.0/bin/lean artifacts/runs/convergent-seq-bounded/03_proof/attempts/attempt_0002/candidate.lean -o .terry/lean_workspace/.lake/build/lib/lean/FormalizationEngineWorkspace/Generated.olean -i .terry/lean_workspace/.lake/build/lib/lean/FormalizationEngineWorkspace/Generated.ilean -c .terry/lean_workspace/.lake/build/ir/FormalizationEngineWorkspace/Generated.c --setup .terry/lean_workspace/.lake/build/ir/FormalizationEngineWorkspace/Generated.setup.json --json\nerror: FormalizationEngineWorkspace/Generated.lean:29:45: Unknown identifier `abs_add`\nerror: FormalizationEngineWorkspace/Generated.lean:31:10: Type mismatch\n  add_lt_add_right (hN n hn') |a|\nhas type\n  |a| + |u n - a| < |a| + 1\nbut is expected to have type\n  |u n - a| + |a| < 1 + |a|\nerror: Lean exited with code 1\nSome required targets logged failures:\n- FormalizationEngineWorkspace.Generated\n"
+}
