@@ -310,17 +310,20 @@ class LeanRunner:
             "template_hash": self._template_hash(),
         }
 
+    def _cache_root(self) -> Path:
+        return self.repo_root / ".terry"
+
     def _workspace_path(self) -> Path:
-        return self.repo_root / ".terry" / "lean_workspace"
+        return self._cache_root() / "lean_workspace"
 
     def _workspace_metadata_path(self) -> Path:
-        return self.repo_root / ".terry" / "lean_workspace.json"
+        return self._cache_root() / "lean_workspace.json"
 
     def _workspace_lock_path(self) -> Path:
-        return self.repo_root / ".terry" / "lean_workspace.lock"
+        return self._cache_root() / "lean_workspace.lock"
 
     def _workspace_fallback_lock_path(self) -> Path:
-        return self.repo_root / ".terry" / "lean_workspace.lockdir"
+        return self._cache_root() / "lean_workspace.lockdir"
 
     def _vendored_revision_snapshot_path(self, workspace: Path) -> Path:
         return workspace / ".terry-vendored-revisions.json"
@@ -465,6 +468,8 @@ class LeanRunner:
             self._materialize_path_dependencies(target_package_dir, source_package_dir, next_seen)
 
     def _ensure_path_dependency_mirror(self, source_package_dir: Path, target_package_dir: Path) -> None:
+        if not self._is_within_path(target_package_dir, self._cache_root()):
+            return
         if not source_package_dir.exists():
             self._remove_path_dependency_mirror(target_package_dir)
             return

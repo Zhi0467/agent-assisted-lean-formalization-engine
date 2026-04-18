@@ -2673,6 +2673,58 @@ class DemoWorkflowTest(unittest.TestCase):
             self.assertIn("missing path dep LocalDep", second_result.stderr)
             self.assertFalse(mirrored_dep.exists())
 
+    def test_lean_runner_keeps_non_cache_path_dependency_targets_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            dep_name = f"{temp_root.name}_outside_dep"
+            source_dep_dir = temp_root.parent / dep_name
+            if source_dep_dir.exists():
+                shutil.rmtree(source_dep_dir)
+            try:
+                (temp_root / "lean_workspace_template" / "lakefile.toml").write_text(
+                    "\n".join(
+                        [
+                            "name = \"FormalizationEngineWorkspace\"",
+                            "version = \"0.1.0\"",
+                            "defaultTargets = [\"FormalizationEngineWorkspace\"]",
+                            "",
+                            "[[require]]",
+                            "name = \"OutsideDep\"",
+                            f"path = \"../../{dep_name}\"",
+                            "",
+                            "[[lean_lib]]",
+                            "name = \"FormalizationEngineWorkspace\"",
+                        ]
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                source_dep_dir.mkdir(parents=True, exist_ok=True)
+                (source_dep_dir / "Dep.lean").write_text("-- outside path dependency\n", encoding="utf-8")
+                (source_dep_dir / "lakefile.toml").write_text("name = \"OutsideDep\"\n", encoding="utf-8")
+                target_dep_dir = temp_root / dep_name
+                target_dep_dir.mkdir(parents=True, exist_ok=True)
+                sentinel_path = target_dep_dir / "KEEP.txt"
+                sentinel_path.write_text("keep me\n", encoding="utf-8")
+                fake_lake = self._write_fake_lake(temp_root, name="lake-outside-path")
+                runner = LeanRunner(
+                    temp_root / "lean_workspace_template",
+                    repo_root=temp_root,
+                    lake_path=str(fake_lake),
+                )
+
+                runner._prepare_workspace(runner._workspace_fingerprint(str(fake_lake)))
+
+                self.assertTrue(target_dep_dir.exists())
+                self.assertFalse(target_dep_dir.is_symlink())
+                self.assertEqual(sentinel_path.read_text(encoding="utf-8"), "keep me\n")
+            finally:
+                shutil.rmtree(source_dep_dir, ignore_errors=True)
+
     def test_lean_runner_skips_lake_update_for_multiline_lakefile_lean_path_dependencies(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
