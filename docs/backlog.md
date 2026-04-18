@@ -1,38 +1,40 @@
 # Backlog
 
-The architecture correction is implemented on the current head now: Terry is back to
-workflow orchestration only, the built-in backends write stage files directly, and the
-old Terry-owned theorem/parsing layer is gone. The remaining blocker is no longer a
-known architecture gap in Terry itself but the review gate on the shared-cache follow-up.
-The current branch fixed the latest concrete cache/runtime findings too: same-repo runs
-now have an explicit `--workdir` / `--repo-root` CLI surface, sibling local path
-dependencies are mirrored into `.terry/` so shared-cache relocation does not break
-`path = "../..."`, stale copied mirrors are removed when the real source disappears,
-path-dependency mirrors are constrained to Terry-owned `.terry/` paths instead of
-escaping into repo or parent directories, nested sibling deps behind symlinked mirrors
-now stay mirrored correctly, multi-parent path dependencies like `../../Shared` are
-rebased into Terry's cache layout instead of regressing valid templates, vendored packed
-refs are read correctly, and nested vendored build garbage no longer counts as source
-readiness. The backlog is still open because the review gate is blocked at the tooling
-layer now: the detached local `codex review --base main` rerun is again non-terminal,
-and GitHub `@codex review` on this repo now replies that a Codex environment must be
-created before live review can run.
+Milestone 1 is merged on `main` now. PR `#4` landed as merge commit `b352acc`, so the
+shared-cache follow-up is no longer a pending review surface. Terry now has the
+cache-owning working-directory contract Wangzhi asked for (`--workdir` / `--repo-root`),
+keeps the warmed Lean/mathlib state under `.terry/lean_workspace/`, mirrors valid local
+path dependencies into that cache without escaping into repo-owned paths, rebuilds the
+shared workspace when it is partially damaged, and degrades gracefully when convenience
+steps like `.git/info/exclude` writes or alias symlink creation fail. The Milestone 1
+backlog is clean.
 
 Current verification:
 
-- `PYTHONPATH=src python3 -m unittest discover -s tests` (`100` tests, all passing)
-- targeted CLI e2e tests still pass on the current head:
+- `PYTHONPATH=src:. pytest -q` (`107` tests, all passing)
+- targeted CLI e2e tests still pass on the merged head:
   `DemoWorkflowTest.test_cli_demo_backend_e2e`
   `DemoWorkflowTest.test_cli_command_backend_e2e`
-- new workdir/cache e2e also passes on the current head:
-  `DemoWorkflowTest.test_cli_demo_backend_e2e_accepts_workdir_after_subcommand`
-- direct local `codex review --base main` on current head `7c1c945` is still unresolved:
-  the latest local rerun did flush out and justify two more path-layout regressions, and
-  those fixes are now in `7c1c945`, but the next rerun is again hanging without a final
-  clean/fail verdict
-- live GitHub `@codex review` is blocked on repo setup:
-  the latest PR comments got the bot reply `create an environment for this repo`, so the
-  live review surface is not currently usable until that environment exists
+- `DemoWorkflowTest.test_cli_demo_backend_e2e_accepts_workdir_after_subcommand`
+- real same-`--workdir` Terry CLI e2e on two elementary analysis theorems passed after
+  the final cache hardening pass:
+  - `0 <= |x|` finished with `lake update` then `lake build`
+  - `0 <= x^2` in the same working directory finished with `lake build` only
+  - the shared `.terry/lean_workspace/.lake/packages/mathlib` cache stayed warm between
+    those runs
+- the last detached bug pass on PR head `428b4d4` closed two final cache-recovery
+  issues before merge:
+  - stale nested files under ancestor-overlay path dependencies are now removed
+  - a partially deleted shared workspace now recopies itself instead of being treated as
+    reusable
+- all live GitHub review threads on PR `#4` were resolved before merge, and the local
+  project checkout was cleaned of untracked Terry test junk after the final e2e
+
+Next step:
+
+- run a non-demo theorem that actually needs at least one repair pass on the merged
+  Terry surface, then decide whether the proof-loop control needs stronger stopping or
+  verification logic
 
 ## Orchestrator-Only Refactor
 
@@ -66,5 +68,5 @@ packed refs, nested vendored build-only trees, stale copied mirror removal after
 deletion, the safety guard that keeps multi-`..` path dependencies from rewriting
 non-cache directories, nested sibling dependency mirroring behind symlinked cache
 packages, and rebasing of valid multi-parent path dependencies into Terry's cache
-layout. The next product work still lives in `docs/roadmap.md` under Milestones 2 and
-3, but this cache branch is not review-closed yet.
+layout. Milestone 1 is shipped; the next product work lives in `docs/roadmap.md` under
+Milestones 2 and 3.

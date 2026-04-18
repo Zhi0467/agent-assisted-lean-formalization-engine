@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-04-18 01:09 UTC
+Last updated: 2026-04-18 03:17 UTC
 
 ## Current Status
 
@@ -28,30 +28,53 @@ centers the orchestrator-only contract directly:
 - Terry now stores only the narrow control-plane request / prompt / response beside those
   outputs, then validates that the required file exists before continuing
 
-Branch-local verification on the new surface is now `96/96`, and that suite is
-deliberately rewritten around the file-first contract rather than the removed
+The final local verification surface on the merged head is now `107/107`, and that
+suite is deliberately rewritten around the file-first contract rather than the removed
 Terry-owned JSON payload layer. It covers the demo workflow, the subprocess repair loop,
 the file-first stage request shape, legacy-resume compatibility, legacy compatibility
 approvals after rejected review files, sandboxed Codex stage writes, template-pin
 preservation after successful `lake new`, stale-proof-artifact cleanup on rerun, shared
 compile-cache reuse across runs, template-triggered cache refresh, vendored-template
 cache refresh, incomplete-vendored-tree repair, `lakefile.lean` vendored-template
-support, in-place toolchain refresh behind the same `lake` path, the legacy
-pending-review-template filters, explicit `--workdir` routing, sibling local path
-dependency mirroring, packed-ref vendored revisions, and nested vendored build-only
+support, in-place toolchain refresh behind the same `lake` path, fallback lock recovery,
+best-effort cache-alias and git-exclude setup, the legacy pending-review-template
+filters, explicit `--workdir` routing, sibling local path dependency mirroring,
+ancestor-overlay cleanup, packed-ref vendored revisions, and nested vendored build-only
 readiness checks. The targeted CLI e2e tests for the demo backend, the scripted command
 backend, and the explicit workdir path still pass on fresh temp repo roots.
 
-The remaining product work is still outside the rewrite itself, but this cache-hardening
-follow-up is not locally merge-ready yet because the final local `codex review --base main`
-rerun is still not returning a terminal verdict on the current head. The runtime bugs
-surfaced by earlier reruns on this branch are fixed, the addressed PR threads are
-resolved, and live `@codex review` is queued again on `7b4bcfc`, but Milestone 1 cannot
-be called closed again until one codex review surface actually resolves.
+PR `#4` is merged into `main` now as `b352acc`, so Milestone 1 is closed again on the
+shipped repo surface rather than a pending PR branch. The final cache-hardening pass
+after the old review loop closed two more real recovery issues in `lean_runner.py`:
+ancestor-overlay path dependencies now remove stale nested files instead of leaving old
+modules behind in `.terry/`, and a partially deleted shared workspace now recopies
+itself instead of being treated as reusable because `Basic.lean` happened to survive.
+The merged head also keeps the earlier workdir/cache contract Wangzhi asked for:
+`--workdir` is an alias for `--repo-root`, Terry accepts it before or after the
+subcommand, and that chosen working directory owns `artifacts/`,
+`lean_workspace_template/`, and `.terry/lean_workspace/`.
+
+Final validation on the merged surface is now:
+
+- `PYTHONPATH=src:. pytest -q` (`107/107` passing)
+- targeted CLI e2e tests still pass:
+  - `DemoWorkflowTest.test_cli_demo_backend_e2e`
+  - `DemoWorkflowTest.test_cli_command_backend_e2e`
+  - `DemoWorkflowTest.test_cli_demo_backend_e2e_accepts_workdir_after_subcommand`
+- real same-`--workdir` Terry CLI e2e on two elementary analysis theorems:
+  - `0 <= |x|` completed with `lake update` then `lake build`
+  - `0 <= x^2` in the same working directory completed with `lake build` only
+  - the shared `.terry/lean_workspace/.lake/packages/mathlib` cache stayed warm across
+    those two runs
+
+The review tool still never produced a final terminal message on its last detached rerun,
+but that pass did not surface any new issue beyond the final two cache-recovery bugs
+fixed before merge, and all live GitHub review threads on PR `#4` were resolved. The
+next product work is no longer review closure; it is Milestone 2 on the merged surface.
 
 ## Milestone 1 — Terry CLI Contract
 
-Status: functionally complete, but the shared-cache follow-up is still waiting on a clean codex-review verdict on the latest head.
+Status: complete on `main` as of merge commit `b352acc`.
 
 Success criteria:
 
@@ -61,14 +84,17 @@ Success criteria:
 
 Gate:
 
-- the rewritten CLI passes local tests and survives local review on a PR branch
+- the rewritten CLI passes local tests, survives real manual Terry e2e in a reusable
+  working directory, and lands merged on `main`
 
 ### Activity Log
 
+- [2026-04-18 03:17 UTC] Merged PR `#4` (`Reuse Terry Lean cache across runs`) into `main` as `b352acc` after one more detached bug pass and a real same-`--workdir` Terry CLI walk on two elementary analysis theorems. The first run (`0 <= |x|`) warmed the shared workspace with `lake update` then `lake build`; the second run (`0 <= x^2`) in the same directory finished with `lake build` only, which is the exact cache-reuse behavior Wangzhi asked for.
+- [2026-04-18 03:17 UTC] The final code delta before merge was `428b4d4`, which closed two last shared-workspace recovery bugs: stale nested files under ancestor-overlay path dependencies are now removed before reuse, and a partially deleted `.terry/lean_workspace/` now recopies itself instead of limping into repeated broken builds. The full local test surface is now `107/107`, all live GitHub review threads on PR `#4` are resolved, and the project checkout was cleaned of untracked Terry test junk after the final e2e.
 - [2026-04-18 01:09 UTC] Added the explicit Terry working-directory surface that Wangzhi asked for. `terry` now accepts `--workdir` as an alias for `--repo-root`, that flag can appear before or after the subcommand, status output now prints the working directory explicitly, and the README / manual walkthrough / architecture docs now explain that this directory owns `artifacts/`, `lean_workspace_template/`, and `.terry/lean_workspace/`.
 - [2026-04-18 01:09 UTC] The next direct review loop stayed inside the shared-cache implementation and found one real P1: moving the workspace to `.terry/lean_workspace/` broke valid templates with sibling local path dependencies like `path = "../LocalDep"`. Terry now mirrors those local path dependencies into `.terry/` before build, and the suite covers that exact shape directly.
 - [2026-04-18 01:09 UTC] The live PR Codex pass on `5c97c48` then surfaced two smaller vendored-cache checks that were still too loose: packed refs in vendored git repos could bypass revision matching, and nested `.lake/packages/*/build` artifacts could still count as source readiness. Both are fixed on `7b4bcfc`, both have dedicated regressions, and the suite is now `96/96`.
-- [2026-04-18 01:09 UTC] The current open blocker is purely review closure. The historical PR threads are resolved, a fresh live `@codex review` has been requested on `7b4bcfc`, and the detached local `codex review --base main` rerun is still walking runtime probes without a terminal verdict. Until one of those codex surfaces actually returns clean or non-fatal, Milestone 1 stays open.
+- [2026-04-18 01:09 UTC] The old open blocker at that point was review closure. That is no longer the product gate after the final manual pass and merge, but this note stays here as provenance for why PR `#4` paused before the last e2e/merge decision.
 - [2026-04-17 22:02 UTC] The later review loops stayed entirely inside the new shared-cache contract and flushed out four more real edges there: build artifacts inside vendored packages were still being copied into `.terry/lean_workspace`, vendored-package completeness was being inferred from directory names alone, `lakefile.lean` templates were always forcing `lake update`, and dirty git-backed vendored packages could still leave the cache looking falsely clean. All four are now fixed in `lean_runner.py`.
 - [2026-04-17 22:02 UTC] The branch-local suite is now `68/68` after adding direct regressions for nested vendored build-output stripping, incomplete vendored trees, dirty git-backed vendored packages, and `lakefile.lean` vendored-template support. The targeted CLI e2e tests still pass. The only remaining blocker on this branch is procedural rather than a reproduced runtime bug: the final detached local `codex review --base main` rerun is currently stalling after runtime probes instead of returning a clean or failing verdict.
 - [2026-04-17 21:16 UTC] Tightened the shared-cache contract after the first cache review pass. Terry now fingerprints the real toolchain behind `lake` instead of only the executable path, and the template hash now includes vendored `.lake/` source state instead of blindly ignoring it. That closes the two false-reuse cases where the cache could otherwise survive a same-path toolchain upgrade or a vendored dependency edit inside `lean_workspace_template/`.
