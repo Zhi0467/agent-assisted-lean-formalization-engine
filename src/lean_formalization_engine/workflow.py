@@ -333,6 +333,12 @@ class FormalizationWorkflow:
             ):
                 latest_compile = self._load_compile_attempt(store, latest_compile_path)
                 if latest_compile.passed:
+                    self._ensure_attempt_review_ready(
+                        store,
+                        manifest,
+                        manifest.attempt_count,
+                        review_notes_relative_path=self._default_attempt_review_notes_path(store),
+                    )
                     return self._queue_final_review(
                         store,
                         manifest,
@@ -1346,13 +1352,96 @@ class FormalizationWorkflow:
             attempt=attempt,
             max_attempts=max_attempts or manifest.attempt_count or self.max_attempts,
         )
-        self._run_backend_stage(store, request, attempt_dir)
-        store.append_log(
-            "attempt_review_ready",
-            f"Wrote Terry review artifacts for attempt {attempt}.",
-            stage="proof",
-            details={"attempt": attempt},
+        try:
+            self._run_backend_stage(store, request, attempt_dir)
+            store.append_log(
+                "attempt_review_ready",
+                f"Wrote Terry review artifacts for attempt {attempt}.",
+                stage="proof",
+                details={"attempt": attempt},
+            )
+        except Exception as exc:
+            compile_result = self._load_compile_attempt(store, compile_path)
+            self._write_fallback_attempt_review(store, attempt, compile_result, exc)
+            store.append_log(
+                "attempt_review_fallback",
+                f"Fell back to Terry-generated review artifacts for attempt {attempt}.",
+                stage="proof",
+                details={"attempt": attempt, "reason": str(exc)},
+            )
+
+    def _ensure_attempt_review_ready(
+        self,
+        store: RunStore,
+        manifest: RunManifest,
+        attempt: int,
+        *,
+        review_notes_relative_path: str | None = None,
+    ) -> None:
+        if len(self._existing_attempt_review_artifacts(store, attempt)) == len(ATTEMPT_REVIEW_OUTPUTS):
+            return
+        self._run_attempt_review(
+            store,
+            manifest,
+            attempt,
+            review_notes_relative_path=review_notes_relative_path,
+            max_attempts=manifest.attempt_count or self.max_attempts,
         )
+
+    def _default_attempt_review_notes_path(self, store: RunStore) -> str | None:
+        for relative_path in (f"{PROOF_DIR}/review.md", f"{PLAN_DIR}/review.md"):
+            if self._meaningful_review_notes_path(store, relative_path) is not None:
+                return relative_path
+        return None
+
+    def _write_fallback_attempt_review(
+        self,
+        store: RunStore,
+        attempt: int,
+        compile_result: CompileAttempt,
+        failure: Exception,
+    ) -> None:
+        attempt_dir = f"{PROOF_DIR}/attempts/attempt_{attempt:04d}"
+        candidate_text = store.read_text(f"{attempt_dir}/candidate.lean").strip()
+        walkthrough = "\n".join(
+            [
+                "# Attempt Walkthrough",
+                "",
+                "Terry generated this fallback walkthrough because the configured review worker did not complete.",
+                "Read `candidate.lean` together with the compile result to inspect the proof attempt.",
+                "",
+            ]
+        )
+        readable_candidate = "\n".join(
+            [
+                "-- Terry compatibility fallback for attempt review.",
+                candidate_text,
+                "",
+            ]
+        )
+        error_lines = [
+            "# Error Report",
+            "",
+            f"Compile status: {compile_result.status}.",
+        ]
+        if compile_result.passed:
+            error_lines.append("This attempt compiled cleanly.")
+        elif compile_result.diagnostics:
+            error_lines.append(
+                "Diagnostics: " + " | ".join(str(item) for item in compile_result.diagnostics)
+            )
+        if str(failure).strip():
+            error_lines.extend(
+                [
+                    "",
+                    "Review fallback reason:",
+                    str(failure).strip(),
+                ]
+            )
+        error_lines.append("")
+        store.write_text(f"{attempt_dir}/{ATTEMPT_WALKTHROUGH}", walkthrough)
+        store.write_text(f"{attempt_dir}/{ATTEMPT_READABLE_CANDIDATE}", readable_candidate)
+        store.write_text(f"{attempt_dir}/{ATTEMPT_ERROR_REPORT}", "\n".join(error_lines))
 
     def _attempt_review_paths(self, attempt: int) -> list[str]:
         attempt_dir = f"{PROOF_DIR}/attempts/attempt_{attempt:04d}"

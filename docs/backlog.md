@@ -17,7 +17,7 @@ and attempt `3` passed.
 
 Current verification:
 
-- `PYTHONPATH=src python3 -m unittest discover -s tests` (`114` tests, all passing)
+- `PYTHONPATH=src python3 -m unittest discover -s tests` (`115` tests, all passing)
 - targeted CLI e2e tests still pass on the merged head:
   `DemoWorkflowTest.test_cli_demo_backend_e2e`
   `DemoWorkflowTest.test_cli_command_backend_e2e`
