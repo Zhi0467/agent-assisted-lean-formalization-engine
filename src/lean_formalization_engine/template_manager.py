@@ -243,13 +243,15 @@ def _replace_mathlib_rev(lakefile_text: str, revision: str) -> str:
     for block in blocks[1:]:
         block_text = "[[require]]" + block
         if not replaced and 'name = "mathlib"' in block_text:
-            lines = block_text.splitlines()
+            lines = block_text.splitlines(keepends=True)
             for index, raw_line in enumerate(lines):
                 if raw_line.strip().startswith("rev = "):
-                    prefix = raw_line.split("rev", 1)[0]
-                    lines[index] = f'{prefix}rev = "{revision}"'
+                    line_body = raw_line.rstrip("\r\n")
+                    line_ending = raw_line[len(line_body) :]
+                    prefix = line_body.split("rev", 1)[0]
+                    lines[index] = f'{prefix}rev = "{revision}"{line_ending}'
                     replaced = True
                     break
-            block_text = "\n".join(lines)
+            block_text = "".join(lines)
         rebuilt.append(block_text)
     return "".join(rebuilt)

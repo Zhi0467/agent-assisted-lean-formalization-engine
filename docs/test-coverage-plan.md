@@ -11,6 +11,7 @@ This document tracks which coverage gaps have been addressed and which remain op
 | `tests/test_storage.py` | `validate_run_id` (valid IDs, all invalid character classes), `ensure_new` (success + FileExistsError), `write/read_text`, `write/read_json` round-trip, `exists`, `append_log` (JSONL content, timeline.md content, stage suffix, accumulation) |
 | `tests/test_prompt_loader.py` | All 9 templates exist and are non-empty, `FileNotFoundError` for missing template, `render_bullet_list` (empty → "- none", single, multiple, generator), `render_prompt_template` (substitution, missing key KeyError, missing template FileNotFoundError) |
 | `tests/test_subprocess_agent.py` | Empty command ValueError, `_default_agent_name` for all forms (python -m, python -c, generic, path), `ProviderResponseError` attributes and defaults, `_invoke_provider` non-zero exit RuntimeError, FileNotFoundError for missing executable, invalid JSON ProviderResponseError, `run_stage` non-dict response, missing prompt, valid round-trip, missing raw_response fallback |
+| `tests/test_template_manager.py` | `_extract_mathlib_rev` for present/absent mathlib entries, `_replace_mathlib_rev` rewrite preserving adjacent `[[require]]` blocks |
 
 ---
 
@@ -31,17 +32,6 @@ This document tracks which coverage gaps have been addressed and which remain op
 **Stages to cover:** `LEGACY_AWAITING_ENRICHMENT_REVIEW`, `LEGACY_AWAITING_SPEC_REVIEW`, `LEGACY_AWAITING_PLAN_REVIEW`, `LEGACY_AWAITING_STALL_REVIEW`, `LEGACY_AWAITING_FINAL_REVIEW`.
 
 **What to add:** For each legacy stage, write a manifest with that `current_stage` value, call `workflow.resume()` with the appropriate decision file, and assert either a clean transition or a descriptive error.
-
----
-
-### `template_manager.py` — `_extract_mathlib_rev` / `_replace_mathlib_rev`
-
-**Risk:** A regex regression silently produces a malformed lakefile; the workspace build fails with a confusing error far from the actual bug.
-
-**What to add:** A `tests/test_template_manager.py` with direct unit tests:
-- `_extract_mathlib_rev` with a valid lakefile containing `rev = "abc123"` → returns `"abc123"`
-- `_extract_mathlib_rev` with no mathlib entry → returns `None`
-- `_replace_mathlib_rev` with a known rev → produces expected output; verify round-trip
 
 ---
 
