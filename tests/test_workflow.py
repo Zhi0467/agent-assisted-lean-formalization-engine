@@ -491,6 +491,58 @@ class WorkflowTest(unittest.TestCase):
     def _write_named_fake_lake(self, directory: Path, name: str) -> Path:
         return self._write_fake_lake(directory, name=name, version=name)
 
+    def _write_fake_lake_with_mathlib_cache(self, directory: Path, *, name: str = "lake-cache") -> Path:
+        fake_lake = directory / name
+        fake_lake.write_text(
+            "\n".join(
+                [
+                    "#!/usr/bin/env python3",
+                    "import pathlib",
+                    "import sys",
+                    "",
+                    "def main() -> int:",
+                    "    args = sys.argv[1:]",
+                    "    cwd = pathlib.Path.cwd()",
+                    "    if args[:1] == ['--version']:",
+                    f"        print({name!r})",
+                    "        return 0",
+                    "    if args[:1] == ['update']:",
+                    "        manifest = cwd / 'lake-manifest.json'",
+                    "        manifest.write_text('{\"version\": 7, \"packagesDir\": \".lake/packages\"}', encoding='utf-8')",
+                    "        mathlib_dir = cwd / '.lake' / 'packages' / 'mathlib'",
+                    "        mathlib_dir.mkdir(parents=True, exist_ok=True)",
+                    "        (mathlib_dir / 'Mathlib.lean').write_text('-- mathlib\\n', encoding='utf-8')",
+                    "        (mathlib_dir / 'lakefile.lean').write_text('lean_exe cache where\\n  root := `Cache.Main\\n', encoding='utf-8')",
+                    "        return 0",
+                    "    if args[:3] == ['exe', 'cache', 'get']:",
+                    "        cache_root = cwd / '.lake' / 'packages' / 'mathlib' / '.lake' / 'build' / 'lib' / 'lean'",
+                    "        cache_root.mkdir(parents=True, exist_ok=True)",
+                    "        (cache_root / 'Mathlib.olean').write_text('cached\\n', encoding='utf-8')",
+                    "        print('restored mathlib cache')",
+                    "        return 0",
+                    "    if args[:2] == ['build', 'FormalizationEngineWorkspace']:",
+                    "        generated = cwd / 'FormalizationEngineWorkspace' / 'Generated.lean'",
+                    "        cache_file = cwd / '.lake' / 'packages' / 'mathlib' / '.lake' / 'build' / 'lib' / 'lean' / 'Mathlib.olean'",
+                    "        if not cache_file.exists():",
+                    "            print('missing mathlib cache', file=sys.stderr)",
+                    "            return 1",
+                    "        if 'sorry' in generated.read_text(encoding='utf-8'):",
+                    "            print(f'{generated}: found sorry', file=sys.stderr)",
+                    "            return 1",
+                    "        return 0",
+                    "    print(f'unexpected args: {args}', file=sys.stderr)",
+                    "    return 1",
+                    "",
+                    "if __name__ == '__main__':",
+                    "    raise SystemExit(main())",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        fake_lake.chmod(0o755)
+        return fake_lake
+
     def test_complete_workflow_omits_old_payload_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -3710,6 +3762,117 @@ class WorkflowTest(unittest.TestCase):
             self.assertEqual(
                 result.command,
                 ["lake-transitive update", "lake-transitive build FormalizationEngineWorkspace"],
+            )
+
+    def test_lean_runner_restores_mathlib_cache_before_build(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            fake_lake = self._write_fake_lake_with_mathlib_cache(temp_root, name="lake-cache")
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            store = RunStore(temp_root / "artifacts", "mathlib-cache")
+            store.ensure_new()
+            store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem mathlib_cache (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+
+            result = runner.compile_candidate(store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(result.passed)
+            self.assertEqual(
+                result.command,
+                [
+                    "lake-cache update",
+                    "lake-cache exe cache get",
+                    "lake-cache build FormalizationEngineWorkspace",
+                ],
+            )
+            self.assertIn("restored mathlib cache", result.stdout)
+
+    def test_lean_runner_restores_mathlib_cache_in_reused_workspace_without_update(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            fake_lake = self._write_fake_lake_with_mathlib_cache(temp_root, name="lake-cache-reuse")
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            first_store = RunStore(temp_root / "artifacts", "mathlib-cache-first")
+            first_store.ensure_new()
+            first_store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem mathlib_cache_first (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+            first_result = runner.compile_candidate(first_store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(first_result.passed)
+
+            cache_file = (
+                temp_root
+                / ".terry"
+                / "lean_workspace"
+                / ".lake"
+                / "packages"
+                / "mathlib"
+                / ".lake"
+                / "build"
+                / "lib"
+                / "lean"
+                / "Mathlib.olean"
+            )
+            cache_file.unlink()
+
+            second_store = RunStore(temp_root / "artifacts", "mathlib-cache-second")
+            second_store.ensure_new()
+            second_store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem mathlib_cache_second (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+            second_result = runner.compile_candidate(second_store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(second_result.passed)
+            self.assertEqual(
+                second_result.command,
+                [
+                    "lake-cache-reuse exe cache get",
+                    "lake-cache-reuse build FormalizationEngineWorkspace",
+                ],
             )
 
     def test_lean_runner_adds_shared_cache_to_local_git_exclude(self) -> None:

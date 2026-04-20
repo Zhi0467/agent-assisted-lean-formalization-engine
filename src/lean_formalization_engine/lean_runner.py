@@ -166,6 +166,30 @@ class LeanRunner:
                         passed=False,
                         status="compile_failed",
                     )
+            cache_restore_result = self._restore_mathlib_cache(workspace, lake_path)
+            if cache_restore_result is not None:
+                cache_command_text = " ".join([self._display_lake(), "exe", "cache", "get"])
+                command_texts.append(cache_command_text)
+                stdout_sections.append(
+                    self._format_process_output(
+                        cache_command_text,
+                        cache_restore_result.stdout,
+                        store,
+                        workspace,
+                        lake_path,
+                        candidate_relative_path,
+                    )
+                )
+                stderr_sections.append(
+                    self._format_process_output(
+                        cache_command_text,
+                        cache_restore_result.stderr,
+                        store,
+                        workspace,
+                        lake_path,
+                        candidate_relative_path,
+                    )
+                )
             generated_path = workspace / "FormalizationEngineWorkspace" / "Generated.lean"
             generated_path.parent.mkdir(parents=True, exist_ok=True)
             generated_path.write_text(content, encoding="utf-8")
@@ -833,6 +857,61 @@ class LeanRunner:
             bootstrap_marker.unlink(missing_ok=True)
         return result
 
+    def _restore_mathlib_cache(
+        self,
+        workspace: Path,
+        lake_path: str,
+    ) -> subprocess.CompletedProcess[str] | None:
+        mathlib_dir = workspace / ".lake" / "packages" / "mathlib"
+        if not self._package_declares_lean_executable(mathlib_dir, "cache"):
+            return None
+        if self._mathlib_cache_ready(mathlib_dir):
+            return None
+        return subprocess.run(
+            [lake_path, "exe", "cache", "get"],
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def _mathlib_cache_ready(self, mathlib_dir: Path) -> bool:
+        return (mathlib_dir / ".lake" / "build" / "lib" / "lean" / "Mathlib.olean").exists()
+
+    def _package_declares_lean_executable(self, package_dir: Path, executable_name: str) -> bool:
+        if not package_dir.exists() or not package_dir.is_dir():
+            return False
+        toml_lakefile_path = package_dir / "lakefile.toml"
+        if toml_lakefile_path.exists():
+            try:
+                lakefile_text = toml_lakefile_path.read_text(encoding="utf-8")
+            except OSError:
+                return False
+            if tomllib is not None:
+                try:
+                    payload = tomllib.loads(lakefile_text)
+                except (ValueError, TOMLDecodeError):
+                    payload = None
+                if isinstance(payload, dict):
+                    lean_executables = payload.get("lean_exe", [])
+                    if isinstance(lean_executables, list):
+                        for entry in lean_executables:
+                            if not isinstance(entry, dict):
+                                continue
+                            name = entry.get("name")
+                            if isinstance(name, str) and name == executable_name:
+                                return True
+            return executable_name in self._parse_lean_executable_names_from_lakefile_toml(lakefile_text)
+
+        lean_lakefile_path = package_dir / "lakefile.lean"
+        if lean_lakefile_path.exists():
+            try:
+                lakefile_text = lean_lakefile_path.read_text(encoding="utf-8")
+            except OSError:
+                return False
+            return executable_name in self._parse_lean_executable_names_from_lakefile_lean(lakefile_text)
+        return False
+
     def _dependency_bootstrap_marker(self, workspace: Path) -> Path:
         return workspace / ".terry-dependencies-ready"
 
@@ -1121,6 +1200,22 @@ class LeanRunner:
             package_requirements.append(PackageRequirement(name=current_entry["name"], path=current_entry.get("path")))
         return package_requirements
 
+    def _parse_lean_executable_names_from_lakefile_toml(self, lakefile_text: str) -> set[str]:
+        executable_names: set[str] = set()
+        in_lean_exe_block = False
+        for line in lakefile_text.splitlines():
+            stripped = line.strip()
+            block_match = re.match(r"^\[\[\s*([^\]]+?)\s*\]\]\s*(?:#.*)?$", stripped)
+            if block_match:
+                in_lean_exe_block = block_match.group(1) == "lean_exe"
+                continue
+            if not in_lean_exe_block:
+                continue
+            match = re.match(r"""^name\s*=\s*(["'])([^"']+)\1\s*(?:#.*)?$""", stripped)
+            if match:
+                executable_names.add(match.group(2))
+        return executable_names
+
     def _parse_required_packages_from_lakefile_lean(self, lakefile_text: str) -> list[PackageRequirement]:
         package_requirements: list[PackageRequirement] = []
         pending_path_requirement: str | None = None
@@ -1156,6 +1251,17 @@ class LeanRunner:
         if pending_path_requirement is not None:
             package_requirements.append(PackageRequirement(name=pending_path_requirement))
         return package_requirements
+
+    def _parse_lean_executable_names_from_lakefile_lean(self, lakefile_text: str) -> set[str]:
+        executable_names: set[str] = set()
+        for line in lakefile_text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("--"):
+                continue
+            match = re.match(r"^\s*lean_exe\s+([A-Za-z_][A-Za-z0-9_']*)\b", line)
+            if match:
+                executable_names.add(match.group(1))
+        return executable_names
 
     def _resolve_package_dir(self, workspace: Path, requirement: PackageRequirement) -> Path | None:
         if requirement.path is None:
