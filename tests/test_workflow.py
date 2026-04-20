@@ -3827,6 +3827,51 @@ class WorkflowTest(unittest.TestCase):
             )
             self.assertNotIn("restored mathlib cache", result.stdout)
 
+    def test_lean_runner_restores_mathlib_cache_after_update_when_root_olean_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            fake_lake = self._write_fake_lake_with_mathlib_cache(
+                temp_root,
+                name="lake-cache-after-update",
+                cache_on_update=False,
+            )
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            store = RunStore(temp_root / "artifacts", "mathlib-cache-after-update")
+            store.ensure_new()
+            store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem mathlib_cache_after_update (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+
+            result = runner.compile_candidate(store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(result.passed)
+            self.assertEqual(
+                result.command,
+                [
+                    "lake-cache-after-update update",
+                    "lake-cache-after-update exe cache get",
+                    "lake-cache-after-update build FormalizationEngineWorkspace",
+                ],
+            )
+            self.assertIn("restored mathlib cache", result.stdout)
+
     def test_lean_runner_restores_mathlib_cache_in_reused_workspace_without_update(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
