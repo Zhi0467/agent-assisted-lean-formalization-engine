@@ -97,7 +97,7 @@ _GLOBAL_OPTIONS_WITH_VALUES = (
     "--backend-heartbeat-seconds",
 )
 
-_DEFAULT_BACKEND_HEARTBEAT_SECONDS = 60.0
+_DEFAULT_BACKEND_HEARTBEAT_SECONDS = 180.0
 
 
 class _MissingCommandAgent:
