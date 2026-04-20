@@ -1,0 +1,3 @@
+Wrote `artifacts/runs/PG-theorem/02_plan/handoff.md`.
+
+It locks the plan to a generic finite `SA` matrix formalization, pins the first Lean target as an algebraic `policyGradient_core` theorem matching the supplied fixed-point proof, lists the imports/reuse surface to prefer, and records the visible constraints: no direct `enrichment_review` pointer, no local Lean project/toolchain files, and invertibility of `1 - Π` should be taken as an explicit hypothesis in the first pass.

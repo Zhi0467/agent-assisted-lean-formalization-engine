@@ -165,6 +165,7 @@ class CliExecFormalizationAgent:
                 else ""
             ),
             stage_instructions=stage_instructions,
+            mode_instructions_section=_render_mode_instructions(request),
             reviewer_notes_section=(
                 f"\nReviewer notes path: {request.review_notes_path}"
                 if request.review_notes_path
@@ -227,3 +228,38 @@ class CliExecFormalizationAgent:
 # Backwards-compatible alias so existing imports `from ... import CodexCliFormalizationAgent`
 # continue to function. New code should import `CliExecFormalizationAgent` directly.
 CodexCliFormalizationAgent = CliExecFormalizationAgent
+
+
+def _render_mode_instructions(request: StageRequest) -> str:
+    if not request.divide_and_conquer:
+        return ""
+
+    if request.stage.value == "enrichment":
+        instructions = [
+            "Divide-and-conquer mode is enabled for this run.",
+            "You must write `prerequisites/` inside the output directory and populate it with the prerequisite definitions and lemmas that the final theorem depends on.",
+            "For prerequisite lemmas, capture both the statement and the natural-language proof or proof provenance. For prerequisite definitions, capture the definition and why it matters later.",
+            "Treat `prerequisites/` as mandatory human-review material, not an optional scratch folder.",
+        ]
+    elif request.stage.value == "plan":
+        instructions = [
+            "Divide-and-conquer mode is enabled for this run.",
+            "Read `prerequisites_dir` before planning and preserve those prerequisite boundaries in the Lean plan.",
+            "You must write `dependency_graph.md` inside the output directory.",
+            "The dependency graph must describe the proof bottom up: prerequisite definitions and lemmas first, then the intermediate dependencies, then the final theorem.",
+            "Mark which graph components look independently formalizable or reviewable in parallel.",
+        ]
+    elif request.stage.value == "proof":
+        instructions = [
+            "Divide-and-conquer mode is enabled for this run.",
+            "Read `prerequisites_dir` and `dependency_graph` before editing Lean, and follow that dependency graph bottom up.",
+            "Use a subagent-style decomposition only as a planning heuristic inside this single turn: identify independent components and integrate them coherently, but do not actually spawn separate workers, background jobs, or parallel processes.",
+            "Prioritize reusable prerequisite definitions and lemmas before touching the final theorem statement.",
+        ]
+    else:
+        instructions = [
+            "Divide-and-conquer mode is enabled for this run.",
+            "Keep the prerequisite inventory and dependency graph in view when interpreting this stage.",
+        ]
+
+    return "\nMode-specific instructions:\n" + render_bullet_list(instructions) + "\n"

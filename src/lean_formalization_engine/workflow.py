@@ -51,7 +51,9 @@ ENRICHMENT_PROOF_STATUS = f"{ENRICHMENT_DIR}/proof_status.json"
 ENRICHMENT_NATURAL_LANGUAGE_STATEMENT = f"{ENRICHMENT_DIR}/natural_language_statement.md"
 ENRICHMENT_NATURAL_LANGUAGE_PROOF = f"{ENRICHMENT_DIR}/natural_language_proof.md"
 ENRICHMENT_RELEVANT_LEAN_OBJECTS = f"{ENRICHMENT_DIR}/relevant_lean_objects.md"
+ENRICHMENT_PREREQUISITES_DIR = f"{ENRICHMENT_DIR}/prerequisites"
 PLAN_HANDOFF = f"{PLAN_DIR}/handoff.md"
+PLAN_DEPENDENCY_GRAPH = f"{PLAN_DIR}/dependency_graph.md"
 PROOF_BLOCKER = f"{PROOF_DIR}/blocker.md"
 PROOF_LOOP = f"{PROOF_DIR}/loop.md"
 FINAL_CANDIDATE = f"{FINAL_DIR}/final_candidate.lean"
@@ -118,7 +120,32 @@ class FormalizationWorkflow:
             repo_root=repo_root,
         )
 
-    def prove(self, source_path: Path, run_id: str, auto_approve: bool = False) -> RunManifest:
+    def _workflow_tags(self, *, divide_and_conquer: bool) -> list[str]:
+        tags = list(DEFAULT_WORKFLOW_TAGS)
+        if divide_and_conquer and "divide-and-conquer" not in tags:
+            tags.append("divide-and-conquer")
+        return tags
+
+    def _enrichment_required_outputs(self, manifest: RunManifest) -> list[str]:
+        outputs = ["handoff.md", "proof_status.json", "natural_language_statement.md"]
+        if manifest.divide_and_conquer:
+            outputs.append("prerequisites")
+        return outputs
+
+    def _plan_required_outputs(self, manifest: RunManifest) -> list[str]:
+        outputs = ["handoff.md"]
+        if manifest.divide_and_conquer:
+            outputs.append("dependency_graph.md")
+        return outputs
+
+    def prove(
+        self,
+        source_path: Path,
+        run_id: str,
+        auto_approve: bool = False,
+        *,
+        divide_and_conquer: bool = False,
+    ) -> RunManifest:
         store = self._store(run_id)
         source_ref = SourceRef(
             path=self._display_path(source_path),
@@ -136,6 +163,8 @@ class FormalizationWorkflow:
             updated_at=utc_now(),
             current_stage=RunStage.CREATED,
             lake_path=self._persisted_lake_path(),
+            workflow_tags=self._workflow_tags(divide_and_conquer=divide_and_conquer),
+            divide_and_conquer=divide_and_conquer,
         )
         self._save_manifest(store, manifest)
 
@@ -569,7 +598,7 @@ class FormalizationWorkflow:
                 return self._complete_from_candidate(store, manifest)
             return self._pause_for_final(store, manifest)
 
-        if self._turn_artifacts_ready(store, PLAN_DIR, ["handoff.md"]):
+        if self._turn_artifacts_ready(store, PLAN_DIR, self._plan_required_outputs(manifest)):
             decision = self._resolve_checkpoint_decision(
                 store,
                 PLAN_DIR,
@@ -641,7 +670,7 @@ class FormalizationWorkflow:
             manifest,
             stage=BackendStage.ENRICHMENT,
             output_dir=ENRICHMENT_DIR,
-            required_outputs=["handoff.md", "proof_status.json", "natural_language_statement.md"],
+            required_outputs=self._enrichment_required_outputs(manifest),
             review_notes_relative_path=review_notes_relative_path,
             stale_output_paths=(
                 self._existing_stage_outputs(
@@ -651,6 +680,7 @@ class FormalizationWorkflow:
                     ENRICHMENT_NATURAL_LANGUAGE_STATEMENT,
                     ENRICHMENT_NATURAL_LANGUAGE_PROOF,
                     ENRICHMENT_RELEVANT_LEAN_OBJECTS,
+                    ENRICHMENT_PREREQUISITES_DIR,
                 )
                 if rerun
                 else None
@@ -663,6 +693,7 @@ class FormalizationWorkflow:
             extra_stale_outputs=[
                 ENRICHMENT_NATURAL_LANGUAGE_PROOF.removeprefix(f"{ENRICHMENT_DIR}/"),
                 ENRICHMENT_RELEVANT_LEAN_OBJECTS.removeprefix(f"{ENRICHMENT_DIR}/"),
+                ENRICHMENT_PREREQUISITES_DIR.removeprefix(f"{ENRICHMENT_DIR}/"),
             ],
             backend_attempt_limit=1 if rerun else None,
         )
@@ -671,6 +702,11 @@ class FormalizationWorkflow:
             raise RuntimeError("Enrichment stage did not write a valid `01_enrichment/proof_status.json`.")
         if not store.exists(ENRICHMENT_NATURAL_LANGUAGE_STATEMENT):
             raise RuntimeError("Enrichment stage did not write `01_enrichment/natural_language_statement.md`.")
+        if manifest.divide_and_conquer and not self._prerequisites_dir_ready(store):
+            raise RuntimeError(
+                "Divide-and-conquer mode requires a non-empty `01_enrichment/prerequisites/` directory "
+                "before Terry can leave enrichment."
+            )
         if not proof_status.obtained and store.exists(ENRICHMENT_NATURAL_LANGUAGE_PROOF):
             store.path(ENRICHMENT_NATURAL_LANGUAGE_PROOF).unlink()
         if proof_status.obtained and not store.exists(ENRICHMENT_NATURAL_LANGUAGE_PROOF):
@@ -685,6 +721,7 @@ class FormalizationWorkflow:
             details={
                 "natural_language_proof_obtained": proof_status.obtained,
                 "proof_source": proof_status.source,
+                "divide_and_conquer": manifest.divide_and_conquer,
             },
         )
         self._reset_checkpoint_surface(store, ENRICHMENT_DIR)
@@ -719,6 +756,11 @@ class FormalizationWorkflow:
         allow_missing_proof: bool = False,
     ) -> RunManifest:
         proof_ready = self._natural_language_proof_ready(store)
+        if manifest.divide_and_conquer and not self._prerequisites_dir_ready(store):
+            raise RuntimeError(
+                "Terry cannot start the divide-and-conquer plan stage without "
+                "`01_enrichment/prerequisites/`."
+            )
         legacy_plan_rerun = (
             force_rerun
             and not allow_missing_proof
@@ -732,7 +774,11 @@ class FormalizationWorkflow:
                 "reporting `obtained: true`."
             )
 
-        if not force_rerun and self._turn_artifacts_ready(store, PLAN_DIR, ["handoff.md"]):
+        if not force_rerun and self._turn_artifacts_ready(
+            store,
+            PLAN_DIR,
+            self._plan_required_outputs(manifest),
+        ):
             store.append_log(
                 "plan_reused",
                 "Reused the existing backend-owned plan handoff.",
@@ -744,9 +790,13 @@ class FormalizationWorkflow:
                 manifest,
                 stage=BackendStage.PLAN,
                 output_dir=PLAN_DIR,
-                required_outputs=["handoff.md"],
+                required_outputs=self._plan_required_outputs(manifest),
                 review_notes_relative_path=review_notes_relative_path,
-                stale_output_paths=self._existing_stage_outputs(store, PLAN_HANDOFF) if force_rerun else None,
+                stale_output_paths=(
+                    self._existing_stage_outputs(store, PLAN_HANDOFF, PLAN_DEPENDENCY_GRAPH)
+                    if force_rerun
+                    else None
+                ),
             )
             self._run_backend_stage(
                 store,
@@ -754,10 +804,15 @@ class FormalizationWorkflow:
                 PLAN_DIR,
                 backend_attempt_limit=1 if force_rerun else None,
             )
+            if manifest.divide_and_conquer and not store.exists(PLAN_DEPENDENCY_GRAPH):
+                raise RuntimeError(
+                    "Divide-and-conquer mode requires `02_plan/dependency_graph.md` before Terry can leave plan."
+                )
             store.append_log(
                 "plan_ready",
                 "Prepared the backend-owned plan handoff.",
                 stage="plan",
+                details={"divide_and_conquer": manifest.divide_and_conquer},
             )
             self._reset_checkpoint_surface(store, PLAN_DIR)
 
@@ -791,6 +846,15 @@ class FormalizationWorkflow:
     ) -> RunManifest:
         manifest = self._load_manifest(store)
         manifest = self._ensure_workspace_template(store, manifest)
+        if manifest.divide_and_conquer:
+            if not self._prerequisites_dir_ready(store):
+                raise RuntimeError(
+                    "Divide-and-conquer mode requires `01_enrichment/prerequisites/` before Terry can prove."
+                )
+            if not store.exists(PLAN_DEPENDENCY_GRAPH):
+                raise RuntimeError(
+                    "Divide-and-conquer mode requires `02_plan/dependency_graph.md` before Terry can prove."
+                )
         manifest.current_stage = RunStage.PROVING
         self._save_manifest(store, manifest)
         attempt_limit = max_attempts or self.max_attempts
@@ -1151,6 +1215,8 @@ class FormalizationWorkflow:
             artifact_paths.append(ENRICHMENT_NATURAL_LANGUAGE_PROOF)
         if store.exists(ENRICHMENT_RELEVANT_LEAN_OBJECTS):
             artifact_paths.append(ENRICHMENT_RELEVANT_LEAN_OBJECTS)
+        if manifest.divide_and_conquer and self._prerequisites_dir_ready(store):
+            artifact_paths.append(ENRICHMENT_PREREQUISITES_DIR)
         return self._pause_for_checkpoint(
             store,
             manifest,
@@ -1180,6 +1246,9 @@ class FormalizationWorkflow:
         )
 
     def _pause_for_plan(self, store: RunStore, manifest: RunManifest) -> RunManifest:
+        artifact_paths = [PLAN_HANDOFF]
+        if manifest.divide_and_conquer and store.exists(PLAN_DEPENDENCY_GRAPH):
+            artifact_paths.append(PLAN_DEPENDENCY_GRAPH)
         return self._pause_for_checkpoint(
             store,
             manifest,
@@ -1187,7 +1256,7 @@ class FormalizationWorkflow:
             stage_dir=PLAN_DIR,
             title="Plan Approval",
             summary="Terry is waiting for the merged plan approval before starting the prove-and-repair loop.",
-            artifact_paths=[PLAN_HANDOFF],
+            artifact_paths=artifact_paths,
             continue_decision="approve",
         )
 
@@ -1361,6 +1430,7 @@ class FormalizationWorkflow:
             "checkpoint_path": checkpoint_path,
             "review_path": review_path,
             "continue_command": continue_command,
+            "artifact_paths": artifact_paths,
         }
         if quick_approve_command is not None:
             log_details["quick_approve_command"] = quick_approve_command
@@ -1415,6 +1485,13 @@ class FormalizationWorkflow:
                 "relevant_lean_objects",
                 ENRICHMENT_RELEVANT_LEAN_OBJECTS,
             )
+            if manifest.divide_and_conquer:
+                self._maybe_add_input_path(
+                    store,
+                    input_paths,
+                    "prerequisites_dir",
+                    ENRICHMENT_PREREQUISITES_DIR,
+                )
             self._maybe_add_input_path(
                 store,
                 input_paths,
@@ -1442,6 +1519,13 @@ class FormalizationWorkflow:
             )
         if stage in {BackendStage.PROOF, BackendStage.REVIEW}:
             self._maybe_add_input_path(store, input_paths, "plan_handoff", PLAN_HANDOFF)
+            if manifest.divide_and_conquer:
+                self._maybe_add_input_path(
+                    store,
+                    input_paths,
+                    "dependency_graph",
+                    PLAN_DEPENDENCY_GRAPH,
+                )
             self._maybe_add_input_path(
                 store,
                 input_paths,
@@ -1551,6 +1635,7 @@ class FormalizationWorkflow:
             attempt=attempt,
             max_attempts=max_attempts,
             stale_output_paths=list(stale_output_paths or []),
+            divide_and_conquer=manifest.divide_and_conquer,
         )
 
     def _maybe_add_input_path(
@@ -1733,10 +1818,11 @@ class FormalizationWorkflow:
         )
 
     def _enrichment_stage_ready(self, store: RunStore) -> bool:
+        manifest = self._load_manifest(store)
         if not self._turn_artifacts_ready(
             store,
             ENRICHMENT_DIR,
-            ["handoff.md", "proof_status.json", "natural_language_statement.md"],
+            self._enrichment_required_outputs(manifest),
         ):
             return False
         proof_status = self._load_proof_status(store)
@@ -1745,6 +1831,11 @@ class FormalizationWorkflow:
         if proof_status.obtained and not store.exists(ENRICHMENT_NATURAL_LANGUAGE_PROOF):
             raise RuntimeError(
                 "Enrichment recorded `obtained: true` without writing `01_enrichment/natural_language_proof.md`."
+            )
+        if manifest.divide_and_conquer and not self._prerequisites_dir_ready(store):
+            raise RuntimeError(
+                "Enrichment recorded divide-and-conquer mode without a non-empty "
+                "`01_enrichment/prerequisites/` directory."
             )
         return True
 
@@ -1936,6 +2027,10 @@ class FormalizationWorkflow:
             return None
         return self._repo_relative(store.path(relative_path))
 
+    def _prerequisites_dir_ready(self, store: RunStore) -> bool:
+        prerequisites_dir = store.path(ENRICHMENT_PREREQUISITES_DIR)
+        return prerequisites_dir.is_dir() and any(prerequisites_dir.iterdir())
+
     def _existing_stage_outputs(self, store: RunStore, *relative_paths: str) -> list[str]:
         return [
             self._repo_relative(store.path(relative_path))
@@ -2096,6 +2191,10 @@ class FormalizationWorkflow:
                     template_dir = str(repo_template.resolve())
                 else:
                     template_dir = str((Path(__file__).resolve().parent / "workspace_template").resolve())
+        workflow_tags = payload.get("workflow_tags", list(DEFAULT_WORKFLOW_TAGS))
+        divide_and_conquer = payload.get("divide_and_conquer")
+        if divide_and_conquer is None:
+            divide_and_conquer = "divide-and-conquer" in workflow_tags
 
         return RunManifest(
             run_id=payload["run_id"],
@@ -2111,7 +2210,8 @@ class FormalizationWorkflow:
             current_stage=RunStage(stage_value),
             lake_path=payload.get("lake_path"),
             workflow_version=payload.get("workflow_version", DEFAULT_WORKFLOW_VERSION),
-            workflow_tags=payload.get("workflow_tags", list(DEFAULT_WORKFLOW_TAGS)),
+            workflow_tags=workflow_tags,
+            divide_and_conquer=bool(divide_and_conquer),
             attempt_count=payload.get("attempt_count", 0),
             latest_error=payload.get("latest_error"),
             final_output_path=payload.get("final_output_path"),
@@ -2251,7 +2351,7 @@ class FormalizationWorkflow:
         for relative_path in stale_paths:
             target = store.path(relative_path)
             if target.is_dir():
-                target.rmdir()
+                shutil.rmtree(target)
             else:
                 target.unlink(missing_ok=True)
 

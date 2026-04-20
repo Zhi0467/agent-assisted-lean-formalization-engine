@@ -1,0 +1,25 @@
+{
+  "attempt": null,
+  "input_paths": {
+    "enrichment_handoff": "artifacts/runs/PG-theorem/01_enrichment/handoff.md",
+    "natural_language_proof": "artifacts/runs/PG-theorem/01_enrichment/natural_language_proof.md",
+    "natural_language_statement": "artifacts/runs/PG-theorem/01_enrichment/natural_language_statement.md",
+    "proof_status": "artifacts/runs/PG-theorem/01_enrichment/proof_status.json",
+    "provenance": "artifacts/runs/PG-theorem/00_input/provenance.json",
+    "relevant_lean_objects": "artifacts/runs/PG-theorem/01_enrichment/relevant_lean_objects.md",
+    "source": "artifacts/runs/PG-theorem/00_input/source.pdf"
+  },
+  "latest_compile_result_path": null,
+  "max_attempts": null,
+  "output_dir": "artifacts/runs/PG-theorem/02_plan",
+  "previous_attempt_dir": null,
+  "repo_root": "/Users/zhiwang/Desktop/research/agent-assisted-lean-formalization-engine",
+  "required_outputs": [
+    "handoff.md"
+  ],
+  "review_notes_path": null,
+  "run_dir": "artifacts/runs/PG-theorem",
+  "run_id": "PG-theorem",
+  "stage": "plan",
+  "stale_output_paths": []
+}

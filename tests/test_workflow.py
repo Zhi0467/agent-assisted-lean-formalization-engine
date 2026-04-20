@@ -90,6 +90,13 @@ class SinglePassAgent:
                 json.dumps({"obtained": True, "source": "input", "notes": ""}),
                 encoding="utf-8",
             )
+            if request.divide_and_conquer:
+                prerequisites_dir = output_dir / "prerequisites"
+                prerequisites_dir.mkdir(parents=True, exist_ok=True)
+                (prerequisites_dir / "lemma_001_zero_add.md").write_text(
+                    "# Lemma: zero_add\n\nStatement: `0 + n = n`.\n\nProof: use `Nat.zero_add`.\n",
+                    encoding="utf-8",
+                )
         elif request.stage == BackendStage.PLAN:
             (output_dir / "handoff.md").write_text(
                 "\n".join(
@@ -104,6 +111,11 @@ class SinglePassAgent:
                 ),
                 encoding="utf-8",
             )
+            if request.divide_and_conquer:
+                (output_dir / "dependency_graph.md").write_text(
+                    "# Dependency Graph\n\n- `Nat.zero_add` -> `single_pass_zero_add`\n",
+                    encoding="utf-8",
+                )
         elif request.stage == BackendStage.PROOF:
             (output_dir / "candidate.lean").write_text(
                 "\n".join(
@@ -167,6 +179,13 @@ class RecordingRepairAgent:
                 json.dumps({"obtained": True, "source": "input", "notes": ""}),
                 encoding="utf-8",
             )
+            if request.divide_and_conquer:
+                prerequisites_dir = output_dir / "prerequisites"
+                prerequisites_dir.mkdir(parents=True, exist_ok=True)
+                (prerequisites_dir / "lemma_001_zero_add.md").write_text(
+                    "# Lemma: zero_add\n\nStatement: `0 + n = n`.\n\nProof: use `Nat.zero_add`.\n",
+                    encoding="utf-8",
+                )
         elif request.stage == BackendStage.PLAN:
             content = "\n".join(
                 [
@@ -179,6 +198,11 @@ class RecordingRepairAgent:
                 ]
             )
             (output_dir / "handoff.md").write_text(content, encoding="utf-8")
+            if request.divide_and_conquer:
+                (output_dir / "dependency_graph.md").write_text(
+                    "# Dependency Graph\n\n- `Nat.zero_add` -> `recorded_zero_add`\n",
+                    encoding="utf-8",
+                )
         elif request.stage == BackendStage.PROOF:
             proof_retry = request.review_notes_path is not None and request.review_notes_path.endswith(
                 "03_proof/review.md"
@@ -249,6 +273,13 @@ class AlwaysSorryAgent:
                 json.dumps({"obtained": True, "source": "input", "notes": ""}),
                 encoding="utf-8",
             )
+            if request.divide_and_conquer:
+                prerequisites_dir = output_dir / "prerequisites"
+                prerequisites_dir.mkdir(parents=True, exist_ok=True)
+                (prerequisites_dir / "lemma_001_zero_add.md").write_text(
+                    "# Lemma: zero_add\n\nStatement: `0 + n = n`.\n\nProof: use `Nat.zero_add`.\n",
+                    encoding="utf-8",
+                )
         elif request.stage == BackendStage.PLAN:
             (output_dir / "handoff.md").write_text(
                 "\n".join(
@@ -261,6 +292,11 @@ class AlwaysSorryAgent:
                 ),
                 encoding="utf-8",
             )
+            if request.divide_and_conquer:
+                (output_dir / "dependency_graph.md").write_text(
+                    "# Dependency Graph\n\n- `Nat.zero_add` -> `stuck_zero_add`\n",
+                    encoding="utf-8",
+                )
         elif request.stage == BackendStage.PROOF:
             (output_dir / "candidate.lean").write_text(
                 "\n".join(
@@ -5289,6 +5325,185 @@ class WorkflowTest(unittest.TestCase):
             self.assertIn("relevant_lean_objects", proof_request.input_paths)
             self.assertIn("relevant_lean_objects", review_request.input_paths)
 
+    def test_divide_and_conquer_stage_requests_forward_prerequisites_and_dependency_graph(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RecordingRepairAgent(),
+                agent_config=AgentConfig(backend="codex"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+            store = RunStore(temp_root / "artifacts", "divide-and-conquer-requests")
+            store.ensure_new()
+            store.write_text("00_input/source.pdf", "%PDF-1.4\n",)
+            store.write_json("00_input/provenance.json", {})
+            store.write_text("01_enrichment/handoff.md", "# Enrichment\n")
+            store.write_text("01_enrichment/natural_language_statement.md", "# Statement\n")
+            store.write_text("01_enrichment/natural_language_proof.md", "# Proof\n")
+            store.write_json("01_enrichment/proof_status.json", {"obtained": True, "source": "input"})
+            prerequisites_dir = store.path("01_enrichment/prerequisites")
+            prerequisites_dir.mkdir(parents=True, exist_ok=True)
+            (prerequisites_dir / "lemma_001.md").write_text("# Lemma\n", encoding="utf-8")
+            store.write_text("02_plan/handoff.md", "# Plan\n")
+            store.write_text("02_plan/dependency_graph.md", "# Dependency Graph\n")
+
+            manifest = RunManifest(
+                run_id="divide-and-conquer-requests",
+                source=SourceRef(path="Dirichlet.pdf", kind=SourceKind.PDF),
+                agent_name="recording_repair_agent",
+                agent_config=AgentConfig(backend="codex"),
+                template_dir=str((temp_root / "lean_workspace_template").resolve()),
+                created_at="2026-04-16T00:00:00Z",
+                updated_at="2026-04-16T00:00:00Z",
+                current_stage=RunStage.AWAITING_PLAN_APPROVAL,
+                divide_and_conquer=True,
+            )
+
+            plan_request = workflow._build_stage_request(
+                store,
+                manifest,
+                stage=BackendStage.PLAN,
+                output_dir="02_plan",
+                required_outputs=["handoff.md", "dependency_graph.md"],
+            )
+            proof_request = workflow._build_stage_request(
+                store,
+                manifest,
+                stage=BackendStage.PROOF,
+                output_dir="03_proof/attempts/attempt_0001",
+                required_outputs=["candidate.lean"],
+                attempt=1,
+                max_attempts=3,
+            )
+
+            self.assertTrue(plan_request.divide_and_conquer)
+            self.assertIn("prerequisites_dir", plan_request.input_paths)
+            self.assertTrue(
+                plan_request.input_paths["prerequisites_dir"].endswith("01_enrichment/prerequisites")
+            )
+            self.assertTrue(proof_request.divide_and_conquer)
+            self.assertIn("prerequisites_dir", proof_request.input_paths)
+            self.assertIn("dependency_graph", proof_request.input_paths)
+            self.assertTrue(
+                proof_request.input_paths["dependency_graph"].endswith("02_plan/dependency_graph.md")
+            )
+
+    def test_divide_and_conquer_enrichment_requires_prerequisites_dir(self) -> None:
+        class MissingPrerequisitesAgent:
+            name = "missing_prerequisites_agent"
+
+            def run_stage(self, request: StageRequest) -> AgentTurn:
+                output_dir = Path(request.repo_root) / request.output_dir
+                output_dir.mkdir(parents=True, exist_ok=True)
+                (output_dir / "handoff.md").write_text("# Enrichment Handoff\n", encoding="utf-8")
+                (output_dir / "natural_language_statement.md").write_text("# Statement\n", encoding="utf-8")
+                (output_dir / "natural_language_proof.md").write_text("# Proof\n", encoding="utf-8")
+                (output_dir / "proof_status.json").write_text(
+                    json.dumps({"obtained": True, "source": "input", "notes": ""}),
+                    encoding="utf-8",
+                )
+                return AgentTurn(
+                    request_payload={"stage": request.stage.value},
+                    prompt=f"{request.stage.value} prompt",
+                    raw_response=f"{request.stage.value} response",
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "Dirichlet.pdf"
+            source_path.write_bytes(b"%PDF-1.4\n")
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=MissingPrerequisitesAgent(),
+                agent_config=AgentConfig(backend="codex"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "01_enrichment/prerequisites"):
+                workflow.prove(
+                    source_path=source_path,
+                    run_id="missing-prerequisites",
+                    auto_approve=False,
+                    divide_and_conquer=True,
+                )
+
+    def test_divide_and_conquer_plan_requires_dependency_graph(self) -> None:
+        class MissingDependencyGraphAgent:
+            name = "missing_dependency_graph_agent"
+
+            def run_stage(self, request: StageRequest) -> AgentTurn:
+                output_dir = Path(request.repo_root) / request.output_dir
+                output_dir.mkdir(parents=True, exist_ok=True)
+                if request.stage == BackendStage.ENRICHMENT:
+                    (output_dir / "handoff.md").write_text("# Enrichment Handoff\n", encoding="utf-8")
+                    (output_dir / "natural_language_statement.md").write_text("# Statement\n", encoding="utf-8")
+                    (output_dir / "natural_language_proof.md").write_text("# Proof\n", encoding="utf-8")
+                    (output_dir / "proof_status.json").write_text(
+                        json.dumps({"obtained": True, "source": "input", "notes": ""}),
+                        encoding="utf-8",
+                    )
+                    prerequisites_dir = output_dir / "prerequisites"
+                    prerequisites_dir.mkdir(parents=True, exist_ok=True)
+                    (prerequisites_dir / "lemma_001.md").write_text("# Lemma\n", encoding="utf-8")
+                elif request.stage == BackendStage.PLAN:
+                    (output_dir / "handoff.md").write_text("# Plan Handoff\n", encoding="utf-8")
+                else:
+                    raise AssertionError(request.stage.value)
+                return AgentTurn(
+                    request_payload={"stage": request.stage.value},
+                    prompt=f"{request.stage.value} prompt",
+                    raw_response=f"{request.stage.value} response",
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "Dirichlet.pdf"
+            source_path.write_bytes(b"%PDF-1.4\n")
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=MissingDependencyGraphAgent(),
+                agent_config=AgentConfig(backend="codex"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "02_plan/dependency_graph.md"):
+                workflow.prove(
+                    source_path=source_path,
+                    run_id="missing-dependency-graph",
+                    auto_approve=True,
+                    divide_and_conquer=True,
+                )
+
+    def test_divide_and_conquer_checkpoints_list_prerequisites_and_dependency_graph(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "Dirichlet.pdf"
+            source_path.write_bytes(b"%PDF-1.4\n")
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=SinglePassAgent(),
+                agent_config=AgentConfig(backend="codex"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+
+            manifest = workflow.prove(
+                source_path=source_path,
+                run_id="divide-and-conquer-checkpoints",
+                auto_approve=False,
+                divide_and_conquer=True,
+            )
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+            run_root = temp_root / "artifacts" / "runs" / "divide-and-conquer-checkpoints"
+            enrichment_checkpoint = (run_root / "01_enrichment" / "checkpoint.md").read_text(encoding="utf-8")
+            self.assertIn("01_enrichment/prerequisites", enrichment_checkpoint)
+
+            workflow.approve_current_checkpoint("divide-and-conquer-checkpoints")
+            manifest = workflow.resume("divide-and-conquer-checkpoints", auto_approve=False)
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
+            plan_checkpoint = (run_root / "02_plan" / "checkpoint.md").read_text(encoding="utf-8")
+            self.assertIn("02_plan/dependency_graph.md", plan_checkpoint)
+
     def test_enrichment_checkpoint_lists_relevant_lean_objects_when_present(self) -> None:
         class RelevantObjectsAgent:
             name = "relevant_objects_agent"
@@ -6134,6 +6349,37 @@ class WorkflowTest(unittest.TestCase):
             self.assertIn("[enrichment] Dispatching backend", result.stderr)
             self.assertIn("review: 01_enrichment/review.md", result.stderr)
             self.assertIn("decision: reject -> rerun enrichment with your notes", result.stderr)
+
+    def test_cli_divide_and_conquer_handoff_surfaces_extra_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "Dirichlet.pdf"
+            source_path.write_bytes(b"%PDF-1.4\n")
+            provider_script = Path(__file__).resolve().parents[1] / "examples" / "providers" / "scripted_repair_provider.py"
+
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+            command = [
+                sys.executable,
+                "-m",
+                "lean_formalization_engine",
+                "--repo-root",
+                str(temp_root),
+                "prove",
+                str(source_path),
+                "--run-id",
+                "cli-divide",
+                "--divide-and-conquer",
+                "--agent-backend",
+                "command",
+                "--agent-command",
+                f"{sys.executable} {provider_script}",
+            ]
+            result = subprocess.run(command, capture_output=True, text=True, env=env, check=False)
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertIn("Mode: divide-and-conquer", result.stdout)
+            self.assertIn("Inspect: artifacts/runs/cli-divide/01_enrichment/prerequisites", result.stdout)
+            self.assertIn("inspect: 01_enrichment/prerequisites", result.stderr)
 
     def test_generated_review_template_mentions_reject_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

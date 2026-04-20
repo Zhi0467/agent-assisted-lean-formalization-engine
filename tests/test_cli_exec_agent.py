@@ -374,6 +374,37 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
             self.assertIn("previous_error_report", prompt)
             self.assertIn("Read any previous walkthrough, readable-candidate, or error-report pointers before repairing.", prompt)
 
+    def test_codex_prompt_adds_divide_and_conquer_instructions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            agent = CodexCliFormalizationAgent(repo_root=repo_root)
+            request = StageRequest(
+                stage=BackendStage.PROOF,
+                run_id="sample",
+                repo_root=str(repo_root),
+                run_dir="artifacts/runs/sample",
+                output_dir="artifacts/runs/sample/03_proof/attempts/attempt_0001",
+                input_paths={
+                    "source": "artifacts/runs/sample/00_input/source.pdf",
+                    "natural_language_statement": "artifacts/runs/sample/01_enrichment/natural_language_statement.md",
+                    "natural_language_proof": "artifacts/runs/sample/01_enrichment/natural_language_proof.md",
+                    "plan_handoff": "artifacts/runs/sample/02_plan/handoff.md",
+                    "prerequisites_dir": "artifacts/runs/sample/01_enrichment/prerequisites",
+                    "dependency_graph": "artifacts/runs/sample/02_plan/dependency_graph.md",
+                },
+                required_outputs=["candidate.lean"],
+                attempt=1,
+                max_attempts=3,
+                divide_and_conquer=True,
+            )
+
+            prompt = agent._build_prompt(request)
+
+            self.assertIn("Mode-specific instructions:", prompt)
+            self.assertIn("Divide-and-conquer mode is enabled for this run.", prompt)
+            self.assertIn("Read `prerequisites_dir` and `dependency_graph`", prompt)
+            self.assertIn("do not actually spawn separate workers", prompt)
+
     def test_prompt_templates_are_centralized(self) -> None:
         for template_name in (
             "stage_common.md",
@@ -725,6 +756,38 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
             summary = render_manifest_summary(manifest, repo_root)
 
             self.assertIn("Proof attempts: 3", summary)
+
+    def test_render_manifest_summary_surfaces_divide_and_conquer_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            run_root = repo_root / "artifacts" / "runs" / "sample"
+            (run_root / "01_enrichment" / "prerequisites").mkdir(parents=True, exist_ok=True)
+            (run_root / "01_enrichment" / "prerequisites" / "lemma_001.md").write_text(
+                "# Lemma\n",
+                encoding="utf-8",
+            )
+            (run_root / "02_plan").mkdir(parents=True, exist_ok=True)
+            (run_root / "02_plan" / "checkpoint.md").write_text("# Plan Approval\n", encoding="utf-8")
+            (run_root / "02_plan" / "review.md").write_text("# Plan Approval\n", encoding="utf-8")
+            (run_root / "02_plan" / "dependency_graph.md").write_text("# Dependency Graph\n", encoding="utf-8")
+            manifest = RunManifest(
+                run_id="sample",
+                source=SourceRef(path="Dirichlet.pdf", kind=SourceKind.PDF),
+                agent_name="codex:default",
+                agent_config=AgentConfig(backend="codex"),
+                template_dir="/tmp/template",
+                created_at="2026-04-16T00:00:00Z",
+                updated_at="2026-04-16T00:00:00Z",
+                current_stage=RunStage.AWAITING_PLAN_APPROVAL,
+                lake_path="/tmp/lake",
+                divide_and_conquer=True,
+            )
+
+            summary = render_manifest_summary(manifest, repo_root)
+
+            self.assertIn("Mode: divide-and-conquer", summary)
+            self.assertIn("Inspect: artifacts/runs/sample/01_enrichment/prerequisites", summary)
+            self.assertIn("Inspect: artifacts/runs/sample/02_plan/dependency_graph.md", summary)
 
     def test_load_manifest_uses_workflow_manifest_loader(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

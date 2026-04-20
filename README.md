@@ -60,6 +60,15 @@ Start a run:
 terry prove examples/inputs/right_add_zero.md --run-id right-add-zero
 ```
 
+For theorem sources that include prerequisite definitions and lemmas before the main
+theorem proof, enable divide-and-conquer mode:
+
+```bash
+terry prove /Users/zhiwang/Downloads/Dirichlet.pdf \
+  --run-id dirichlet \
+  --divide-and-conquer
+```
+
 If you want Terry to keep reusing the same warmed Lean cache while you run commands from
 some other shell location, point it at the cache-owning project directory explicitly:
 
@@ -98,9 +107,9 @@ Terry pauses at three human checkpoints:
 The stage flow is now:
 
 1. `terry prove` snapshots the original source file under `00_input/` and runs the backend into `01_enrichment/`. Terry does not normalize or ingest the theorem source itself anymore; the backend does that in enrichment. There is no separate statement-only checkpoint anymore; statement extraction and proof provenance are one combined enrichment handoff.
-2. `01_enrichment/` must contain `handoff.md`, `natural_language_statement.md`, and `proof_status.json`, plus `natural_language_proof.md` whenever `proof_status.json` reports `obtained: true`.
+2. `01_enrichment/` must contain `handoff.md`, `natural_language_statement.md`, and `proof_status.json`, plus `natural_language_proof.md` whenever `proof_status.json` reports `obtained: true`. In `--divide-and-conquer` mode it must also contain a non-empty `prerequisites/` subfolder that captures prerequisite definitions and lemmas from the source.
 3. If enrichment is accepted with a real proof on disk, Terry opens `02_plan/`.
-4. `02_plan/` writes the merged meaning + Lean plan handoff.
+4. `02_plan/` writes the merged meaning + Lean plan handoff. In `--divide-and-conquer` mode it must also write `dependency_graph.md`, which maps the theorem bottom up from prerequisite definitions and lemmas to the final theorem.
 5. If plan is accepted, Terry enters the bounded `03_proof/` prove-and-repair loop.
 6. Each proof attempt writes `03_proof/attempts/attempt_<n>/candidate.lean`, Terry compiles it, and Terry/backend write `03_proof/attempts/attempt_<n>/review/walkthrough.md`, `03_proof/attempts/attempt_<n>/review/readable_candidate.lean`, and `03_proof/attempts/attempt_<n>/review/error.md`.
 7. If an attempt compiles, Terry opens `04_final/`.
@@ -131,9 +140,9 @@ comments when you approve via the flag.
 
 The exact branch behavior at each handoff is:
 
-- `01_enrichment/`: `approve` with a proof present opens `02_plan/`. `approve` with the proof still missing reruns enrichment with notes from `01_enrichment/review.md` instead of entering plan. `reject` also reruns enrichment with those notes. `retry` is ignored here, and if `checkpoint.md` or `review.md` is missing, `terry resume` recreates the checkpoint and pauses again.
-- `02_plan/`: the plan worker gets pointers to `01_enrichment/handoff.md`, `natural_language_statement.md`, `natural_language_proof.md`, `proof_status.json`, and enrichment review notes when they exist. `approve` enters the prove-and-repair loop. `reject` reruns plan with `02_plan/review.md` as notes. `retry` is ignored here too. Terry will not start plan unless the enrichment proof gate is satisfied, except for the explicit legacy pre-gate rerun compatibility path.
-- `03_proof/`: each proof turn gets pointers to the enrichment files above, `02_plan/handoff.md`, plan review notes when present, the previous compile result, the previous candidate, and the previous attempt review artifacts (`previous_walkthrough`, `previous_readable_candidate`, `previous_error_report`) when they exist. Compile pass queues final review. Compile failure with budget left starts the next attempt automatically. Compile failure at the retry cap or because Lean/toolchain is unavailable opens the proof-blocked handoff. If attempt review generation failed on a prior attempt, `terry resume` regenerates the missing review artifacts before advancing. `terry review <run_id> --attempt n` only regenerates attempt review artifacts; it is not a human checkpoint.
+- `01_enrichment/`: `approve` with a proof present opens `02_plan/`. `approve` with the proof still missing reruns enrichment with notes from `01_enrichment/review.md` instead of entering plan. `reject` also reruns enrichment with those notes. `retry` is ignored here, and if `checkpoint.md` or `review.md` is missing, `terry resume` recreates the checkpoint and pauses again. In `--divide-and-conquer` mode the enrichment checkpoint also exposes `01_enrichment/prerequisites/` and Terry will not leave enrichment without that non-empty directory.
+- `02_plan/`: the plan worker gets pointers to `01_enrichment/handoff.md`, `natural_language_statement.md`, `natural_language_proof.md`, `proof_status.json`, and enrichment review notes when they exist. In `--divide-and-conquer` mode it also gets `01_enrichment/prerequisites/` and must write `02_plan/dependency_graph.md`. `approve` enters the prove-and-repair loop. `reject` reruns plan with `02_plan/review.md` as notes. `retry` is ignored here too. Terry will not start plan unless the enrichment proof gate is satisfied, except for the explicit legacy pre-gate rerun compatibility path.
+- `03_proof/`: each proof turn gets pointers to the enrichment files above, `02_plan/handoff.md`, plan review notes when present, the previous compile result, the previous candidate, and the previous attempt review artifacts (`previous_walkthrough`, `previous_readable_candidate`, `previous_error_report`) when they exist. In `--divide-and-conquer` mode proof turns also get `01_enrichment/prerequisites/` and `02_plan/dependency_graph.md`, and the proof prompt explicitly asks the backend to decompose the work from that graph without actually spawning workers. Compile pass queues final review. Compile failure with budget left starts the next attempt automatically. Compile failure at the retry cap or because Lean/toolchain is unavailable opens the proof-blocked handoff. If attempt review generation failed on a prior attempt, `terry resume` regenerates the missing review artifacts before advancing. `terry review <run_id> --attempt n` only regenerates attempt review artifacts; it is not a human checkpoint.
 - Proof-blocked handoff: this lives in `03_proof/` and is the only divergence that does not continue through `terry resume`. Terry writes `blocker.md`, `loop.md`, the latest compile result, and exposes `03_proof/review.md` for guidance. To continue, run `terry retry <run_id> --attempts N`. Terry then passes the notes in `03_proof/review.md` into the next proof turn.
 - `04_final/`: `approve` writes `04_final/final.lean` and marks the run complete. Any non-approve decision leaves the run paused at final. There is no automatic final rerun branch because final is the terminal approval gate.
 
@@ -180,8 +189,8 @@ under `logs/timeline.md` and `logs/workflow.jsonl`.
 Each run lives under `artifacts/runs/<run_id>/`:
 
 - `00_input/` — opaque source-file snapshot plus minimal source metadata
-- `01_enrichment/` — backend-owned combined statement/proof-provenance handoff, `handoff.md`, `natural_language_statement.md`, `proof_status.json`, optional `natural_language_proof.md`, plus Terry's checkpoint files
-- `02_plan/` — backend-owned merged meaning+Lean-plan handoff plus Terry's checkpoint files
+- `01_enrichment/` — backend-owned combined statement/proof-provenance handoff, `handoff.md`, `natural_language_statement.md`, `proof_status.json`, optional `natural_language_proof.md`, optional `relevant_lean_objects.md`, mode-specific `prerequisites/`, plus Terry's checkpoint files
+- `02_plan/` — backend-owned merged meaning+Lean-plan handoff, mode-specific `dependency_graph.md`, plus Terry's checkpoint files
 - `03_proof/` — bounded prove-and-repair attempts, `attempt_<n>/candidate.lean`, per-attempt `review/` artifacts, compile results, and the proof-blocked handoff under `03_proof/` when Terry cannot continue automatically
 - `04_final/` — final candidate, compile result, latest attempt review artifacts, Terry's final checkpoint files, and the approved `final.lean`
 - `logs/` — readable `timeline.md` plus structured `workflow.jsonl`

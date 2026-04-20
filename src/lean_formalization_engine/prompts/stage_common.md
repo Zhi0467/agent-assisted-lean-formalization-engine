@@ -20,6 +20,6 @@ Required outputs:
 {stale_outputs_section}
 
 Stage-specific instructions:
-{stage_instructions}{reviewer_notes_section}{latest_compile_section}{previous_attempt_section}{attempt_section}
+{stage_instructions}{mode_instructions_section}{reviewer_notes_section}{latest_compile_section}{previous_attempt_section}{attempt_section}
 
 When you are done, reply with a brief plain-text note describing what you wrote.

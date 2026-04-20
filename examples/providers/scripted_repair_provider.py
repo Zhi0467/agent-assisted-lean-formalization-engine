@@ -11,6 +11,7 @@ def _resolve(request: dict[str, object], relative_path: str) -> Path:
 
 def _write_enrichment(request: dict[str, object]) -> str:
     output_dir = _resolve(request, str(request["output_dir"]))
+    divide_and_conquer = bool(request.get("divide_and_conquer"))
     handoff = "\n".join(
         [
             "# Enrichment Handoff",
@@ -43,6 +44,24 @@ def _write_enrichment(request: dict[str, object]) -> str:
     (output_dir / "handoff.md").write_text(handoff, encoding="utf-8")
     (output_dir / "natural_language_statement.md").write_text(natural_language_statement, encoding="utf-8")
     (output_dir / "natural_language_proof.md").write_text(natural_language_proof, encoding="utf-8")
+    if divide_and_conquer:
+        prerequisites_dir = output_dir / "prerequisites"
+        prerequisites_dir.mkdir(parents=True, exist_ok=True)
+        (prerequisites_dir / "lemma_001_zero_add.md").write_text(
+            "\n".join(
+                [
+                    "# Lemma: zero_add",
+                    "",
+                    "Statement: For every natural number `n`, `0 + n = n`.",
+                    "",
+                    "Natural-language proof: this is the standard library fact `Nat.zero_add`.",
+                    "",
+                    "Role: terminal prerequisite for the final theorem.",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
     (output_dir / "proof_status.json").write_text(
         json.dumps(
             {
@@ -59,6 +78,7 @@ def _write_enrichment(request: dict[str, object]) -> str:
 
 def _write_plan(request: dict[str, object]) -> str:
     output_dir = _resolve(request, str(request["output_dir"]))
+    divide_and_conquer = bool(request.get("divide_and_conquer"))
     handoff = "\n".join(
         [
             "# Plan Handoff",
@@ -74,6 +94,21 @@ def _write_plan(request: dict[str, object]) -> str:
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "handoff.md").write_text(handoff, encoding="utf-8")
+    if divide_and_conquer:
+        (output_dir / "dependency_graph.md").write_text(
+            "\n".join(
+                [
+                    "# Dependency Graph",
+                    "",
+                    "- `Nat.zero_add` -> final theorem `zero_add_provider`",
+                    "",
+                    "Parallelizable components:",
+                    "- none in this tiny scripted example",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
     return handoff
 
 

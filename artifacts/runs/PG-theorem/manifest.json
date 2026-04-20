@@ -1,13 +1,13 @@
 {
   "agent_config": {
     "backend": "codex",
-    "codex_model": null,
-    "command": null
+    "command": null,
+    "model": null
   },
   "agent_name": "codex_cli:default",
   "attempt_count": 0,
   "created_at": "2026-04-20T00:36:12Z",
-  "current_stage": "awaiting_enrichment_approval",
+  "current_stage": "awaiting_plan_approval",
   "final_output_path": null,
   "lake_path": null,
   "latest_error": null,
@@ -17,7 +17,7 @@
     "path": "examples/inputs/policy-gradient-theorem.pdf"
   },
   "template_dir": "/Users/zhiwang/Desktop/research/agent-assisted-lean-formalization-engine/lean_workspace_template",
-  "updated_at": "2026-04-20T03:20:56Z",
+  "updated_at": "2026-04-20T05:05:36Z",
   "workflow_tags": [
     "three-checkpoint",
     "review-files",

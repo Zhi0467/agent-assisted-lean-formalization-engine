@@ -96,6 +96,7 @@ class StageRequest:
     attempt: int | None = None
     max_attempts: int | None = None
     stale_output_paths: list[str] = field(default_factory=list)
+    divide_and_conquer: bool = False
 
 
 @dataclass
@@ -156,6 +157,7 @@ class RunManifest:
     lake_path: str | None = None
     workflow_version: str = DEFAULT_WORKFLOW_VERSION
     workflow_tags: list[str] = field(default_factory=lambda: list(DEFAULT_WORKFLOW_TAGS))
+    divide_and_conquer: bool = False
     attempt_count: int = 0
     latest_error: str | None = None
     final_output_path: str | None = None

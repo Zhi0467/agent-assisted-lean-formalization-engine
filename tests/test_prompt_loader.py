@@ -80,6 +80,7 @@ class TestRenderPromptTemplate(unittest.TestCase):
             required_outputs="- handoff.md",
             stale_outputs_section="",
             stage_instructions="Follow the stage instructions.\n",
+            mode_instructions_section="",
             reviewer_notes_section="",
             latest_compile_section="",
             previous_attempt_section="",

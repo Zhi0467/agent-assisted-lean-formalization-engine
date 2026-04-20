@@ -41,9 +41,11 @@ Terry runs through five phases:
 2. `01_enrichment/`
    Backend-owned enrichment artifacts plus Terry's checkpoint, review, and decision files.
   Terry expects `handoff.md`, `proof_status.json`, `natural_language_statement.md`,
-  and, when the proof is available, `natural_language_proof.md`.
+  and, when the proof is available, `natural_language_proof.md`. In divide-and-conquer
+  mode Terry also requires a non-empty `prerequisites/` subdirectory.
 3. `02_plan/`
-   Backend-owned plan artifacts plus Terry's checkpoint, review, and decision files
+   Backend-owned plan artifacts plus Terry's checkpoint, review, and decision files.
+   In divide-and-conquer mode Terry also requires `dependency_graph.md`.
 4. `03_proof/`
    The bounded prove-and-repair loop: backend-written Lean candidates, Terry compile
    checks, backend-written attempt review artifacts under each attempt's `review/`
@@ -65,6 +67,15 @@ Terry will not enter `02_plan/` unless the enrichment stage reports that a
 natural-language proof was actually obtained. If the proof is missing, Terry stays at
 the enrichment checkpoint and expects the backend to ask the human for that proof rather
 than inventing one.
+
+When `terry prove --divide-and-conquer` is enabled, Terry also hard-gates plan/proof on
+two extra backend-owned artifacts:
+
+- `01_enrichment/prerequisites/`
+  prerequisite definitions and lemmas that the final theorem depends on
+- `02_plan/dependency_graph.md`
+  a bottom-up dependency graph from those prerequisites to the final theorem, including
+  any components that look independently formalizable
 
 The proof loop can open one extra blocked handoff when it hits the retry cap or the Lean
 toolchain is unavailable. That handoff lives under `03_proof/` and uses `decision: retry`
@@ -187,7 +198,9 @@ The backend is expected to write the required output file inside that output dir
 - `01_enrichment/handoff.md`
 - `01_enrichment/natural_language_statement.md`
 - `01_enrichment/proof_status.json`
+- `01_enrichment/prerequisites/` in divide-and-conquer mode
 - `02_plan/handoff.md`
+- `02_plan/dependency_graph.md` in divide-and-conquer mode
 - `03_proof/attempts/attempt_<n>/candidate.lean`
 - `03_proof/attempts/attempt_<n>/review/walkthrough.md`
 - `03_proof/attempts/attempt_<n>/review/readable_candidate.lean`

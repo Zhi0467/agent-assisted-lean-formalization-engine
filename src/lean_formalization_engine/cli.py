@@ -185,6 +185,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--source", required=True, type=Path, help=argparse.SUPPRESS)
     run_parser.add_argument("--run-id", required=True, help=argparse.SUPPRESS)
     run_parser.add_argument("--auto-approve", action="store_true", help=argparse.SUPPRESS)
+    run_parser.add_argument("--divide-and-conquer", action="store_true", help=argparse.SUPPRESS)
     _add_backend_arguments(run_parser)
 
     resume_parser = subparsers.add_parser(
@@ -304,6 +305,15 @@ def _add_prove_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("source", type=Path)
     parser.add_argument("--run-id")
     parser.add_argument("--auto-approve", action="store_true")
+    parser.add_argument(
+        "--divide-and-conquer",
+        action="store_true",
+        help=(
+            "Use the divide-and-conquer workflow variant: enrichment must write "
+            "`01_enrichment/prerequisites/`, plan must write `02_plan/dependency_graph.md`, "
+            "and proof turns are prompted to decompose work from that dependency graph."
+        ),
+    )
     _add_backend_arguments(parser)
 
 
@@ -591,6 +601,9 @@ def _live_event_sink(payload: dict[str, Any]) -> None:
     review_path = details.get("review_path")
     continue_command = details.get("continue_command")
     quick_approve_command = details.get("quick_approve_command")
+    artifact_paths = details.get("artifact_paths") or []
+    for artifact_path in artifact_paths:
+        print(f"  inspect: {artifact_path}", file=sys.stderr, flush=True)
     if review_path:
         print(f"  review: {review_path}", file=sys.stderr, flush=True)
     for guidance_line in _review_decision_guidance(payload.get("stage")):
@@ -796,6 +809,29 @@ def _count_stage_turns(events: list[dict[str, Any]], backend_stage: str) -> int:
     return completed or started
 
 
+def _mode_review_artifacts(manifest: RunManifest, repo_root: Path) -> list[str]:
+    if not manifest.divide_and_conquer:
+        return []
+
+    run_root = repo_root / "artifacts" / "runs" / manifest.run_id
+    artifact_candidates: list[Path] = []
+    if manifest.current_stage == RunStage.AWAITING_ENRICHMENT_APPROVAL:
+        artifact_candidates.append(run_root / "01_enrichment" / "prerequisites")
+    elif manifest.current_stage == RunStage.AWAITING_PLAN_APPROVAL:
+        artifact_candidates.extend(
+            [
+                run_root / "01_enrichment" / "prerequisites",
+                run_root / "02_plan" / "dependency_graph.md",
+            ]
+        )
+
+    return [
+        str(path.relative_to(repo_root))
+        for path in artifact_candidates
+        if path.exists()
+    ]
+
+
 def render_manifest_summary(manifest: RunManifest, repo_root: Path) -> str:
     status_surface = _resolve_status_surface(manifest, repo_root)
     workflow_events = _load_workflow_events(repo_root, manifest.run_id)
@@ -805,6 +841,8 @@ def render_manifest_summary(manifest: RunManifest, repo_root: Path) -> str:
         f"Stage: {manifest.current_stage.value}",
         f"Backend: {manifest.agent_config.backend}",
     ]
+    if manifest.divide_and_conquer:
+        lines.append("Mode: divide-and-conquer")
     turn_count_spec = _TURN_COUNT_LABELS.get(manifest.current_stage)
     if turn_count_spec is not None:
         backend_stage, label = turn_count_spec
@@ -833,6 +871,8 @@ def render_manifest_summary(manifest: RunManifest, repo_root: Path) -> str:
         checkpoint_path = repo_root / "artifacts" / "runs" / manifest.run_id / checkpoint_relative
         lines.append(f"Checkpoint: {checkpoint_path.relative_to(repo_root)}")
         lines.append(f"Review file: {review_path.relative_to(repo_root)}")
+        for artifact_path in _mode_review_artifacts(manifest, repo_root):
+            lines.append(f"Inspect: {artifact_path}")
         for guidance_line in _review_decision_guidance(manifest.current_stage.value):
             lines.append(f"Decision guide: {guidance_line}")
         if manifest.current_stage in proof_blocked_stages:
@@ -956,6 +996,7 @@ def _render_legacy_manifest_payload(manifest: RunManifest) -> dict[str, object]:
             "current_stage": _LEGACY_STAGE_BY_CURRENT[manifest.current_stage],
             "workflow_version": manifest.workflow_version,
             "workflow_tags": manifest.workflow_tags,
+            "divide_and_conquer": manifest.divide_and_conquer,
             "attempt_count": manifest.attempt_count,
             "latest_error": manifest.latest_error,
             "final_output_path": manifest.final_output_path,
@@ -1001,7 +1042,12 @@ def main() -> None:
                 ),
                 event_sink=_live_event_sink,
             )
-            manifest = workflow.prove(source_path, run_id, auto_approve=args.auto_approve)
+            manifest = workflow.prove(
+                source_path,
+                run_id,
+                auto_approve=args.auto_approve,
+                divide_and_conquer=args.divide_and_conquer,
+            )
 
         elif args.command == "resume":
             run_id = _resolve_run_id_argument(args)

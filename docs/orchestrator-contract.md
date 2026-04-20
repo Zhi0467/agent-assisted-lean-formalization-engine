@@ -65,9 +65,15 @@ launch the backend, but theorem content itself should travel only through files.
 - `01_enrichment/proof_status.json`
   Control-plane proof gate for stage 1. Terry reads only whether the natural-language
   proof was obtained, not the theorem content itself.
+- `01_enrichment/prerequisites/` in divide-and-conquer mode
+  A non-empty prerequisite inventory directory covering the definitions and lemmas that
+  appear before or beneath the final theorem.
 - `02_plan/handoff.md`
   The default human review target for stage 2. The backend may add any supporting files
   beside it.
+- `02_plan/dependency_graph.md` in divide-and-conquer mode
+  A bottom-up dependency map from prerequisite definitions and lemmas to the final
+  theorem, including any independently formalizable components.
 - `03_proof/attempts/attempt_<n>/candidate.lean`
   The Lean file Terry compiles for that attempt.
 - `03_proof/attempts/attempt_<n>/review/walkthrough.md`
@@ -103,6 +109,8 @@ should stay narrow:
 - run directory
 - output directory for this stage or attempt
 - paths to prior stage files that the backend should inspect
+- a divide-and-conquer mode flag when Terry expects prerequisite inventory and a
+  dependency graph
 - attempt metadata such as attempt number / retry cap
 - the current attempt's compile result when Terry is asking for an attempt review
 - path to the latest compile result file when Terry is asking for a repair attempt
