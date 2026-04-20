@@ -866,6 +866,8 @@ class LeanRunner:
         mathlib_dir = workspace / ".lake" / "packages" / "mathlib"
         if not self._package_declares_lean_executable(mathlib_dir, "cache"):
             return None
+        if self._mathlib_cache_ready(workspace):
+            return None
         return subprocess.run(
             [lake_path, "exe", "cache", "get"],
             cwd=workspace,
@@ -873,6 +875,13 @@ class LeanRunner:
             text=True,
             check=False,
         )
+
+    def _mathlib_cache_ready(self, workspace: Path) -> bool:
+        vendored_packages_path = workspace / ".lake" / "packages"
+        for package_name in self._vendored_package_dependency_names(vendored_packages_path, ("mathlib",)):
+            if not self._vendored_package_cache_ready(vendored_packages_path / package_name):
+                return False
+        return True
 
     def _package_declares_lean_executable(self, package_dir: Path, executable_name: str) -> bool:
         if not package_dir.exists() or not package_dir.is_dir():
@@ -1269,6 +1278,49 @@ class LeanRunner:
 
     def _vendored_package_has_sources(self, package_dir: Path) -> bool:
         return self._package_has_sources(package_dir)
+
+    def _vendored_package_dependency_names(
+        self,
+        vendored_packages_path: Path,
+        package_names: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        resolved_names: set[str] = set()
+        pending_names = list(package_names)
+        while pending_names:
+            package_name = pending_names.pop()
+            if package_name in resolved_names:
+                continue
+            package_dir = vendored_packages_path / package_name
+            if not self._vendored_package_has_sources(package_dir):
+                continue
+            resolved_names.add(package_name)
+            required_packages = self._required_packages(package_dir)
+            if required_packages is None:
+                continue
+            for requirement in required_packages:
+                if requirement.path is None:
+                    pending_names.append(requirement.name)
+        return tuple(sorted(resolved_names))
+
+    def _vendored_package_cache_ready(self, package_dir: Path) -> bool:
+        root_module_names = self._vendored_package_root_module_names(package_dir)
+        if not root_module_names:
+            return False
+        cache_root = package_dir / ".lake" / "build" / "lib" / "lean"
+        return all((cache_root / f"{root_module_name}.olean").exists() for root_module_name in root_module_names)
+
+    def _vendored_package_root_module_names(self, package_dir: Path) -> tuple[str, ...]:
+        if not package_dir.exists() or not package_dir.is_dir():
+            return ()
+        root_module_names: list[str] = []
+        for child in sorted(package_dir.iterdir()):
+            if not child.is_file():
+                continue
+            relative_path = Path(child.name)
+            if not self._ignore_package_path(relative_path) and self._is_vendored_source_path(relative_path):
+                if child.suffix == ".lean":
+                    root_module_names.append(child.stem)
+        return tuple(root_module_names)
 
     def _package_has_sources(self, package_dir: Path) -> bool:
         if not package_dir.exists() or not package_dir.is_dir():

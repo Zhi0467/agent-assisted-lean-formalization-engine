@@ -3897,6 +3897,60 @@ class WorkflowTest(unittest.TestCase):
                 ],
             )
 
+    def test_lean_runner_skips_mathlib_cache_restore_in_healthy_reused_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            fake_lake = self._write_fake_lake_with_mathlib_cache(temp_root, name="lake-cache-healthy-reuse")
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            first_store = RunStore(temp_root / "artifacts", "mathlib-cache-healthy-first")
+            first_store.ensure_new()
+            first_store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem mathlib_cache_healthy_first (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+            first_result = runner.compile_candidate(first_store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(first_result.passed)
+
+            second_store = RunStore(temp_root / "artifacts", "mathlib-cache-healthy-second")
+            second_store.ensure_new()
+            second_store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem mathlib_cache_healthy_second (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+            second_result = runner.compile_candidate(second_store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(second_result.passed)
+            self.assertEqual(
+                second_result.command,
+                [
+                    "lake-cache-healthy-reuse build FormalizationEngineWorkspace",
+                ],
+            )
+
     def test_lean_runner_restores_transitive_mathlib_cache_in_reused_workspace_without_update(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
