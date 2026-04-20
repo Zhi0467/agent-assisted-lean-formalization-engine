@@ -93,9 +93,9 @@ class TestToJsonable(unittest.TestCase):
         self.assertEqual(result["kind"], "markdown")
 
     def test_nested_dataclass(self):
-        config = AgentConfig(backend="demo")
+        config = AgentConfig(backend="codex")
         result = to_jsonable(config)
-        self.assertEqual(result["backend"], "demo")
+        self.assertEqual(result["backend"], "codex")
         self.assertIsNone(result["command"])
 
     def test_custom_enum_value(self):

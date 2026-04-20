@@ -13,7 +13,7 @@
 
 ```mermaid
 flowchart TD
-    A[terry prove] --> B[00_input]
+    A[terry prove] --> B[00_input source snapshot]
     B --> C[01_enrichment]
     C --> C1[natural_language_statement.md]
     C --> C2[natural_language_proof.md]
@@ -37,7 +37,7 @@ flowchart TD
 Terry runs through five phases:
 
 1. `00_input/`
-   Normalized source text plus provenance
+   Opaque source-file snapshot plus minimal source metadata
 2. `01_enrichment/`
    Backend-owned enrichment artifacts plus Terry's checkpoint, review, and decision files.
   Terry expects `handoff.md`, `proof_status.json`, `natural_language_statement.md`,
@@ -75,9 +75,24 @@ instead of `decision: approve`.
 Each human checkpoint writes two files:
 
 - `checkpoint.md`
-  What to inspect, where to write the review, and the exact `terry resume <run_id>` command
+  What to inspect, the quick-approve command, and the exact `terry resume <run_id>` command
 - `review.md`
-  Human-edited decision file
+  Optional reviewer-edited decision + notes file
+
+Approving a handoff normally does not require touching `review.md`. Run:
+
+```bash
+terry resume <run_id> --approve
+```
+
+`--approve` records an `approve` decision with no notes for the current stage's
+`decision.json` and resumes. Terry assumes no reviewer comments when you approve
+via the flag.
+
+Only edit `review.md` when you want to do one of:
+
+- reject the handoff (set `decision: reject` and optionally add notes), or
+- approve while attaching reviewer notes that should flow into the next backend turn.
 
 The review file is intentionally simple:
 
@@ -88,13 +103,17 @@ Notes:
 - review notes here
 ```
 
-For proof-loop retries the decision is `retry` instead of `approve`.
+For proof-loop retries the decision is `retry` instead of `approve`, and
+`--approve` is not valid there — proof-blocked runs continue through `terry retry`.
 
-`terry resume` parses `review.md`, records the result into `decision.json`, logs the
-handoff, and continues only when the expected decision value is present.
+`terry resume` parses `review.md` (when the human edited it), records the result
+into `decision.json`, logs the handoff, and continues only when the expected
+decision value is present.
 
 Current CLI helpers on top of that review-file surface:
 
+- `terry resume <run_id> --approve`
+  Approve the current handoff without editing `review.md`
 - `terry review <run_id> --attempt <n>`
   Regenerate the backend-owned attempt review artifacts for a completed proof attempt
 - `terry retry <run_id>`
@@ -109,17 +128,30 @@ Every run writes:
 - `logs/timeline.md`
   Human-readable chronological log
 
+During `terry prove`, `terry resume`, `terry review`, and `terry retry`, Terry also
+streams those log events to the terminal on stderr so a long backend turn does not look
+hung.
+
 Events include:
 
 - run start
+- source snapshot ready
+- backend stage dispatch / completion / retry
+- backend subprocess heartbeat
 - enrichment ready
 - plan ready
 - checkpoint open / approval
 - proof loop start
+- compile start / completion
 - proof attempt start / failure / success
+- attempt review start / ready
 - proof blocked
 - final candidate ready
 - run completion
+
+Transient backend failures that look like network turbulence, transport timeouts, or
+short-lived provider outages are retried automatically with a short backoff before Terry
+gives up on the stage.
 
 ## Module Layout
 
@@ -135,12 +167,10 @@ Events include:
   Run-store helpers and workflow logging
 - `src/lean_formalization_engine/agents.py`
   File-first backend protocol
-- `src/lean_formalization_engine/demo_agent.py`
-  Deterministic baseline backend
 - `src/lean_formalization_engine/subprocess_agent.py`
   External provider command backend that writes stage files directly
-- `src/lean_formalization_engine/codex_agent.py`
-  `codex exec` backend that writes stage files directly
+- `src/lean_formalization_engine/cli_exec_agent.py`
+  Coding-CLI backend (Codex `codex exec` or Claude `claude -p --dangerously-skip-permissions`) that writes stage files directly
 
 ## Backend Stage Calls
 
@@ -148,7 +178,7 @@ Each backend stage call gets a narrow control-plane payload:
 
 - the stage name
 - the repo-root-relative run directory and output directory
-- repo-root-relative input file paths from earlier stages
+- repo-root-relative input file paths from earlier stages, including the original source snapshot
 - the current review-notes file path when the stage resumes after human input
 - proof-loop attempt metadata and the latest compile-result path when Terry is asking for a repair
 
@@ -209,7 +239,7 @@ retries the bootstrap instead of trusting a poisoned cache state.
 
 The run manifest now records:
 
-- backend kind (`demo`, `command`, or `codex`)
+- backend kind (`command` or `codex`)
 - resolved subprocess command when Terry is using the command backend
 - optional Codex model override
 - template directory used for the run

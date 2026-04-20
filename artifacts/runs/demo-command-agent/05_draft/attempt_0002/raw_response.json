@@ -1,3 +1,0 @@
-{
-  "raw_response": "import FormalizationEngineWorkspace.Basic\n\ntheorem zero_add_provider_demo (n : Nat) : 0 + n = n := by\n  simpa using Nat.zero_add n\n"
-}

@@ -1,6 +1,7 @@
-- Read `enrichment_handoff`, `natural_language_statement`, `natural_language_proof`, `proof_status`, and any `enrichment_review` pointer before planning.
+- Read `enrichment_handoff`, `natural_language_statement`, `natural_language_proof`, `proof_status`, optional `relevant_lean_objects`, and any `enrichment_review` pointer before planning.
 - Objective: lock the Lean statement, imports, and proof route for the already-available natural-language proof, not to discover a different proof.
 - Treat the natural-language statement and natural-language proof as the cornerstone for the Lean plan.
-- Keep the enrichment handoff, proof-status pointer, and any enrichment review notes visible while planning.
+- Keep the enrichment handoff, proof-status pointer, optional library-reuse inventory, and any enrichment review notes visible while planning.
+- If `relevant_lean_objects` is present, treat it as the primary reuse surface for existing Lean/mathlib objects and use it to choose imports, statement shape, and proof route.
 - Do not invent a new proof route that is not grounded in the available natural-language proof.
 - Use `handoff.md` to lock the formal statement, imports, and the Lean proof route the proof worker should follow.

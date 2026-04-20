@@ -1,6 +1,6 @@
-- Read `plan_handoff`, `natural_language_statement`, `natural_language_proof`, `attempt_candidate`, `attempt_compile_result`, and any review-notes pointer before writing review artifacts.
+- Read `plan_handoff`, `natural_language_statement`, `natural_language_proof`, optional `relevant_lean_objects`, `attempt_candidate`, `attempt_compile_result`, and any review-notes pointer before writing review artifacts.
 - Objective: produce repair-facing artifacts that humans and later proof attempts can both trust.
-- Keep the natural-language statement and proof visible while reviewing the attempt.
+- Keep the natural-language statement, proof, and any enrichment-side library inventory visible while reviewing the attempt.
 - Read the current attempt's `candidate.lean` and compile result carefully.
 - Write `walkthrough.md` that maps the Lean code to the underlying proof steps in plain language.
 - Write `readable_candidate.lean` as a human-readable rewrite with comments and cleaner organization, without changing the theorem's mathematical content.

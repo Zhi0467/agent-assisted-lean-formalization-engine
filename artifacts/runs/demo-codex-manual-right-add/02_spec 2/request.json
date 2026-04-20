@@ -1,9 +1,0 @@
-{
-  "model": null,
-  "normalized_text": "For every natural number n, adding zero on the right leaves n unchanged.\nTarget statement: n + 0 = n.\n",
-  "source_ref": {
-    "kind": "markdown",
-    "path": "examples/inputs/right_add_zero.md"
-  },
-  "stage": "draft_theorem_spec"
-}

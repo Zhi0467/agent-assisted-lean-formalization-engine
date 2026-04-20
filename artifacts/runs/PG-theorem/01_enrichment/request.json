@@ -1,0 +1,21 @@
+{
+  "attempt": null,
+  "input_paths": {
+    "provenance": "artifacts/runs/PG-theorem/00_input/provenance.json",
+    "source": "artifacts/runs/PG-theorem/00_input/source.pdf"
+  },
+  "latest_compile_result_path": null,
+  "max_attempts": null,
+  "output_dir": "artifacts/runs/PG-theorem/01_enrichment",
+  "previous_attempt_dir": null,
+  "repo_root": "/Users/zhiwang/Desktop/research/agent-assisted-lean-formalization-engine",
+  "required_outputs": [
+    "handoff.md",
+    "proof_status.json",
+    "natural_language_statement.md"
+  ],
+  "review_notes_path": "artifacts/runs/PG-theorem/01_enrichment/review.md",
+  "run_dir": "artifacts/runs/PG-theorem",
+  "run_id": "PG-theorem",
+  "stage": "enrichment"
+}

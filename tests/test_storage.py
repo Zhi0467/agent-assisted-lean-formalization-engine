@@ -194,6 +194,45 @@ class TestAppendLog(unittest.TestCase):
         )
         self.assertEqual(entry["details"]["count"], 3)
 
+    def test_append_log_renders_details_in_timeline(self):
+        self.store.append_log("ev", "detail test", stage="proof", details={"attempt": 2, "passed": False})
+        timeline = self.store.path("logs/timeline.md").read_text(encoding="utf-8")
+        self.assertIn("attempt=2", timeline)
+        self.assertIn("passed=false", timeline)
+
+    def test_append_log_notifies_event_sink(self):
+        events: list[dict[str, object]] = []
+        store = RunStore(Path(self._tmp.name), "sink-run", event_sink=events.append)
+        store.ensure()
+        store.append_log("ev", "detail test", details={"count": 3})
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event_type"], "ev")
+
+    def test_append_log_skips_heartbeat_on_disk_but_fires_sink(self):
+        events: list[dict[str, object]] = []
+        store = RunStore(
+            Path(self._tmp.name),
+            "heartbeat-run",
+            event_sink=events.append,
+        )
+        store.ensure()
+        store.append_log(
+            "backend_process_heartbeat",
+            "still running",
+            stage="enrichment",
+            details={"elapsed_seconds": 10.0, "heartbeat_count": 1},
+        )
+        self.assertFalse(
+            store.path("logs/timeline.md").exists(),
+            "Heartbeat events must not be written to timeline.md",
+        )
+        self.assertFalse(
+            store.path("logs/workflow.jsonl").exists(),
+            "Heartbeat events must not be persisted to workflow.jsonl",
+        )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event_type"], "backend_process_heartbeat")
+
 
 if __name__ == "__main__":
     unittest.main()

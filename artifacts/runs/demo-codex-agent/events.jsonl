@@ -1,1 +1,0 @@
-{"event_type": "run_created", "payload": {"agent": "codex_cli:default", "run_id": "demo-codex-agent", "source_path": "examples/inputs/zero_add.md"}, "timestamp": "2026-04-04T04:35:55Z"}

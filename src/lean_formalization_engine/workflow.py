@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import inspect
+import shutil
 import shlex
+import time
 from pathlib import Path
+from typing import Any, Callable
 
 from .agents import FormalizationAgent
-from .ingest import ingest_source
+from .backend_runtime import is_transient_backend_failure
+from .ingest import detect_source_kind
 from .lean_runner import LeanRunner
 from .models import (
     AgentConfig,
@@ -30,10 +35,22 @@ PLAN_DIR = "02_plan"
 PROOF_DIR = "03_proof"
 FINAL_DIR = "04_final"
 
+
+def _agent_config_from_payload(payload: dict[str, Any]) -> AgentConfig:
+    """Build an AgentConfig, migrating legacy field names (`codex_model`)."""
+    normalized = dict(payload)
+    legacy_model = normalized.pop("codex_model", None)
+    if "model" not in normalized and legacy_model is not None:
+        normalized["model"] = legacy_model
+    allowed = {"backend", "command", "model"}
+    filtered = {key: value for key, value in normalized.items() if key in allowed}
+    return AgentConfig(**filtered)
+
 ENRICHMENT_HANDOFF = f"{ENRICHMENT_DIR}/handoff.md"
 ENRICHMENT_PROOF_STATUS = f"{ENRICHMENT_DIR}/proof_status.json"
 ENRICHMENT_NATURAL_LANGUAGE_STATEMENT = f"{ENRICHMENT_DIR}/natural_language_statement.md"
 ENRICHMENT_NATURAL_LANGUAGE_PROOF = f"{ENRICHMENT_DIR}/natural_language_proof.md"
+ENRICHMENT_RELEVANT_LEAN_OBJECTS = f"{ENRICHMENT_DIR}/relevant_lean_objects.md"
 PLAN_HANDOFF = f"{PLAN_DIR}/handoff.md"
 PROOF_BLOCKER = f"{PROOF_DIR}/blocker.md"
 PROOF_LOOP = f"{PROOF_DIR}/loop.md"
@@ -54,10 +71,23 @@ LEGACY_PLAN_DIR = "06_plan"
 LEGACY_STALL_DIR = "09_review"
 LEGACY_FINAL_DIR = "10_final"
 
-LEGACY_DEMO_AGENT_NAMES = {
-    "demo_zero_add_agent",
-    "repair_resume_agent",
-}
+
+def _approvable_stage_dir(stage: "RunStage") -> str | None:
+    """Return the stage directory whose decision.json can be flipped to approve.
+
+    Proof-blocked and non-handoff stages (CREATED, PROVING, COMPLETED, FAILED)
+    are intentionally excluded — proof-blocked runs continue via `terry retry`,
+    and the others have no pending handoff to approve.
+    """
+    return {
+        RunStage.AWAITING_ENRICHMENT_APPROVAL: ENRICHMENT_DIR,
+        RunStage.AWAITING_PLAN_APPROVAL: PLAN_DIR,
+        RunStage.AWAITING_FINAL_APPROVAL: FINAL_DIR,
+        RunStage.LEGACY_AWAITING_ENRICHMENT_REVIEW: LEGACY_ENRICHMENT_DIR,
+        RunStage.LEGACY_AWAITING_SPEC_REVIEW: LEGACY_SPEC_DIR,
+        RunStage.LEGACY_AWAITING_PLAN_REVIEW: LEGACY_PLAN_DIR,
+        RunStage.LEGACY_AWAITING_FINAL_REVIEW: LEGACY_FINAL_DIR,
+    }.get(stage)
 
 
 class FormalizationWorkflow:
@@ -70,12 +100,18 @@ class FormalizationWorkflow:
         *,
         max_attempts: int = 3,
         terry_command: str = "terry",
+        event_sink: Callable[[dict[str, Any]], None] | None = None,
+        max_backend_retries: int = 3,
+        backend_retry_backoff_seconds: float = 0.5,
     ):
         self.repo_root = repo_root
         self.agent = agent
         self.agent_config = agent_config
         self.max_attempts = max_attempts
         self.terry_command = terry_command
+        self.event_sink = event_sink
+        self.max_backend_retries = max_backend_retries
+        self.backend_retry_backoff_seconds = backend_retry_backoff_seconds
         self.artifacts_root = repo_root / "artifacts"
         self.lean_runner = lean_runner or LeanRunner(
             repo_root / "lean_workspace_template",
@@ -83,8 +119,11 @@ class FormalizationWorkflow:
         )
 
     def prove(self, source_path: Path, run_id: str, auto_approve: bool = False) -> RunManifest:
-        store = RunStore(self.artifacts_root, run_id)
-        source_ref, ingested = ingest_source(source_path, repo_root=self.repo_root)
+        store = self._store(run_id)
+        source_ref = SourceRef(
+            path=self._display_path(source_path),
+            kind=detect_source_kind(source_path),
+        )
         store.ensure_new()
 
         manifest = RunManifest(
@@ -100,14 +139,19 @@ class FormalizationWorkflow:
         )
         self._save_manifest(store, manifest)
 
-        store.write_text("00_input/source.txt", ingested.raw_text)
-        store.write_text("00_input/normalized.md", ingested.normalized_text)
+        source_snapshot_relative_path = self._snapshot_source_input(store, source_path)
         store.write_json(
             "00_input/provenance.json",
             {
                 "source": source_ref,
-                "extraction_method": ingested.extraction_method,
+                "source_snapshot_path": source_snapshot_relative_path,
             },
+        )
+        store.append_log(
+            "source_snapshot_ready",
+            f"Captured the original theorem source at `{source_snapshot_relative_path}`.",
+            stage="input",
+            details={"source_kind": source_ref.kind, "snapshot_path": source_snapshot_relative_path},
         )
         store.append_log(
             "run_started",
@@ -121,7 +165,7 @@ class FormalizationWorkflow:
         return self._resume_from_created(store, manifest, auto_approve=auto_approve)
 
     def resume(self, run_id: str, auto_approve: bool = False) -> RunManifest:
-        store = RunStore(self.artifacts_root, run_id)
+        store = self._store(run_id)
         manifest = self._load_manifest(store)
         if manifest.agent_config.backend != self.agent_config.backend:
             raise ValueError(
@@ -250,6 +294,7 @@ class FormalizationWorkflow:
                     manifest,
                     auto_approve=auto_approve,
                     review_notes_relative_path=f"{ENRICHMENT_DIR}/review.md",
+                    rerun=True,
                 )
             store.append_log(
                 "checkpoint_approved",
@@ -269,6 +314,7 @@ class FormalizationWorkflow:
                     manifest,
                     auto_approve=auto_approve,
                     review_notes_relative_path=f"{ENRICHMENT_DIR}/review.md",
+                    rerun=True,
                 )
             return self._run_plan_stage(
                 store,
@@ -414,8 +460,42 @@ class FormalizationWorkflow:
 
         return manifest
 
+    def approve_current_checkpoint(self, run_id: str, notes: str = "") -> RunManifest:
+        """Record an `approve` decision for the run's currently paused handoff.
+
+        This lets `terry resume --approve` approve an open handoff without
+        requiring the human to edit `review.md`. The run must be paused at an
+        approvable handoff (enrichment, plan, or final); proof-blocked runs
+        continue through `terry retry` instead.
+        """
+        store = self._store(run_id)
+        manifest = self._load_manifest(store)
+        stage_dir = _approvable_stage_dir(manifest.current_stage)
+        if stage_dir is None:
+            if manifest.current_stage in {
+                RunStage.PROOF_BLOCKED,
+                RunStage.LEGACY_AWAITING_STALL_REVIEW,
+            }:
+                raise ValueError(
+                    f"Run `{run_id}` is proof-blocked. `--approve` is not valid here; "
+                    f"run `terry retry {run_id} --attempts N` to grant more attempts."
+                )
+            raise ValueError(
+                f"Run `{run_id}` is in `{manifest.current_stage.value}`, "
+                "which has no open handoff to approve."
+            )
+        decision = ReviewDecision("approve", utc_now(), notes)
+        self._write_decision(store, stage_dir, decision)
+        store.append_log(
+            "checkpoint_approved_via_cli",
+            f"Human approved the {manifest.current_stage.value} checkpoint via `terry resume --approve`.",
+            stage=manifest.current_stage.value,
+            details={"stage_dir": stage_dir, "notes": notes},
+        )
+        return manifest
+
     def retry(self, run_id: str, extra_attempts: int = 3, auto_approve: bool = False) -> RunManifest:
-        store = RunStore(self.artifacts_root, run_id)
+        store = self._store(run_id)
         manifest = self._load_manifest(store)
 
         blocked_stages = {
@@ -452,17 +532,20 @@ class FormalizationWorkflow:
         )
 
     def status(self, run_id: str) -> RunManifest:
-        store = RunStore(self.artifacts_root, run_id)
+        store = self._store(run_id)
         return self._load_manifest(store)
 
     def review_attempt(self, run_id: str, attempt: int | None = None) -> int:
-        store = RunStore(self.artifacts_root, run_id)
+        store = self._store(run_id)
         manifest = self._load_manifest(store)
         selected_attempt = manifest.attempt_count if attempt is None else attempt
         if selected_attempt <= 0:
             raise ValueError("Terry review needs a completed proof attempt.")
         self._run_attempt_review(store, manifest, selected_attempt)
         return selected_attempt
+
+    def _store(self, run_id: str) -> RunStore:
+        return RunStore(self.artifacts_root, run_id, event_sink=self.event_sink)
 
     def _resume_from_created(
         self,
@@ -524,6 +607,7 @@ class FormalizationWorkflow:
                         manifest,
                         auto_approve=auto_approve,
                         review_notes_relative_path=f"{ENRICHMENT_DIR}/review.md",
+                        rerun=True,
                     )
                 return self._run_plan_stage(
                     store,
@@ -537,6 +621,7 @@ class FormalizationWorkflow:
                     manifest,
                     auto_approve=auto_approve,
                     review_notes_relative_path=f"{ENRICHMENT_DIR}/review.md",
+                    rerun=True,
                 )
             return self._pause_for_enrichment(store, manifest)
 
@@ -549,6 +634,7 @@ class FormalizationWorkflow:
         *,
         auto_approve: bool,
         review_notes_relative_path: str | None = None,
+        rerun: bool = False,
     ) -> RunManifest:
         request = self._build_stage_request(
             store,
@@ -557,12 +643,28 @@ class FormalizationWorkflow:
             output_dir=ENRICHMENT_DIR,
             required_outputs=["handoff.md", "proof_status.json", "natural_language_statement.md"],
             review_notes_relative_path=review_notes_relative_path,
+            stale_output_paths=(
+                self._existing_stage_outputs(
+                    store,
+                    ENRICHMENT_HANDOFF,
+                    ENRICHMENT_PROOF_STATUS,
+                    ENRICHMENT_NATURAL_LANGUAGE_STATEMENT,
+                    ENRICHMENT_NATURAL_LANGUAGE_PROOF,
+                    ENRICHMENT_RELEVANT_LEAN_OBJECTS,
+                )
+                if rerun
+                else None
+            ),
         )
         self._run_backend_stage(
             store,
             request,
             ENRICHMENT_DIR,
-            extra_stale_outputs=[ENRICHMENT_NATURAL_LANGUAGE_PROOF.removeprefix(f"{ENRICHMENT_DIR}/")],
+            extra_stale_outputs=[
+                ENRICHMENT_NATURAL_LANGUAGE_PROOF.removeprefix(f"{ENRICHMENT_DIR}/"),
+                ENRICHMENT_RELEVANT_LEAN_OBJECTS.removeprefix(f"{ENRICHMENT_DIR}/"),
+            ],
+            backend_attempt_limit=1 if rerun else None,
         )
         proof_status = self._load_proof_status(store)
         if proof_status is None:
@@ -644,8 +746,14 @@ class FormalizationWorkflow:
                 output_dir=PLAN_DIR,
                 required_outputs=["handoff.md"],
                 review_notes_relative_path=review_notes_relative_path,
+                stale_output_paths=self._existing_stage_outputs(store, PLAN_HANDOFF) if force_rerun else None,
             )
-            self._run_backend_stage(store, request, PLAN_DIR)
+            self._run_backend_stage(
+                store,
+                request,
+                PLAN_DIR,
+                backend_attempt_limit=1 if force_rerun else None,
+            )
             store.append_log(
                 "plan_ready",
                 "Prepared the backend-owned plan handoff.",
@@ -747,8 +855,25 @@ class FormalizationWorkflow:
                     details={"attempt": attempt},
                 )
 
+            store.append_log(
+                "compile_started",
+                f"Compiling proof attempt {attempt}.",
+                stage="proof",
+                details={"attempt": attempt, "candidate_path": candidate_relative_path},
+            )
             compile_result = self.lean_runner.compile_candidate(store, candidate_relative_path, attempt)
             self._write_compile_result(store, attempt, compile_result)
+            store.append_log(
+                "compile_finished",
+                f"Finished compiling proof attempt {attempt} with status `{compile_result.status}`.",
+                stage="proof",
+                details={
+                    "attempt": attempt,
+                    "passed": compile_result.passed,
+                    "missing_toolchain": compile_result.missing_toolchain,
+                    "command": compile_result.command,
+                },
+            )
             manifest.attempt_count = attempt
             manifest.updated_at = utc_now()
             self._save_manifest(store, manifest)
@@ -830,30 +955,125 @@ class FormalizationWorkflow:
         turn_dir: str,
         *,
         extra_stale_outputs: list[str] | None = None,
+        backend_attempt_limit: int | None = None,
     ) -> AgentTurn:
-        self._clear_turn_artifacts(
-            store,
-            turn_dir,
-            request.required_outputs,
-            extra_stale_outputs=extra_stale_outputs,
-            clear_compile_outputs=request.stage == BackendStage.PROOF,
+        max_backend_attempts = max(
+            backend_attempt_limit if backend_attempt_limit is not None else self.max_backend_retries,
+            1,
         )
-        turn = self.agent.run_stage(request)
-        store.write_json(f"{turn_dir}/request.json", turn.request_payload)
-        store.write_text(f"{turn_dir}/prompt.md", turn.prompt)
-        store.write_text(f"{turn_dir}/response.txt", turn.raw_response)
-
-        missing = [
-            required_output
-            for required_output in request.required_outputs
-            if not (self.repo_root / request.output_dir / required_output).exists()
-        ]
-        if missing:
-            raise RuntimeError(
-                "Backend did not write the required Terry output(s): "
-                + ", ".join(f"{request.output_dir}/{path}" for path in missing)
+        for backend_attempt in range(1, max_backend_attempts + 1):
+            self._clear_turn_artifacts(
+                store,
+                turn_dir,
+                request.required_outputs,
+                extra_stale_outputs=extra_stale_outputs,
+                clear_compile_outputs=request.stage == BackendStage.PROOF,
             )
-        return turn
+            store.append_log(
+                "backend_stage_started",
+                (
+                    f"Dispatching backend `{request.stage.value}` turn "
+                    f"(attempt {backend_attempt}/{max_backend_attempts})."
+                ),
+                stage=request.stage.value,
+                details={
+                    "backend_attempt": backend_attempt,
+                    "max_backend_attempts": max_backend_attempts,
+                    "output_dir": request.output_dir,
+                    "required_outputs": request.required_outputs,
+                },
+            )
+            start_time = time.monotonic()
+            try:
+                turn = self._invoke_agent_run_stage(store, request, backend_attempt)
+                store.write_json(f"{turn_dir}/request.json", turn.request_payload)
+                store.write_text(f"{turn_dir}/prompt.md", turn.prompt)
+                store.write_text(f"{turn_dir}/response.txt", turn.raw_response)
+
+                missing = [
+                    required_output
+                    for required_output in request.required_outputs
+                    if not (self.repo_root / request.output_dir / required_output).exists()
+                ]
+                if missing:
+                    raise RuntimeError(
+                        "Backend did not write the required Terry output(s): "
+                        + ", ".join(f"{request.output_dir}/{path}" for path in missing)
+                    )
+
+                store.append_log(
+                    "backend_stage_completed",
+                    f"Backend `{request.stage.value}` turn finished successfully.",
+                    stage=request.stage.value,
+                    details={
+                        "backend_attempt": backend_attempt,
+                        "elapsed_seconds": round(time.monotonic() - start_time, 3),
+                    },
+                )
+                return turn
+            except Exception as exc:
+                elapsed_seconds = round(time.monotonic() - start_time, 3)
+                failure_message = str(exc).strip() or exc.__class__.__name__
+                transient = is_transient_backend_failure(failure_message)
+                store.append_log(
+                    "backend_stage_failed",
+                    f"Backend `{request.stage.value}` turn failed on attempt {backend_attempt}.",
+                    stage=request.stage.value,
+                    details={
+                        "backend_attempt": backend_attempt,
+                        "elapsed_seconds": elapsed_seconds,
+                        "transient": transient,
+                        "error": failure_message,
+                    },
+                )
+                if transient and backend_attempt < max_backend_attempts:
+                    delay_seconds = round(self.backend_retry_backoff_seconds * backend_attempt, 2)
+                    store.append_log(
+                        "backend_stage_retrying",
+                        (
+                            f"Transient backend failure during `{request.stage.value}`; "
+                            f"retrying after {delay_seconds:.2f}s."
+                        ),
+                        stage=request.stage.value,
+                        details={
+                            "backend_attempt": backend_attempt,
+                            "next_backend_attempt": backend_attempt + 1,
+                            "sleep_seconds": delay_seconds,
+                        },
+                    )
+                    time.sleep(delay_seconds)
+                    continue
+                raise
+        raise RuntimeError(f"Backend `{request.stage.value}` turn failed unexpectedly.")
+
+    def _invoke_agent_run_stage(
+        self,
+        store: RunStore,
+        request: StageRequest,
+        backend_attempt: int,
+    ) -> AgentTurn:
+        run_stage = self.agent.run_stage
+        try:
+            signature = inspect.signature(run_stage)
+        except (TypeError, ValueError):  # pragma: no cover - defensive
+            signature = None
+
+        if signature is None:
+            return run_stage(request)
+
+        parameters = signature.parameters
+        if "progress_callback" not in parameters and not any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        ):
+            return run_stage(request)
+
+        def _progress_callback(event_type: str, summary: str, details: dict[str, Any] | None = None) -> None:
+            payload = dict(details or {})
+            payload.setdefault("backend_attempt", backend_attempt)
+            store.append_log(event_type, summary, stage=request.stage.value, details=payload)
+
+        return run_stage(request, progress_callback=_progress_callback)
 
     def _queue_final_review(
         self,
@@ -929,6 +1149,8 @@ class FormalizationWorkflow:
         ]
         if store.exists(ENRICHMENT_NATURAL_LANGUAGE_PROOF):
             artifact_paths.append(ENRICHMENT_NATURAL_LANGUAGE_PROOF)
+        if store.exists(ENRICHMENT_RELEVANT_LEAN_OBJECTS):
+            artifact_paths.append(ENRICHMENT_RELEVANT_LEAN_OBJECTS)
         return self._pause_for_checkpoint(
             store,
             manifest,
@@ -1098,6 +1320,7 @@ class FormalizationWorkflow:
         review_path = f"{stage_dir}/review.md"
         checkpoint_path = f"{stage_dir}/checkpoint.md"
         continue_command = self._continue_command(manifest, continue_decision)
+        quick_approve_command = self._quick_approve_command(manifest)
 
         existing_decision = self._load_decision(store, f"{stage_dir}/decision.json")
         if existing_decision is None or existing_decision.decision in {"pending", continue_decision}:
@@ -1113,28 +1336,39 @@ class FormalizationWorkflow:
         ):
             store.write_text(
                 review_path,
-                self._review_template(title, continue_decision),
+                self._review_template(
+                    title,
+                    stage,
+                    continue_decision,
+                    continue_command=continue_command,
+                    quick_approve_command=quick_approve_command,
+                ),
             )
         store.write_text(
             checkpoint_path,
             self._checkpoint_text(
                 title=title,
+                stage=stage,
                 summary=summary,
                 artifact_paths=artifact_paths,
                 review_path=review_path,
                 continue_command=continue_command,
                 continue_decision=continue_decision,
+                quick_approve_command=quick_approve_command,
             ),
         )
+        log_details: dict[str, Any] = {
+            "checkpoint_path": checkpoint_path,
+            "review_path": review_path,
+            "continue_command": continue_command,
+        }
+        if quick_approve_command is not None:
+            log_details["quick_approve_command"] = quick_approve_command
         store.append_log(
             "checkpoint_opened",
             summary,
             stage=stage.value,
-            details={
-                "checkpoint_path": checkpoint_path,
-                "review_path": review_path,
-                "continue_command": continue_command,
-            },
+            details=log_details,
         )
         return manifest
 
@@ -1151,18 +1385,15 @@ class FormalizationWorkflow:
         previous_attempt_dir: str | None = None,
         attempt: int | None = None,
         max_attempts: int | None = None,
+        stale_output_paths: list[str] | None = None,
     ) -> StageRequest:
-        normalized_source = self._first_existing_path(
-            store,
-            "00_input/normalized.md",
-            "01_normalized/normalized.md",
-        )
+        source_relative_path = self._source_input_relative_path(store)
+        if source_relative_path is None:
+            raise FileNotFoundError("Missing Terry source snapshot under `00_input/`.")
         input_paths = {
-            "source": self._repo_relative(store.path("00_input/source.txt")),
+            "source": self._repo_relative(store.path(source_relative_path)),
             "provenance": self._repo_relative(store.path("00_input/provenance.json")),
         }
-        if normalized_source is not None:
-            input_paths["normalized_source"] = self._repo_relative(store.path(normalized_source))
         if stage in {BackendStage.PLAN, BackendStage.PROOF, BackendStage.REVIEW}:
             self._maybe_add_input_path(store, input_paths, "enrichment_handoff", ENRICHMENT_HANDOFF)
             self._maybe_add_input_path(
@@ -1178,6 +1409,12 @@ class FormalizationWorkflow:
                 ENRICHMENT_NATURAL_LANGUAGE_PROOF,
             )
             self._maybe_add_input_path(store, input_paths, "proof_status", ENRICHMENT_PROOF_STATUS)
+            self._maybe_add_input_path(
+                store,
+                input_paths,
+                "relevant_lean_objects",
+                ENRICHMENT_RELEVANT_LEAN_OBJECTS,
+            )
             self._maybe_add_input_path(
                 store,
                 input_paths,
@@ -1313,6 +1550,7 @@ class FormalizationWorkflow:
             ),
             attempt=attempt,
             max_attempts=max_attempts,
+            stale_output_paths=list(stale_output_paths or []),
         )
 
     def _maybe_add_input_path(
@@ -1369,6 +1607,12 @@ class FormalizationWorkflow:
             max_attempts=max_attempts or manifest.attempt_count or self.max_attempts,
         )
         try:
+            store.append_log(
+                "attempt_review_started",
+                f"Generating review artifacts for proof attempt {attempt}.",
+                stage="proof",
+                details={"attempt": attempt},
+            )
             self._run_backend_stage(store, request, review_dir)
             store.append_log(
                 "attempt_review_ready",
@@ -1548,48 +1792,128 @@ class FormalizationWorkflow:
         self,
         *,
         title: str,
+        stage: RunStage,
         summary: str,
         artifact_paths: list[str],
         review_path: str,
         continue_command: str,
         continue_decision: str,
+        quick_approve_command: str | None = None,
     ) -> str:
         artifact_lines = "\n".join(f"- `{path}`" for path in artifact_paths)
-        return "\n".join(
+        decision_lines = "\n".join(self._review_decision_lines(stage, continue_decision))
+        lines = [
+            f"# {title}",
+            "",
+            summary,
+            "",
+            "## Review Artifacts",
+            artifact_lines,
+            "",
+            "## Review File",
+            f"- `{review_path}`",
+            "",
+            "## Review Decisions",
+            decision_lines,
+            "",
+        ]
+        if quick_approve_command is not None:
+            lines.extend(
+                [
+                    "## Quick Approve",
+                    "If you have no notes, approve without editing the review file:",
+                    f"`{quick_approve_command}`",
+                    "",
+                    "## Continue Command (after editing the review file)",
+                    f"`{continue_command}`",
+                    "",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "## Continue Command",
+                    f"`{continue_command}`",
+                    "",
+                ]
+            )
+        return "\n".join(lines)
+
+    def _review_template(
+        self,
+        title: str,
+        stage: RunStage,
+        continue_decision: str,
+        *,
+        continue_command: str,
+        quick_approve_command: str | None = None,
+    ) -> str:
+        lines = [
+            f"# {title}",
+            "",
+            "decision: pending",
+            "",
+        ]
+        if quick_approve_command is not None:
+            lines.extend(
+                [
+                    "You only need to edit this file if you want to leave reviewer notes "
+                    "or reject the handoff.",
+                    "To approve with no comments, skip this file and run:",
+                    f"`{quick_approve_command}`",
+                    "",
+                    "Otherwise, change `decision: pending` below to one of the values below.",
+                    "",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "Change `decision: pending` to one of the values below when you are ready.",
+                    "",
+                ]
+            )
+        lines.extend(
             [
-                f"# {title}",
+                "Review decisions:",
+                *self._review_decision_lines(stage, continue_decision),
                 "",
-                summary,
-                "",
-                "## Review Artifacts",
-                artifact_lines,
-                "",
-                "## Review File",
-                f"- `{review_path}`",
-                "",
-                "## Continue Condition",
-                f"Set `decision: {continue_decision}` in the review file when you want Terry to continue.",
-                "",
-                "## Continue Command",
+                "After editing this file, run:",
                 f"`{continue_command}`",
                 "",
-            ]
-        )
-
-    def _review_template(self, title: str, continue_decision: str) -> str:
-        return "\n".join(
-            [
-                f"# {title}",
-                "",
-                "decision: pending",
-                "",
-                f"Change `decision: pending` to `{continue_decision}` when you want Terry to continue.",
                 "Leave the `Notes:` section blank unless you want Terry to receive actual reviewer guidance.",
                 "",
                 "Notes:",
                 "",
             ]
         )
+        return "\n".join(lines)
+
+    def _review_decision_lines(self, stage: RunStage, continue_decision: str) -> list[str]:
+        if stage == RunStage.AWAITING_ENRICHMENT_APPROVAL:
+            return [
+                "- `approve`: Terry continues only when the enrichment proof gate is satisfied.",
+                "- `reject`: Terry reruns enrichment with the notes below.",
+            ]
+        if stage == RunStage.AWAITING_PLAN_APPROVAL:
+            return [
+                "- `approve`: Terry enters the bounded prove-and-repair loop.",
+                "- `reject`: Terry reruns the plan stage with the notes below.",
+            ]
+        if stage == RunStage.AWAITING_FINAL_APPROVAL:
+            return [
+                "- `approve`: Terry writes `04_final/final.lean` and completes the run.",
+                "- `reject`: Terry stays paused at final.",
+            ]
+        if stage == RunStage.PROOF_BLOCKED:
+            return [
+                "- `retry`: Terry passes the notes below into the next `terry retry` proof turn.",
+                "- `reject`: ignored here; proof-blocked runs continue only through `terry retry`.",
+            ]
+        return [
+            f"- `{continue_decision}`: Terry continues.",
+            "- `reject`: Terry stays paused.",
+        ]
 
     def _review_requests_continue(self, content: str, continue_decision: str) -> bool:
         for raw_line in content.splitlines():
@@ -1612,12 +1936,19 @@ class FormalizationWorkflow:
             return None
         return self._repo_relative(store.path(relative_path))
 
+    def _existing_stage_outputs(self, store: RunStore, *relative_paths: str) -> list[str]:
+        return [
+            self._repo_relative(store.path(relative_path))
+            for relative_path in relative_paths
+            if store.exists(relative_path)
+        ]
+
     def _continue_command(self, manifest: RunManifest, continue_decision: str) -> str:
         if continue_decision == "retry":
             return self._retry_command(manifest)
         return self._resume_command(manifest)
 
-    def _resume_command(self, manifest: RunManifest) -> str:
+    def _resume_command(self, manifest: RunManifest, *, approve: bool = False) -> str:
         command = [
             self.terry_command,
             "--repo-root",
@@ -1627,6 +1958,8 @@ class FormalizationWorkflow:
         if lake_path:
             command.extend(["--lake-path", lake_path])
         command.extend(["resume", manifest.run_id])
+        if approve:
+            command.append("--approve")
         if manifest.agent_config.backend == "command":
             provider_command = (
                 shlex.join(manifest.agent_config.command)
@@ -1635,6 +1968,11 @@ class FormalizationWorkflow:
             )
             command.extend(["--agent-command", provider_command])
         return " ".join(shlex.quote(part) for part in command)
+
+    def _quick_approve_command(self, manifest: RunManifest) -> str | None:
+        if _approvable_stage_dir(manifest.current_stage) is None:
+            return None
+        return self._resume_command(manifest, approve=True)
 
     def _retry_command(self, manifest: RunManifest, extra_attempts: int = 3) -> str:
         command = [
@@ -1727,23 +2065,25 @@ class FormalizationWorkflow:
 
         agent_config_payload = payload.get("agent_config")
         if isinstance(agent_config_payload, dict):
-            agent_config = AgentConfig(**agent_config_payload)
+            agent_config = _agent_config_from_payload(agent_config_payload)
         else:
             agent_name = payload.get("agent_name", "")
             agent_name_value = str(agent_name)
-            if agent_name_value.startswith("codex_cli:"):
-                model = agent_name_value.split(":", 1)[1]
+            if agent_name_value.startswith(("codex_cli:", "codex:", "claude:")):
+                backend, _, model = agent_name_value.partition(":")
+                if backend == "codex_cli":
+                    backend = "codex"
                 agent_config = AgentConfig(
-                    backend="codex",
-                    codex_model=None if model == "default" else model,
+                    backend=backend,
+                    model=None if model in {"", "default"} else model,
                 )
             elif (
-                agent_name_value.startswith("subprocess:")
-                or (agent_name_value and agent_name_value not in LEGACY_DEMO_AGENT_NAMES)
+                agent_name_value in {"demo", "demo_agent", "demo_formalization_agent"}
+                or agent_name_value.startswith("demo:")
             ):
-                agent_config = AgentConfig(backend="command")
-            else:
                 agent_config = AgentConfig(backend="demo")
+            else:
+                agent_config = AgentConfig(backend="command")
 
         template_dir = payload.get("template_dir")
         if not template_dir:
@@ -1821,6 +2161,37 @@ class FormalizationWorkflow:
             if store.exists(relative_path):
                 return relative_path
         return None
+
+    def _source_input_relative_path(self, store: RunStore) -> str | None:
+        input_dir = store.path("00_input")
+        if not input_dir.exists():
+            return None
+        candidates = sorted(
+            path
+            for path in input_dir.iterdir()
+            if path.is_file() and path.name != "provenance.json"
+        )
+        if not candidates:
+            return None
+        preferred = next((path for path in candidates if path.name == "source.txt"), None)
+        chosen = preferred or candidates[0]
+        return str(chosen.relative_to(store.run_root))
+
+    def _snapshot_source_input(self, store: RunStore, source_path: Path) -> str:
+        suffix = source_path.suffix.lower()
+        snapshot_name = f"source{suffix}" if suffix else "source"
+        relative_path = f"00_input/{snapshot_name}"
+        destination = store.path(relative_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, destination)
+        return relative_path
+
+    def _display_path(self, path: Path) -> str:
+        resolved_path = path.resolve()
+        try:
+            return str(resolved_path.relative_to(self.repo_root.resolve()))
+        except ValueError:
+            return str(resolved_path)
 
     def _write_compile_result(self, store: RunStore, attempt: int, compile_result: CompileAttempt) -> None:
         attempt_dir = f"{PROOF_DIR}/attempts/attempt_{attempt:04d}"

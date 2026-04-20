@@ -33,7 +33,7 @@ centers the orchestrator-only contract directly:
 
 The final local verification surface on the merged head is now `112/112`, and that
 suite is deliberately rewritten around the file-first contract rather than the removed
-Terry-owned JSON payload layer. It covers the demo workflow, the subprocess repair loop,
+Terry-owned JSON payload layer. It covers the single-pass workflow fixture, the subprocess repair loop,
 the file-first stage request shape, legacy-resume compatibility, legacy compatibility
 approvals after rejected review files, sandboxed Codex stage writes, template-pin
 preservation after successful `lake new`, stale-proof-artifact cleanup on rerun, shared
@@ -45,7 +45,7 @@ filters, explicit `--workdir` routing, sibling local path dependency mirroring,
 ancestor-overlay cleanup, packed-ref vendored revisions, nested vendored build-only
 readiness checks, proof-gated enrichment, rejected enrichment/plan reruns, attempt
 review regeneration, and the explicit `terry retry` CLI. The targeted CLI e2e tests for
-the demo backend, the scripted command backend, explicit workdir routing, proof review,
+the command backend, explicit workdir routing, proof review,
 and proof retry still pass on fresh temp repo roots.
 
 PR `#4` is merged into `main` now as `b352acc`, so Milestone 1 is closed again on the
@@ -63,11 +63,11 @@ Final validation on the merged surface is now:
 
 - `PYTHONPATH=src python3 -m unittest discover -s tests` (`112/112` passing)
 - targeted CLI e2e tests still pass:
-  - `DemoWorkflowTest.test_cli_demo_backend_e2e`
-  - `DemoWorkflowTest.test_cli_command_backend_e2e`
-  - `DemoWorkflowTest.test_cli_review_command_writes_attempt_artifacts`
-  - `DemoWorkflowTest.test_cli_retry_command_allows_one_more_attempt`
-  - `DemoWorkflowTest.test_cli_demo_backend_e2e_accepts_workdir_after_subcommand`
+  - `WorkflowTest.test_cli_command_backend_e2e_with_repo_root_before_subcommand`
+  - `WorkflowTest.test_cli_command_backend_e2e`
+  - `WorkflowTest.test_cli_review_command_writes_attempt_artifacts`
+  - `WorkflowTest.test_cli_retry_command_allows_one_more_attempt`
+  - `WorkflowTest.test_cli_command_backend_accepts_workdir_after_subcommand`
 - real same-`--workdir` Terry CLI e2e on two elementary analysis theorems:
   - `0 <= |x|` completed with `lake update` then `lake build`
   - `0 <= x^2` in the same working directory completed with `lake build` only
@@ -143,7 +143,7 @@ Gate:
 - [2026-04-17 05:45 UTC] The final direct review loop on the orchestrator-only head found three last recovery/runtime bugs and they are now fixed too: resumed plan approvals now reopen an already-written `02_plan/` handoff instead of silently rerunning the backend, packaged-template runs keep the exact workspace recorded in the manifest instead of drifting to a new local template on resume, and proof-turn reruns now clear stale turn artifacts before calling the backend so a crashed `candidate.lean` cannot be mistaken for the retry output.
 - [2026-04-17 05:45 UTC] The same review loop also tightened two repo-safety details on the Terry surface: the built-in Codex backend now writes inside a temp sandbox and only copies the stage output directory back into the real repo, and successful `lake new lean_workspace_template math` bootstraps now keep the generated Lean/mathlib version pins while still overlaying Terry's packaged workspace files. The full branch-local suite is now `57/57`, the targeted CLI e2e tests still pass, and the latest direct local `codex review --base main` came back clean with no actionable pre-merge bugs.
 - [2026-04-17 05:15 UTC] The next direct review loop stayed entirely inside the legacy compatibility surface and flushed out three more real issues there: hidden old-command JSON was still emitting Terry stage names instead of the old stage vocabulary, `approve-enrichment` / `approve-plan` / `approve-final` could not recover rejected legacy review files because they were writing the wrong review surface, and untouched legacy `03_enrichment/review.md` / `06_plan/review.md` templates could still be fed back into the backend as fake human guidance on auto-approved or compatibility-driven resumes.
-- [2026-04-17 05:15 UTC] Fixed all three legacy follow-ups, added direct regressions for each, and reran the full branch-local suite: `PYTHONPATH=src python3 -m unittest discover -s tests` is now `53/53`, while the targeted CLI e2e tests (`DemoWorkflowTest.test_cli_demo_backend_e2e` and `DemoWorkflowTest.test_cli_command_backend_e2e`) still pass on the same head. A fresh direct `codex review --base main` rerun is in flight on top of that patched surface.
+- [2026-04-17 05:15 UTC] Fixed all three legacy follow-ups, added direct regressions for each, and reran the full branch-local suite: `PYTHONPATH=src python3 -m unittest discover -s tests` is now `53/53`, while the targeted CLI e2e tests (`WorkflowTest.test_cli_command_backend_e2e_with_repo_root_before_subcommand` and `WorkflowTest.test_cli_command_backend_e2e`) still pass on the same head. A fresh direct `codex review --base main` rerun is in flight on top of that patched surface.
 
 - [2026-04-16 08:46 UTC] Rebased work onto `origin/main` after the new enrichment commit landed and stopped building on the older dirty `murphy/codex-agent-backend` branch.
 - [2026-04-16 08:46 UTC] Replaced the old four-gate CLI surface with the new Terry contract: `terry prove`, `terry resume`, review-file checkpoints, merged plan approval, and a readable workflow logger.
@@ -156,7 +156,7 @@ Gate:
 - [2026-04-16 13:00 UTC] Re-ran the branch-local suite on the patched Terry head: `PYTHONPATH=src python3 -m unittest discover -s tests` (`52` tests, all passing). A fresh clean-shell `scripts/review_project.sh agent-assisted-lean-formalization-engine --base main` rerun is now the remaining local gate before opening the PR.
 - [2026-04-16 14:00 UTC] The direct local review on the real Terry worktree found one last P2 compatibility regression: the repo still published the old `lean-formalize` entrypoint but had dropped the legacy `run`, `resume --run-id`, `status --run-id`, and `approve-*` commands. The fix keeps Terry as the documented CLI while restoring those old forms as hidden compatibility shims so existing automation does not break.
 - [2026-04-16 14:00 UTC] Re-ran the CLI compatibility regressions plus the full branch-local suite after the shim landed: `PYTHONPATH=src python3 -m unittest discover -s tests` (`62` tests, all passing). One more direct `codex review --base main` rerun is now the remaining local gate before opening the PR.
-- [2026-04-16 14:09 UTC] That rerun flushed out two smaller compatibility gaps inside the shim itself: the old global option ordering (`--agent-backend demo run ...`) was still getting overwritten by subparser defaults, and a resumed `--agent-command ...` override only affected the current turn instead of replacing the stale command stored in the manifest.
+- [2026-04-16 14:09 UTC] That rerun flushed out two smaller compatibility gaps inside the shim itself: the old global option ordering (`--agent-backend command run ...`) was still getting overwritten by subparser defaults, and a resumed `--agent-command ...` override only affected the current turn instead of replacing the stale command stored in the manifest.
 - [2026-04-16 14:09 UTC] Fixed both shim follow-ups and reran the branch-local suite: `PYTHONPATH=src python3 -m unittest discover -s tests` (`63` tests, all passing). Another direct `codex review --base main` pass is now the remaining local gate before opening the PR.
 - [2026-04-16 14:16 UTC] The next direct local review found one more old-provider compatibility edge: when the informal theorem text also carried an explicit `Target statement:` line, the synthesized fallback `theorem_spec` conclusion could absorb the whole prose block instead of the target formula. The fallback parser now strips that line out of the prose read, uses it as the conclusion when present, and keeps the quantified sentence only for assumption inference.
 - [2026-04-16 14:16 UTC] Re-ran the targeted legacy-`theorem_spec` regression plus the full branch-local suite after that parser fix: `PYTHONPATH=src python3 -m unittest discover -s tests` (`63` tests, all passing). One more direct `codex review --base main` pass is now the remaining local gate before opening the PR.
@@ -176,8 +176,8 @@ Gate:
 - [2026-04-16 22:16 UTC] Paused the merge and mapped the current hardcoded surfaces that violate that rule: `models.py` / `agents.py` stage dataclasses, `codex_agent.py` JSON-schema output, `subprocess_agent.py` `parsed_output` plus fallback theorem parsing, and the Terry-authored extraction/enrichment/plan summaries in `workflow.py`. The next cut is to move actual formalization content fully behind the backend/file boundary.
 - [2026-04-16 22:22 UTC] Wrote `docs/orchestrator-contract.md` to turn that merge blocker into a concrete target. The doc fixes the allowed Terry surface to run directories, review files, logs, template/bootstrap handling, and compile / retry control, while moving theorem understanding, enrichment, planning, and proof content fully into backend-owned stage files.
 - [2026-04-17 02:07 UTC] Replaced the typed Terry/backend contract with a file-first stage request: `agents.py` now exposes a single stage runner, `models.py` now only carries orchestration types plus the narrow stage request object, and `workflow.py` now validates backend-written `handoff.md` / `candidate.lean` files instead of parsing Terry-owned theorem, enrichment, or plan payloads.
-- [2026-04-17 02:07 UTC] Rewrote the built-in backends onto that contract. `codex_agent.py` now instructs `codex exec` to read prior files and write the required stage file inside the run directory, `subprocess_agent.py` now expects only a prompt/raw-response envelope while the provider writes files directly, and the demo / scripted provider paths now follow the same backend-owned file surface.
-- [2026-04-17 02:07 UTC] Rewrote the validation surface to match the new architecture: `PYTHONPATH=src python3 -m unittest discover -s tests` is now `25/25` on a smaller file-contract suite, and both fresh CLI e2e paths pass on temp repo roots (`demo` happy path and command-backend repair path with `2` proof attempts). The fresh direct local `codex review --base main` run on this head is now the remaining Milestone 1 gate.
+- [2026-04-17 02:07 UTC] Rewrote the built-in backends onto that contract. `codex_agent.py` now instructs `codex exec` to read prior files and write the required stage file inside the run directory, and `subprocess_agent.py` now expects only a prompt/raw-response envelope while the provider writes files directly.
+- [2026-04-17 02:07 UTC] Rewrote the validation surface to match the new architecture: `PYTHONPATH=src python3 -m unittest discover -s tests` is now `25/25` on a smaller file-contract suite, and the fresh command-backend CLI e2e path still passes on temp repo roots with `2` proof attempts. The fresh direct local `codex review --base main` run on this head is now the remaining Milestone 1 gate.
 - [2026-04-17 02:07 UTC] The first direct review on the orchestrator-only cut found two real regressions and both are now fixed: auto-approved runs no longer advertise missing review files to backends, and paused legacy runs now stay on their legacy checkpoint surfaces until Terry can migrate them honestly. The suite is back to green after adding regressions for both fixes.
 - [2026-04-17 03:48 UTC] The next direct review surfaced two more real workflow compatibility gaps and both are now fixed: reopened proof-blocked checkpoints now reset a consumed `decision: retry` review file back to `pending`, and legacy resumed runs now hand backends the real normalized-source path by falling back to `01_normalized/normalized.md` when `00_input/normalized.md` is absent.
 - [2026-04-17 03:48 UTC] Re-ran the full branch-local suite plus a manual-review command-backend CLI smoke after those fixes: `PYTHONPATH=src python3 -m unittest discover -s tests` is now `47/47`, the fresh CLI path still completes after one explicit proof retry, and the fresh direct `codex review --base main` rerun is now the remaining Milestone 1 gate.
@@ -188,7 +188,7 @@ Status: complete on `main` as of archived run `convergent-seq-bounded`.
 
 Success criteria:
 
-- a non-demo theorem forces at least one genuine repair attempt on the Terry surface
+- a real theorem forces at least one genuine repair attempt on the Terry surface
 - the resulting artifact trail is readable enough that a human can audit the proof loop
 
 Gate:

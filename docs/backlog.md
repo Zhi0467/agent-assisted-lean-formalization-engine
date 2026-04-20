@@ -31,11 +31,11 @@ Current verification:
 
 - `PYTHONPATH=src python3 -m unittest discover -s tests` (`122` tests, all passing on the latest PR `#6` head; latest code-changing fix `ef80610`)
 - targeted CLI e2e tests still pass on the merged head:
-  `DemoWorkflowTest.test_cli_demo_backend_e2e`
-  `DemoWorkflowTest.test_cli_command_backend_e2e`
-  `DemoWorkflowTest.test_cli_review_command_writes_attempt_artifacts`
-  `DemoWorkflowTest.test_cli_retry_command_allows_one_more_attempt`
-- `DemoWorkflowTest.test_cli_demo_backend_e2e_accepts_workdir_after_subcommand`
+  `WorkflowTest.test_cli_command_backend_e2e_with_repo_root_before_subcommand`
+  `WorkflowTest.test_cli_command_backend_e2e`
+  `WorkflowTest.test_cli_review_command_writes_attempt_artifacts`
+  `WorkflowTest.test_cli_retry_command_allows_one_more_attempt`
+- `WorkflowTest.test_cli_command_backend_accepts_workdir_after_subcommand`
 - real same-`--workdir` Terry CLI e2e on two elementary analysis theorems passed after
   the final cache hardening pass:
   - `0 <= |x|` finished with `lake update` then `lake build`

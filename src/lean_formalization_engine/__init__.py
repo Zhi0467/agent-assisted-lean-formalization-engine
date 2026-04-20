@@ -1,13 +1,17 @@
 """Filesystem-first scaffold for theorem-to-Lean workflows."""
 
 from .agents import FormalizationAgent
-from .codex_agent import CodexCliFormalizationAgent
-from .demo_agent import DemoFormalizationAgent
+from .cli_exec_agent import (
+    CliExecFormalizationAgent,
+    CodexCliFormalizationAgent,
+    SUPPORTED_CLI_BACKENDS,
+)
 from .workflow import FormalizationWorkflow
 
 __all__ = [
+    "CliExecFormalizationAgent",
     "CodexCliFormalizationAgent",
-    "DemoFormalizationAgent",
     "FormalizationAgent",
     "FormalizationWorkflow",
+    "SUPPORTED_CLI_BACKENDS",
 ]

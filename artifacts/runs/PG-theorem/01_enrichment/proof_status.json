@@ -1,0 +1,5 @@
+{
+  "obtained": true,
+  "source": "artifacts/runs/PG-theorem/01_enrichment/review.md, corroborated by artifacts/runs/PG-theorem/00_input/source.pdf (Andy L. Jones, \"A Clearer Proof of the Policy Gradient Theorem\", first embedded article in the PDF).",
+  "notes": "The reviewer notes provide the explicit finite-state assumptions A1-A3 and a rigorous fixed-point proof. The source PDF contains the same core argument in a more informal presentation. The reviewer file still records decision: reject, so downstream execution should wait for human approval."
+}

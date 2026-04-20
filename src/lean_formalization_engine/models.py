@@ -95,6 +95,7 @@ class StageRequest:
     previous_attempt_dir: str | None = None
     attempt: int | None = None
     max_attempts: int | None = None
+    stale_output_paths: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -139,7 +140,7 @@ class ReviewDecision:
 class AgentConfig:
     backend: str
     command: list[str] | None = None
-    codex_model: str | None = None
+    model: str | None = None
 
 
 @dataclass

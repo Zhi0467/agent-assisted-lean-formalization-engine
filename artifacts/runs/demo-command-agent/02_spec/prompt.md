@@ -1,1 +1,0 @@
-Extract a theorem specification from the normalized theorem source.

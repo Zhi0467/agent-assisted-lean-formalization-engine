@@ -1,9 +1,0 @@
-{
-  "content": "import FormalizationEngineWorkspace.Basic\n\ntheorem zero_add_provider_demo (n : Nat) : 0 + n = n := by\n  simpa using Nat.zero_add n\n",
-  "imports": [
-    "FormalizationEngineWorkspace.Basic"
-  ],
-  "module_name": "FormalizationEngineWorkspace.Generated",
-  "rationale": "Repair the draft using the previous compile result. Observed diagnostics: ['$ /Users/murphy/.elan/bin/lake build FormalizationEngineWorkspace', 'info: FormalizationEngineWorkspace: no previous manifest, creating one from scratch', 'info: toolchain not updated; already up-to-date']",
-  "theorem_name": "zero_add_provider_demo"
-}

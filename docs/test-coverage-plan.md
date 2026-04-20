@@ -54,16 +54,6 @@ This document tracks which coverage gaps have been addressed and which remain op
 
 ---
 
-### `demo_agent.py` — unmatched theorem and REVIEW with notes
-
-**Risk:** The `ValueError` in `_select_demo_theorem` and the reviewer-notes branch in REVIEW stage are dead code from the test perspective; a refactor that breaks them goes undetected.
-
-**What to add:**
-- A workflow test that passes source text matching neither demo theorem pattern and asserts a `ValueError` is raised at the PROOF/ENRICHMENT stage.
-- A REVIEW-stage test that sets `review_notes_path` to a file with content and asserts the notes are read and incorporated.
-
----
-
 ### `subprocess_agent.py` — `working_directory` propagation
 
 **Risk:** The `working_directory` argument is stored but its propagation into `subprocess.run(cwd=...)` is never verified.

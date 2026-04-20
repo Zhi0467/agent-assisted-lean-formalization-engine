@@ -65,8 +65,8 @@ def _write_plan(request: dict[str, object]) -> str:
             "",
             "Keep the theorem over natural numbers and formalize it directly in the local Terry workspace.",
             "",
-            "Proposed theorem name: `zero_add_provider_demo`",
-            "Target statement: `theorem zero_add_provider_demo (n : Nat) : 0 + n = n`",
+            "Proposed theorem name: `zero_add_provider`",
+            "Target statement: `theorem zero_add_provider (n : Nat) : 0 + n = n`",
             "Imports: `FormalizationEngineWorkspace.Basic`",
             "Proof route: use `Nat.zero_add`.",
             "",
@@ -87,7 +87,7 @@ def _write_candidate(request: dict[str, object]) -> str:
             [
                 "import FormalizationEngineWorkspace.Basic",
                 "",
-                "theorem zero_add_provider_demo (n : Nat) : 0 + n = n := by",
+                "theorem zero_add_provider (n : Nat) : 0 + n = n := by",
                 "  sorry",
                 "",
             ]
@@ -100,7 +100,7 @@ def _write_candidate(request: dict[str, object]) -> str:
             [
                 "import FormalizationEngineWorkspace.Basic",
                 "",
-                "theorem zero_add_provider_demo (n : Nat) : 0 + n = n := by",
+                "theorem zero_add_provider (n : Nat) : 0 + n = n := by",
                 "  simpa using Nat.zero_add n",
                 "",
             ]

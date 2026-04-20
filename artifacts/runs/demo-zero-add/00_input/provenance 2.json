@@ -1,7 +1,0 @@
-{
-  "extraction_method": "plain_text",
-  "source": {
-    "kind": "markdown",
-    "path": "examples/inputs/zero_add.md"
-  }
-}

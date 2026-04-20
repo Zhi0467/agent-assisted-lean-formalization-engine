@@ -1,3 +1,0 @@
-{
-  "raw_response": "{\n  \"helper_definitions\": [],\n  \"imports\": [\n    \"FormalizationEngineWorkspace.Basic\"\n  ],\n  \"proof_sketch\": [\n    \"Import the local basic workspace module.\",\n    \"Use the core theorem `Nat.zero_add`.\",\n    \"Close the goal with `simpa`.\"\n  ],\n  \"target_statement\": \"theorem zero_add_demo (n : Nat) : 0 + n = n\",\n  \"theorem_name\": \"zero_add_demo\"\n}"
-}

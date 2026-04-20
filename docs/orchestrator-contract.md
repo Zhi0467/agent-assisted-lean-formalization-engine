@@ -11,7 +11,7 @@ the run directory, and Terry compiles only the current `candidate.lean`.
 ## Terry Owns
 
 - run creation under `artifacts/runs/<run_id>/`
-- source ingestion and provenance capture under `00_input/`
+- source snapshotting plus minimal source metadata under `00_input/`
 - `checkpoint.md`, `review.md`, and persisted `decision.json` at each human handoff
 - `logs/timeline.md` and `logs/workflow.jsonl`
 - Lean workspace discovery / bootstrap and the compile invocation
@@ -46,8 +46,8 @@ launch the backend, but theorem content itself should travel only through files.
 
 ### Fixed Terry surfaces
 
-- `00_input/source.txt`
-- `00_input/normalized.md`
+- `00_input/source.*` (opaque source snapshot; the extension depends on the original input file)
+- `00_input/provenance.json`
 - `<stage>/checkpoint.md`
 - `<stage>/review.md`
 - `<stage>/decision.json`
@@ -117,7 +117,7 @@ or proof content that already lives on disk.
   Single file-first backend protocol: `run_stage(StageRequest) -> AgentTurn`
 - `src/lean_formalization_engine/models.py`
   Control-plane-only request, manifest, and compile types without Terry-owned theorem or plan schemas
-- `src/lean_formalization_engine/codex_agent.py`
+- `src/lean_formalization_engine/cli_exec_agent.py`
   `codex exec` prompt that reads prior files and writes the required stage file directly
 - `src/lean_formalization_engine/subprocess_agent.py`
   External provider bridge that passes the narrow request over stdin/stdout and expects the provider to write files directly

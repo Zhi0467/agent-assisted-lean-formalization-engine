@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from .backend_runtime import ProgressCallback, run_subprocess_with_heartbeat
 from .models import AgentTurn, StageRequest, to_jsonable
 
 
@@ -29,16 +30,26 @@ class SubprocessFormalizationAgent:
         command: list[str],
         name: str | None = None,
         working_directory: Path | None = None,
+        heartbeat_interval_seconds: float = 10.0,
     ):
         if not command:
             raise ValueError("SubprocessFormalizationAgent requires a non-empty command.")
         self.command = command
         self.name = name or _default_agent_name(command)
         self.working_directory = working_directory
+        self.heartbeat_interval_seconds = heartbeat_interval_seconds
 
-    def run_stage(self, request: StageRequest) -> AgentTurn:
+    def run_stage(
+        self,
+        request: StageRequest,
+        progress_callback: ProgressCallback | None = None,
+    ) -> AgentTurn:
         request_payload = to_jsonable(request)
-        provider_payload = self._invoke_provider(request_payload, stage_label=request.stage.value)
+        provider_payload = self._invoke_provider(
+            request_payload,
+            stage_label=request.stage.value,
+            progress_callback=progress_callback,
+        )
         if not isinstance(provider_payload, dict):
             raise ProviderResponseError(
                 f"Provider returned a non-object response during `{request.stage.value}`.",
@@ -67,21 +78,38 @@ class SubprocessFormalizationAgent:
         payload: dict[str, Any],
         *,
         stage_label: str,
+        progress_callback: ProgressCallback | None = None,
     ) -> dict[str, Any]:
         try:
-            response = subprocess.run(
+            if progress_callback is not None:
+                progress_callback(
+                    "backend_process_started",
+                    f"Starting provider command for `{stage_label}`.",
+                    {"command": self.command},
+                )
+            execution = run_subprocess_with_heartbeat(
                 self.command,
                 cwd=self.working_directory,
-                input=json.dumps(payload),
-                capture_output=True,
-                text=True,
-                check=False,
+                input_text=json.dumps(payload),
+                heartbeat_interval_seconds=self.heartbeat_interval_seconds,
+                progress_callback=progress_callback,
             )
         except FileNotFoundError as exc:
             raise RuntimeError(
                 f"Provider command `{self.command[0]}` is not available for `{stage_label}`."
             ) from exc
 
+        response = execution.result
+        if progress_callback is not None:
+            progress_callback(
+                "backend_process_completed",
+                f"Provider command finished for `{stage_label}`.",
+                {
+                    "command": self.command,
+                    "elapsed_seconds": execution.elapsed_seconds,
+                    "returncode": response.returncode,
+                },
+            )
         if response.returncode != 0:
             stderr = response.stderr.strip()
             stdout = response.stdout.strip()

@@ -1,5 +1,0 @@
-$ lake build FormalizationEngineWorkspace
-✔ [2/5] Built FormalizationEngineWorkspace.Basic (1.8s)
-✔ [3/5] Built FormalizationEngineWorkspace.Generated (131ms)
-✔ [4/5] Built FormalizationEngineWorkspace (117ms)
-Build completed successfully (5 jobs).

@@ -1,6 +1,7 @@
-- Read `plan_handoff`, `natural_language_statement`, `natural_language_proof`, and any `plan_review` / `proof_review` notes before editing Lean.
+- Read `plan_handoff`, `natural_language_statement`, `natural_language_proof`, optional `relevant_lean_objects`, and any `plan_review` / `proof_review` notes before editing Lean.
 - Objective: produce exactly the next `candidate.lean` for this attempt while staying inside the approved theorem statement and proof route.
 - Formalize the approved plan into Lean.
+- Reuse the existing Lean/mathlib objects identified during enrichment when that pointer is available.
 - Keep the theorem surface aligned with the approved statement unless reviewer notes explicitly change it.
 - On repair attempts, read the previous candidate and compile result before editing.
 - Read any previous walkthrough, readable-candidate, or error-report pointers before repairing.

@@ -2,7 +2,7 @@
 
 CLI-first engine for turning theorem sources into compiling Lean 4 code with explicit
 human checkpoints. Current focus: keep the new orchestrator-only Terry surface stable
-through review, then stress it on a non-demo theorem with a real repair turn.
+through review, then stress it on a real theorem with a real repair turn.
 
 ## Key Docs
 
@@ -16,7 +16,7 @@ through review, then stress it on a non-demo theorem with a real repair turn.
 
 - Install: `python3 -m pip install . --user`
 - PATH helper: `export PATH="$(python3 -m site --user-base)/bin:$PATH"`
-- Main CLI: `terry prove ...`, `terry resume ...`, `terry status ...`
+- Main CLI: `terry prove ...`, `terry resume <run_id> --approve` (or edit `review.md` for notes/rejection then `terry resume <run_id>`), `terry status ...`
 - Tests: `PYTHONPATH=src python3 -m unittest discover -s tests`
 - Lean tools: `source "$HOME/.elan/env"`
 - Do not communicate on Slack from inside the project repo

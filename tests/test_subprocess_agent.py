@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 import unittest
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -121,6 +122,28 @@ class TestInvokeProvider(unittest.TestCase):
         with patch("subprocess.run", return_value=_make_completed(stdout=json.dumps(payload))):
             result = agent._invoke_provider({}, stage_label="enrichment")
         self.assertEqual(result["prompt"], "do something")
+
+    def test_progress_callback_receives_heartbeat_for_long_provider_run(self):
+        agent = SubprocessFormalizationAgent(["fake-cmd"], heartbeat_interval_seconds=0.01)
+        events: list[tuple[str, str, dict[str, object] | None]] = []
+
+        def slow_run(*args, **kwargs):  # type: ignore[no-untyped-def]
+            time.sleep(0.03)
+            return _make_completed(stdout=json.dumps({"prompt": "ok", "raw_response": "done"}))
+
+        with patch("lean_formalization_engine.subprocess_agent.subprocess.run", side_effect=slow_run):
+            agent._invoke_provider(
+                {},
+                stage_label="proof",
+                progress_callback=lambda event_type, summary, details=None: events.append(
+                    (event_type, summary, details)
+                ),
+            )
+
+        event_types = [event_type for event_type, _, _ in events]
+        self.assertIn("backend_process_started", event_types)
+        self.assertIn("backend_process_heartbeat", event_types)
+        self.assertIn("backend_process_completed", event_types)
 
 
 class TestRunStage(unittest.TestCase):

@@ -17,15 +17,11 @@ from lean_formalization_engine.prompt_loader import (
 )
 
 _ALL_TEMPLATES = [
-    "codex_common.md",
-    "codex_enrichment.md",
-    "codex_plan.md",
-    "codex_proof.md",
-    "codex_review.md",
-    "demo_enrichment.md",
-    "demo_plan.md",
-    "demo_proof.md",
-    "demo_review.md",
+    "stage_common.md",
+    "stage_enrichment.md",
+    "stage_plan.md",
+    "stage_proof.md",
+    "stage_review.md",
 ]
 
 
@@ -43,7 +39,7 @@ class TestLoadPromptTemplate(unittest.TestCase):
         self.assertIn("does_not_exist.md", str(ctx.exception))
 
     def test_returns_string(self):
-        content = load_prompt_template("demo_enrichment.md")
+        content = load_prompt_template("stage_enrichment.md")
         self.assertIsInstance(content, str)
 
 
@@ -74,19 +70,28 @@ class TestRenderBulletList(unittest.TestCase):
 
 class TestRenderPromptTemplate(unittest.TestCase):
     def test_substitutes_kwargs(self):
-        # demo_enrichment.md has {theorem_name} and {output_dir} placeholders
+        # stage_common.md has stage and output-path placeholders.
         result = render_prompt_template(
-            "demo_enrichment.md",
-            theorem_name="zero_add",
+            "stage_common.md",
+            stage="enrichment",
+            run_dir="/tmp/run",
             output_dir="/tmp/out",
+            stage_inputs="- `source`: /tmp/in.md",
+            required_outputs="- handoff.md",
+            stale_outputs_section="",
+            stage_instructions="Follow the stage instructions.\n",
+            reviewer_notes_section="",
+            latest_compile_section="",
+            previous_attempt_section="",
+            attempt_section="",
         )
-        self.assertIn("zero_add", result)
+        self.assertIn("Stage: enrichment", result)
+        self.assertIn("/tmp/run", result)
         self.assertIn("/tmp/out", result)
 
     def test_missing_key_raises_key_error(self):
         with self.assertRaises(KeyError):
-            # Provide none of the required kwargs
-            render_prompt_template("demo_enrichment.md")
+            render_prompt_template("stage_common.md")
 
     def test_missing_template_raises_file_not_found(self):
         with self.assertRaises(FileNotFoundError):

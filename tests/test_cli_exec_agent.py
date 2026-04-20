@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from argparse import Namespace
 from pathlib import Path
@@ -26,10 +27,14 @@ from lean_formalization_engine.cli import (
     _resolve_lake_path,
     _resume_agent_config,
     build_agent,
+    build_agent_with_options,
     build_agent_config,
     render_manifest_summary,
 )
-from lean_formalization_engine.codex_agent import CodexCliFormalizationAgent
+from lean_formalization_engine.cli_exec_agent import (
+    CliExecFormalizationAgent,
+    CodexCliFormalizationAgent,
+)
 from lean_formalization_engine.models import AgentConfig, BackendStage, RunManifest, RunStage, SourceKind, SourceRef, StageRequest
 from lean_formalization_engine.prompt_loader import load_prompt_template
 from lean_formalization_engine.subprocess_agent import ProviderResponseError, SubprocessFormalizationAgent
@@ -44,6 +49,8 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
         *,
         current_stage: str,
         attempt_count: int = 0,
+        agent_name: str = "codex_cli:default",
+        agent_config: dict[str, object] | None = None,
     ) -> Path:
         run_root = repo_root / "artifacts" / "runs" / run_id
         run_root.mkdir(parents=True, exist_ok=True)
@@ -52,8 +59,8 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
                 {
                     "run_id": run_id,
                     "source": {"path": "input.md", "kind": "markdown"},
-                    "agent_name": "demo_zero_add_agent",
-                    "agent_config": {"backend": "demo"},
+                    "agent_name": agent_name,
+                    "agent_config": {"backend": "codex"} if agent_config is None else agent_config,
                     "template_dir": str((repo_root / "lean_workspace_template").resolve()),
                     "created_at": "2026-04-16T00:00:00Z",
                     "updated_at": "2026-04-16T00:00:00Z",
@@ -79,24 +86,44 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
 
     def test_build_agent_config_defaults_to_codex_without_codex(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
-        args = Namespace(agent_backend=None, agent_command=None, codex_model=None)
+        args = Namespace(agent_backend=None, agent_command=None, model=None, codex_model=None)
         config = build_agent_config(args, project_root)
         self.assertEqual(config.backend, "codex")
-        self.assertIsNone(config.codex_model)
+        self.assertIsNone(config.model)
 
     def test_build_agent_config_defaults_to_codex_when_available(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
-        args = Namespace(agent_backend=None, agent_command=None, codex_model=None)
+        args = Namespace(agent_backend=None, agent_command=None, model=None, codex_model=None)
         with patch("lean_formalization_engine.cli.shutil.which", return_value="/usr/bin/codex"):
             config = build_agent_config(args, project_root)
         self.assertEqual(config.backend, "codex")
-        self.assertIsNone(config.codex_model)
+        self.assertIsNone(config.model)
+
+    def test_build_agent_config_accepts_claude_backend(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        args = Namespace(
+            agent_backend="claude",
+            agent_command=None,
+            model="sonnet-test",
+            codex_model=None,
+        )
+        config = build_agent_config(args, project_root)
+        self.assertEqual(config.backend, "claude")
+        self.assertEqual(config.model, "sonnet-test")
+
+    def test_build_agent_config_accepts_legacy_codex_model_flag(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        args = Namespace(agent_backend="codex", agent_command=None, model=None, codex_model="o4")
+        config = build_agent_config(args, project_root)
+        self.assertEqual(config.backend, "codex")
+        self.assertEqual(config.model, "o4")
 
     def test_build_agent_config_resolves_repo_relative_command(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         args = Namespace(
             agent_backend="command",
             agent_command="python3 examples/providers/scripted_repair_provider.py",
+            model=None,
             codex_model=None,
         )
         config = build_agent_config(args, project_root)
@@ -109,24 +136,15 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
             ],
         )
 
-    def test_build_agent_config_rejects_codex_model_for_command_backend(self) -> None:
+    def test_build_agent_config_rejects_model_for_command_backend(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         args = Namespace(
             agent_backend="command",
             agent_command="python3 examples/providers/scripted_repair_provider.py",
-            codex_model="gpt-test",
-        )
-        with self.assertRaisesRegex(ValueError, "--codex-model"):
-            build_agent_config(args, project_root)
-
-    def test_build_agent_config_rejects_command_flags_for_demo_backend(self) -> None:
-        project_root = Path(__file__).resolve().parents[1]
-        args = Namespace(
-            agent_backend="demo",
-            agent_command="python3 examples/providers/scripted_repair_provider.py",
+            model="gpt-test",
             codex_model=None,
         )
-        with self.assertRaisesRegex(ValueError, "--agent-command"):
+        with self.assertRaisesRegex(ValueError, "--model"):
             build_agent_config(args, project_root)
 
     def test_build_agent_config_rejects_command_flag_for_codex_backend(self) -> None:
@@ -134,7 +152,8 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
         args = Namespace(
             agent_backend="codex",
             agent_command="python3 examples/providers/scripted_repair_provider.py",
-            codex_model="gpt-test",
+            model="gpt-test",
+            codex_model=None,
         )
         with self.assertRaisesRegex(ValueError, "--agent-command"):
             build_agent_config(args, project_root)
@@ -159,6 +178,15 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
         self.assertIsInstance(agent, SubprocessFormalizationAgent)
         self.assertEqual(agent.command, config.command)
 
+    def test_build_agent_rejects_removed_demo_backend(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        with self.assertRaisesRegex(ValueError, "Legacy `demo` backend runs can no longer continue"):
+            build_agent_with_options(
+                AgentConfig(backend="demo"),
+                project_root,
+                heartbeat_interval_seconds=60.0,
+            )
+
     def test_missing_codex_agent_raises_when_a_turn_is_requested(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         config = AgentConfig(backend="codex")
@@ -168,18 +196,18 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
             agent.run_stage(
                 StageRequest(
                     stage=BackendStage.ENRICHMENT,
-                    run_id="demo",
+                    run_id="sample",
                     repo_root=str(project_root),
-                    run_dir="artifacts/runs/demo",
-                    output_dir="artifacts/runs/demo/01_enrichment",
-                    input_paths={"source": "a", "normalized_source": "b", "provenance": "c"},
+                    run_dir="artifacts/runs/sample",
+                    output_dir="artifacts/runs/sample/01_enrichment",
+                    input_paths={"source": "a", "provenance": "c"},
                     required_outputs=["handoff.md"],
                 )
             )
 
     def test_resume_agent_config_prefers_explicit_command_override(self) -> None:
         manifest = RunManifest(
-            run_id="demo",
+            run_id="sample",
             source=SourceRef(path="input.md", kind=SourceKind.MARKDOWN),
             agent_name="subprocess:provider.py",
             agent_config=AgentConfig(backend="command", command=["python3", "/tmp/stale.py"]),
@@ -193,6 +221,8 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
             legacy_agent_command=None,
             agent_backend="command",
             legacy_agent_backend=None,
+            model=None,
+            legacy_model=None,
             codex_model=None,
             legacy_codex_model=None,
         )
@@ -205,10 +235,10 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
 
     def test_resume_agent_config_rejects_backend_switch(self) -> None:
         manifest = RunManifest(
-            run_id="demo",
+            run_id="sample",
             source=SourceRef(path="input.md", kind=SourceKind.MARKDOWN),
-            agent_name="demo_zero_add_agent",
-            agent_config=AgentConfig(backend="demo"),
+            agent_name="codex_cli:default",
+            agent_config=AgentConfig(backend="codex"),
             template_dir="/tmp/template",
             created_at="2026-04-16T00:00:00Z",
             updated_at="2026-04-16T00:00:00Z",
@@ -219,6 +249,8 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
             legacy_agent_command=None,
             agent_backend="command",
             legacy_agent_backend=None,
+            model=None,
+            legacy_model=None,
             codex_model=None,
             legacy_codex_model=None,
         )
@@ -226,10 +258,35 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "keep the backend recorded in the manifest"):
             _resume_agent_config(manifest, args, repo_root)
 
+    def test_resume_agent_config_rejects_removed_demo_backend(self) -> None:
+        manifest = RunManifest(
+            run_id="sample",
+            source=SourceRef(path="input.md", kind=SourceKind.MARKDOWN),
+            agent_name="demo",
+            agent_config=AgentConfig(backend="demo"),
+            template_dir="/tmp/template",
+            created_at="2026-04-16T00:00:00Z",
+            updated_at="2026-04-16T00:00:00Z",
+            current_stage=RunStage.AWAITING_ENRICHMENT_APPROVAL,
+        )
+        args = Namespace(
+            agent_command=None,
+            legacy_agent_command=None,
+            agent_backend=None,
+            legacy_agent_backend=None,
+            model=None,
+            legacy_model=None,
+            codex_model=None,
+            legacy_codex_model=None,
+        )
+        repo_root = Path(__file__).resolve().parents[1]
+        with self.assertRaisesRegex(ValueError, "Legacy `demo` backend runs can no longer continue"):
+            _resume_agent_config(manifest, args, repo_root)
+
     def test_codex_agent_uses_workspace_write_and_file_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
-            run_root = repo_root / "artifacts" / "runs" / "demo"
+            run_root = repo_root / "artifacts" / "runs" / "sample"
             (run_root / "00_input").mkdir(parents=True, exist_ok=True)
             (run_root / "01_enrichment").mkdir(parents=True, exist_ok=True)
             (run_root / "00_input" / "source.txt").write_text("source", encoding="utf-8")
@@ -239,18 +296,17 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
 
             request = StageRequest(
                 stage=BackendStage.PLAN,
-                run_id="demo",
+                run_id="sample",
                 repo_root=str(repo_root),
-                run_dir="artifacts/runs/demo",
-                output_dir="artifacts/runs/demo/02_plan",
+                run_dir="artifacts/runs/sample",
+                output_dir="artifacts/runs/sample/02_plan",
                 input_paths={
-                    "source": "artifacts/runs/demo/00_input/source.txt",
-                    "normalized_source": "artifacts/runs/demo/00_input/normalized.md",
-                    "enrichment_handoff": "artifacts/runs/demo/01_enrichment/handoff.md",
-                    "enrichment_review": "artifacts/runs/demo/01_enrichment/review.md",
+                    "source": "artifacts/runs/sample/00_input/source.txt",
+                    "enrichment_handoff": "artifacts/runs/sample/01_enrichment/handoff.md",
+                    "enrichment_review": "artifacts/runs/sample/01_enrichment/review.md",
                 },
                 required_outputs=["handoff.md"],
-                review_notes_path="artifacts/runs/demo/01_enrichment/review.md",
+                review_notes_path="artifacts/runs/sample/01_enrichment/review.md",
             )
 
             def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
@@ -264,7 +320,7 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
                     stderr="",
                 )
 
-            with patch("lean_formalization_engine.codex_agent.subprocess.run", side_effect=fake_run) as run_mock:
+            with patch("lean_formalization_engine.backend_runtime.subprocess.run", side_effect=fake_run) as run_mock:
                 agent = CodexCliFormalizationAgent(repo_root=repo_root, model="gpt-test", executable="codex")
                 turn = agent.run_stage(request)
 
@@ -274,7 +330,7 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
             self.assertEqual(command[:6], ["codex", "exec", "--ephemeral", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "-C"])
             self.assertNotEqual(command[6], str(repo_root))
             self.assertIn("Required outputs:", prompt)
-            self.assertIn("artifacts/runs/demo/02_plan/handoff.md", prompt)
+            self.assertIn("artifacts/runs/sample/02_plan/handoff.md", prompt)
             self.assertIn("enrichment_handoff", prompt)
             self.assertEqual(turn.raw_response, "wrote 02_plan/handoff.md")
             self.assertEqual((run_root / "02_plan" / "handoff.md").read_text(encoding="utf-8"), "# Plan Handoff\n")
@@ -285,28 +341,27 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
             agent = CodexCliFormalizationAgent(repo_root=repo_root)
             request = StageRequest(
                 stage=BackendStage.PROOF,
-                run_id="demo",
+                run_id="sample",
                 repo_root=str(repo_root),
-                run_dir="artifacts/runs/demo",
-                output_dir="artifacts/runs/demo/03_proof/attempts/attempt_0002",
+                run_dir="artifacts/runs/sample",
+                output_dir="artifacts/runs/sample/03_proof/attempts/attempt_0002",
                 input_paths={
-                    "source": "artifacts/runs/demo/00_input/source.txt",
-                    "normalized_source": "artifacts/runs/demo/00_input/normalized.md",
-                    "enrichment_handoff": "artifacts/runs/demo/01_enrichment/handoff.md",
-                    "natural_language_statement": "artifacts/runs/demo/01_enrichment/natural_language_statement.md",
-                    "natural_language_proof": "artifacts/runs/demo/01_enrichment/natural_language_proof.md",
-                    "proof_status": "artifacts/runs/demo/01_enrichment/proof_status.json",
-                    "plan_handoff": "artifacts/runs/demo/02_plan/handoff.md",
-                    "previous_compile_result": "artifacts/runs/demo/03_proof/attempts/attempt_0001/compile_result.json",
-                    "previous_candidate": "artifacts/runs/demo/03_proof/attempts/attempt_0001/candidate.lean",
-                    "previous_walkthrough": "artifacts/runs/demo/03_proof/attempts/attempt_0001/review/walkthrough.md",
-                    "previous_readable_candidate": "artifacts/runs/demo/03_proof/attempts/attempt_0001/review/readable_candidate.lean",
-                    "previous_error_report": "artifacts/runs/demo/03_proof/attempts/attempt_0001/review/error.md",
+                    "source": "artifacts/runs/sample/00_input/source.txt",
+                    "enrichment_handoff": "artifacts/runs/sample/01_enrichment/handoff.md",
+                    "natural_language_statement": "artifacts/runs/sample/01_enrichment/natural_language_statement.md",
+                    "natural_language_proof": "artifacts/runs/sample/01_enrichment/natural_language_proof.md",
+                    "proof_status": "artifacts/runs/sample/01_enrichment/proof_status.json",
+                    "plan_handoff": "artifacts/runs/sample/02_plan/handoff.md",
+                    "previous_compile_result": "artifacts/runs/sample/03_proof/attempts/attempt_0001/compile_result.json",
+                    "previous_candidate": "artifacts/runs/sample/03_proof/attempts/attempt_0001/candidate.lean",
+                    "previous_walkthrough": "artifacts/runs/sample/03_proof/attempts/attempt_0001/review/walkthrough.md",
+                    "previous_readable_candidate": "artifacts/runs/sample/03_proof/attempts/attempt_0001/review/readable_candidate.lean",
+                    "previous_error_report": "artifacts/runs/sample/03_proof/attempts/attempt_0001/review/error.md",
                 },
                 required_outputs=["candidate.lean"],
-                review_notes_path="artifacts/runs/demo/03_proof/review.md",
-                latest_compile_result_path="artifacts/runs/demo/03_proof/attempts/attempt_0001/compile_result.json",
-                previous_attempt_dir="artifacts/runs/demo/03_proof/attempts/attempt_0001",
+                review_notes_path="artifacts/runs/sample/03_proof/review.md",
+                latest_compile_result_path="artifacts/runs/sample/03_proof/attempts/attempt_0001/compile_result.json",
+                previous_attempt_dir="artifacts/runs/sample/03_proof/attempts/attempt_0001",
                 attempt=2,
                 max_attempts=3,
             )
@@ -321,36 +376,35 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
 
     def test_prompt_templates_are_centralized(self) -> None:
         for template_name in (
-            "codex_common.md",
-            "codex_enrichment.md",
-            "codex_plan.md",
-            "codex_proof.md",
-            "codex_review.md",
-            "demo_enrichment.md",
-            "demo_plan.md",
-            "demo_proof.md",
-            "demo_review.md",
+            "stage_common.md",
+            "stage_enrichment.md",
+            "stage_plan.md",
+            "stage_proof.md",
+            "stage_review.md",
         ):
             self.assertTrue(load_prompt_template(template_name).strip())
 
-    def test_codex_stage_templates_name_core_input_pointers(self) -> None:
+    def test_stage_templates_name_core_input_pointers(self) -> None:
         expected_snippets = {
-            "codex_enrichment.md": ("`source`", "`normalized_source`", "`provenance`"),
-            "codex_plan.md": (
+            "stage_enrichment.md": ("`source`", "`provenance`"),
+            "stage_plan.md": (
                 "`enrichment_handoff`",
                 "`natural_language_statement`",
                 "`natural_language_proof`",
                 "`proof_status`",
+                "`relevant_lean_objects`",
             ),
-            "codex_proof.md": (
+            "stage_proof.md": (
                 "`plan_handoff`",
                 "`natural_language_statement`",
                 "`natural_language_proof`",
+                "`relevant_lean_objects`",
             ),
-            "codex_review.md": (
+            "stage_review.md": (
                 "`plan_handoff`",
                 "`natural_language_statement`",
                 "`natural_language_proof`",
+                "`relevant_lean_objects`",
                 "`attempt_candidate`",
                 "`attempt_compile_result`",
             ),
@@ -363,8 +417,7 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
     def test_runtime_modules_do_not_embed_literal_prompt_strings(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         for relative_path in (
-            "src/lean_formalization_engine/codex_agent.py",
-            "src/lean_formalization_engine/demo_agent.py",
+            "src/lean_formalization_engine/cli_exec_agent.py",
         ):
             module = ast.parse((project_root / relative_path).read_text(encoding="utf-8"))
             for node in ast.walk(module):
@@ -384,7 +437,7 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
             (repo_root / "README.md").write_text("original", encoding="utf-8")
-            run_root = repo_root / "artifacts" / "runs" / "demo"
+            run_root = repo_root / "artifacts" / "runs" / "sample"
             (run_root / "00_input").mkdir(parents=True, exist_ok=True)
             (run_root / "00_input" / "source.txt").write_text("source", encoding="utf-8")
             (run_root / "00_input" / "normalized.md").write_text("normalized", encoding="utf-8")
@@ -392,14 +445,13 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
 
             request = StageRequest(
                 stage=BackendStage.ENRICHMENT,
-                run_id="demo",
+                run_id="sample",
                 repo_root=str(repo_root),
-                run_dir="artifacts/runs/demo",
-                output_dir="artifacts/runs/demo/01_enrichment",
+                run_dir="artifacts/runs/sample",
+                output_dir="artifacts/runs/sample/01_enrichment",
                 input_paths={
-                    "source": "artifacts/runs/demo/00_input/source.txt",
-                    "normalized_source": "artifacts/runs/demo/00_input/normalized.md",
-                    "provenance": "artifacts/runs/demo/00_input/provenance.json",
+                    "source": "artifacts/runs/sample/00_input/source.txt",
+                    "provenance": "artifacts/runs/sample/00_input/provenance.json",
                 },
                 required_outputs=["handoff.md"],
             )
@@ -412,7 +464,7 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
                 (output_dir / "handoff.md").write_text("# Enrichment\n", encoding="utf-8")
                 return subprocess.CompletedProcess(args=command, returncode=0, stdout="ok", stderr="")
 
-            with patch("lean_formalization_engine.codex_agent.subprocess.run", side_effect=fake_run):
+            with patch("lean_formalization_engine.backend_runtime.subprocess.run", side_effect=fake_run):
                 agent = CodexCliFormalizationAgent(repo_root=repo_root, executable="codex")
                 agent.run_stage(request)
 
@@ -423,7 +475,7 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
             (repo_root / "AGENTS.md").write_text("project instructions", encoding="utf-8")
-            run_root = repo_root / "artifacts" / "runs" / "demo"
+            run_root = repo_root / "artifacts" / "runs" / "sample"
             (run_root / "00_input").mkdir(parents=True, exist_ok=True)
             (run_root / "00_input" / "source.txt").write_text("source", encoding="utf-8")
             (run_root / "00_input" / "normalized.md").write_text("normalized", encoding="utf-8")
@@ -431,14 +483,13 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
 
             request = StageRequest(
                 stage=BackendStage.ENRICHMENT,
-                run_id="demo",
+                run_id="sample",
                 repo_root=str(repo_root),
-                run_dir="artifacts/runs/demo",
-                output_dir="artifacts/runs/demo/01_enrichment",
+                run_dir="artifacts/runs/sample",
+                output_dir="artifacts/runs/sample/01_enrichment",
                 input_paths={
-                    "source": "artifacts/runs/demo/00_input/source.txt",
-                    "normalized_source": "artifacts/runs/demo/00_input/normalized.md",
-                    "provenance": "artifacts/runs/demo/00_input/provenance.json",
+                    "source": "artifacts/runs/sample/00_input/source.txt",
+                    "provenance": "artifacts/runs/sample/00_input/provenance.json",
                 },
                 required_outputs=["handoff.md"],
             )
@@ -452,14 +503,14 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
                 (output_dir / "handoff.md").write_text("# Enrichment\n", encoding="utf-8")
                 return subprocess.CompletedProcess(args=command, returncode=0, stdout="ok", stderr="")
 
-            with patch("lean_formalization_engine.codex_agent.subprocess.run", side_effect=fake_run):
+            with patch("lean_formalization_engine.backend_runtime.subprocess.run", side_effect=fake_run):
                 agent = CodexCliFormalizationAgent(repo_root=repo_root, executable="codex")
                 agent.run_stage(request)
 
     def test_codex_agent_missing_cli_raises(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
-            run_root = repo_root / "artifacts" / "runs" / "demo" / "00_input"
+            run_root = repo_root / "artifacts" / "runs" / "sample" / "00_input"
             run_root.mkdir(parents=True, exist_ok=True)
             (run_root / "source.txt").write_text("source", encoding="utf-8")
             (run_root / "normalized.md").write_text("normalized", encoding="utf-8")
@@ -467,24 +518,71 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
 
             request = StageRequest(
                 stage=BackendStage.ENRICHMENT,
-                run_id="demo",
+                run_id="sample",
                 repo_root=str(repo_root),
-                run_dir="artifacts/runs/demo",
-                output_dir="artifacts/runs/demo/01_enrichment",
+                run_dir="artifacts/runs/sample",
+                output_dir="artifacts/runs/sample/01_enrichment",
                 input_paths={
-                    "source": "artifacts/runs/demo/00_input/source.txt",
-                    "normalized_source": "artifacts/runs/demo/00_input/normalized.md",
-                    "provenance": "artifacts/runs/demo/00_input/provenance.json",
+                    "source": "artifacts/runs/sample/00_input/source.txt",
+                    "provenance": "artifacts/runs/sample/00_input/provenance.json",
                 },
                 required_outputs=["handoff.md"],
             )
             with patch(
-                "lean_formalization_engine.codex_agent.subprocess.run",
+                "lean_formalization_engine.backend_runtime.subprocess.run",
                 side_effect=FileNotFoundError("codex"),
             ):
                 agent = CodexCliFormalizationAgent(repo_root=repo_root)
                 with self.assertRaisesRegex(RuntimeError, "codex"):
                     agent.run_stage(request)
+
+    def test_codex_agent_emits_heartbeat_for_long_running_exec(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            run_root = repo_root / "artifacts" / "runs" / "sample"
+            (run_root / "00_input").mkdir(parents=True, exist_ok=True)
+            (run_root / "00_input" / "source.txt").write_text("source", encoding="utf-8")
+            (run_root / "00_input" / "provenance.json").write_text("{}", encoding="utf-8")
+
+            request = StageRequest(
+                stage=BackendStage.ENRICHMENT,
+                run_id="sample",
+                repo_root=str(repo_root),
+                run_dir="artifacts/runs/sample",
+                output_dir="artifacts/runs/sample/01_enrichment",
+                input_paths={
+                    "source": "artifacts/runs/sample/00_input/source.txt",
+                    "provenance": "artifacts/runs/sample/00_input/provenance.json",
+                },
+                required_outputs=["handoff.md"],
+            )
+            events: list[tuple[str, str, dict[str, object] | None]] = []
+
+            def slow_run(command, **kwargs):  # type: ignore[no-untyped-def]
+                time.sleep(0.03)
+                sandbox_root = Path(command[command.index("-C") + 1])
+                output_dir = sandbox_root / request.output_dir
+                output_dir.mkdir(parents=True, exist_ok=True)
+                (output_dir / "handoff.md").write_text("# Enrichment\n", encoding="utf-8")
+                return subprocess.CompletedProcess(args=command, returncode=0, stdout="ok", stderr="")
+
+            with patch("lean_formalization_engine.backend_runtime.subprocess.run", side_effect=slow_run):
+                agent = CodexCliFormalizationAgent(
+                    repo_root=repo_root,
+                    executable="codex",
+                    heartbeat_interval_seconds=0.01,
+                )
+                agent.run_stage(
+                    request,
+                    progress_callback=lambda event_type, summary, details=None: events.append(
+                        (event_type, summary, details)
+                    ),
+                )
+
+            event_types = [event_type for event_type, _, _ in events]
+            self.assertIn("backend_process_started", event_types)
+            self.assertIn("backend_process_heartbeat", event_types)
+            self.assertIn("backend_process_completed", event_types)
 
     def test_subprocess_agent_passes_file_request_and_reads_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -512,11 +610,11 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
             )
             request = StageRequest(
                 stage=BackendStage.ENRICHMENT,
-                run_id="demo",
+                run_id="sample",
                 repo_root=str(repo_root),
-                run_dir="artifacts/runs/demo",
-                output_dir="artifacts/runs/demo/01_enrichment",
-                input_paths={"source": "a", "normalized_source": "b", "provenance": "c"},
+                run_dir="artifacts/runs/sample",
+                output_dir="artifacts/runs/sample/01_enrichment",
+                input_paths={"source": "a", "provenance": "c"},
                 required_outputs=["handoff.md"],
             )
             agent = SubprocessFormalizationAgent(["python3", str(provider_script)])
@@ -534,11 +632,11 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
             )
             request = StageRequest(
                 stage=BackendStage.ENRICHMENT,
-                run_id="demo",
+                run_id="sample",
                 repo_root=str(repo_root),
-                run_dir="artifacts/runs/demo",
-                output_dir="artifacts/runs/demo/01_enrichment",
-                input_paths={"source": "a", "normalized_source": "b", "provenance": "c"},
+                run_dir="artifacts/runs/sample",
+                output_dir="artifacts/runs/sample/01_enrichment",
+                input_paths={"source": "a", "provenance": "c"},
                 required_outputs=["handoff.md"],
             )
             agent = SubprocessFormalizationAgent(["python3", str(provider_script)])
@@ -548,12 +646,39 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
     def test_render_manifest_summary_points_at_handoff_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
-            run_root = repo_root / "artifacts" / "runs" / "demo"
+            run_root = repo_root / "artifacts" / "runs" / "sample"
             (run_root / "02_plan").mkdir(parents=True, exist_ok=True)
             (run_root / "02_plan" / "checkpoint.md").write_text("# Plan Approval\n", encoding="utf-8")
             (run_root / "02_plan" / "review.md").write_text("# Plan Approval\n", encoding="utf-8")
+            (run_root / "logs").mkdir(parents=True, exist_ok=True)
+            (run_root / "logs" / "workflow.jsonl").write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "timestamp": "2026-04-19T00:00:00Z",
+                                "event_type": "backend_stage_completed",
+                                "summary": "Plan turn completed.",
+                                "stage": "plan",
+                                "details": {},
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "timestamp": "2026-04-19T00:01:00Z",
+                                "event_type": "backend_stage_completed",
+                                "summary": "Plan rerun completed.",
+                                "stage": "plan",
+                                "details": {},
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             manifest = RunManifest(
-                run_id="demo",
+                run_id="sample",
                 source=SourceRef(path="input.md", kind=SourceKind.MARKDOWN),
                 agent_name="subprocess:provider.py",
                 agent_config=AgentConfig(backend="command", command=["python3", "provider.py"]),
@@ -565,20 +690,52 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
                 attempt_count=0,
             )
             summary = render_manifest_summary(manifest, repo_root)
-            self.assertIn("Checkpoint: artifacts/runs/demo/02_plan/checkpoint.md", summary)
-            self.assertIn("Review file: artifacts/runs/demo/02_plan/review.md", summary)
+            self.assertIn("Plan turns: 2", summary)
+            self.assertIn("Checkpoint: artifacts/runs/sample/02_plan/checkpoint.md", summary)
+            self.assertIn("Review file: artifacts/runs/sample/02_plan/review.md", summary)
+            self.assertIn(
+                "Decision guide: decision: reject -> rerun the plan stage with your notes",
+                summary,
+            )
+            self.assertIn("Approve with: terry resume sample --workdir", summary)
+            self.assertIn("--approve", summary)
+            self.assertIn("only edit the review file when you need notes or a rejection", summary)
             self.assertIn("--agent-command", summary)
+
+    def test_render_manifest_summary_uses_proof_attempt_label_during_proof_stages(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            run_root = repo_root / "artifacts" / "runs" / "sample"
+            (run_root / "03_proof").mkdir(parents=True, exist_ok=True)
+            (run_root / "03_proof" / "checkpoint.md").write_text("# Proof Blocked\n", encoding="utf-8")
+            (run_root / "03_proof" / "review.md").write_text("# Proof Blocked\n", encoding="utf-8")
+            manifest = RunManifest(
+                run_id="sample",
+                source=SourceRef(path="input.md", kind=SourceKind.MARKDOWN),
+                agent_name="subprocess:provider.py",
+                agent_config=AgentConfig(backend="command", command=["python3", "provider.py"]),
+                template_dir="/tmp/template",
+                created_at="2026-04-16T00:00:00Z",
+                updated_at="2026-04-16T00:00:00Z",
+                current_stage=RunStage.PROOF_BLOCKED,
+                lake_path="/tmp/lake",
+                attempt_count=3,
+            )
+
+            summary = render_manifest_summary(manifest, repo_root)
+
+            self.assertIn("Proof attempts: 3", summary)
 
     def test_load_manifest_uses_workflow_manifest_loader(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
-            run_root = repo_root / "artifacts" / "runs" / "demo"
+            run_root = repo_root / "artifacts" / "runs" / "sample"
             run_root.mkdir(parents=True, exist_ok=True)
             payload = {
-                "run_id": "demo",
+                "run_id": "sample",
                 "source": {"path": "input.md", "kind": "markdown"},
-                "agent_name": "demo_zero_add_agent",
-                "agent_config": {"backend": "demo"},
+                "agent_name": "codex_cli:default",
+                "agent_config": {"backend": "codex"},
                 "template_dir": str((repo_root / "lean_workspace_template").resolve()),
                 "created_at": "2026-04-16T00:00:00Z",
                 "updated_at": "2026-04-16T00:00:00Z",
@@ -586,19 +743,38 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
                 "attempt_count": 0,
             }
             (run_root / "manifest.json").write_text(json.dumps(payload), encoding="utf-8")
-            manifest = _load_manifest(repo_root, "demo")
+            manifest = _load_manifest(repo_root, "sample")
             self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
+
+    def test_load_manifest_preserves_legacy_demo_backend_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            run_root = repo_root / "artifacts" / "runs" / "sample"
+            run_root.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "run_id": "sample",
+                "source": {"path": "input.md", "kind": "markdown"},
+                "agent_name": "demo",
+                "template_dir": str((repo_root / "lean_workspace_template").resolve()),
+                "created_at": "2026-04-16T00:00:00Z",
+                "updated_at": "2026-04-16T00:00:00Z",
+                "current_stage": "awaiting_plan_approval",
+                "attempt_count": 0,
+            }
+            (run_root / "manifest.json").write_text(json.dumps(payload), encoding="utf-8")
+            manifest = _load_manifest(repo_root, "sample")
+            self.assertEqual(manifest.agent_config.backend, "demo")
 
     def test_cli_status_json_round_trips_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
-            run_root = repo_root / "artifacts" / "runs" / "demo"
+            run_root = repo_root / "artifacts" / "runs" / "sample"
             run_root.mkdir(parents=True, exist_ok=True)
             payload = {
-                "run_id": "demo",
+                "run_id": "sample",
                 "source": {"path": "input.md", "kind": "markdown"},
-                "agent_name": "demo_zero_add_agent",
-                "agent_config": {"backend": "demo"},
+                "agent_name": "codex_cli:default",
+                "agent_config": {"backend": "codex"},
                 "template_dir": str((repo_root / "lean_workspace_template").resolve()),
                 "created_at": "2026-04-16T00:00:00Z",
                 "updated_at": "2026-04-16T00:00:00Z",
@@ -616,25 +792,25 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
                 "--repo-root",
                 str(repo_root),
                 "status",
-                "demo",
+                "sample",
                 "--json",
             ]
             result = subprocess.run(command, capture_output=True, text=True, env=env, check=False)
             self.assertEqual(result.returncode, 0, msg=result.stderr)
             output = json.loads(result.stdout)
-            self.assertEqual(output["run_id"], "demo")
+            self.assertEqual(output["run_id"], "sample")
             self.assertEqual(output["current_stage"], "awaiting_enrichment_approval")
 
     def test_cli_status_accepts_workdir_after_subcommand(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
-            run_root = repo_root / "artifacts" / "runs" / "demo"
+            run_root = repo_root / "artifacts" / "runs" / "sample"
             run_root.mkdir(parents=True, exist_ok=True)
             payload = {
-                "run_id": "demo",
+                "run_id": "sample",
                 "source": {"path": "input.md", "kind": "markdown"},
-                "agent_name": "demo_zero_add_agent",
-                "agent_config": {"backend": "demo"},
+                "agent_name": "codex_cli:default",
+                "agent_config": {"backend": "codex"},
                 "template_dir": str((repo_root / "lean_workspace_template").resolve()),
                 "created_at": "2026-04-16T00:00:00Z",
                 "updated_at": "2026-04-16T00:00:00Z",
@@ -650,25 +826,25 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
                 "-m",
                 "lean_formalization_engine",
                 "status",
-                "demo",
+                "sample",
                 "--workdir",
                 str(repo_root),
             ]
             result = subprocess.run(command, capture_output=True, text=True, env=env, check=False)
             self.assertEqual(result.returncode, 0, msg=result.stderr)
             self.assertIn(f"Working directory: {repo_root.resolve()}", result.stdout)
-            self.assertIn("Resume with: terry resume demo --workdir", result.stdout)
+            self.assertIn("Resume with: terry resume sample --workdir", result.stdout)
 
     def test_legacy_status_json_uses_legacy_stage_names(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
-            run_root = repo_root / "artifacts" / "runs" / "demo"
+            run_root = repo_root / "artifacts" / "runs" / "sample"
             run_root.mkdir(parents=True, exist_ok=True)
             payload = {
-                "run_id": "demo",
+                "run_id": "sample",
                 "source": {"path": "input.md", "kind": "markdown"},
-                "agent_name": "demo_zero_add_agent",
-                "agent_config": {"backend": "demo"},
+                "agent_name": "codex_cli:default",
+                "agent_config": {"backend": "codex"},
                 "template_dir": str((repo_root / "lean_workspace_template").resolve()),
                 "created_at": "2026-04-16T00:00:00Z",
                 "updated_at": "2026-04-16T00:00:00Z",
@@ -687,7 +863,7 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
                 str(repo_root),
                 "status",
                 "--run-id",
-                "demo",
+                "sample",
             ]
             result = subprocess.run(command, capture_output=True, text=True, env=env, check=False)
             self.assertEqual(result.returncode, 0, msg=result.stderr)
@@ -701,6 +877,7 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
             source_path = project_root / "examples" / "inputs" / "zero_add.md"
+            provider_script = project_root / "examples" / "providers" / "scripted_repair_provider.py"
             env = {**os.environ, "PYTHONPATH": str(project_root / "src")}
 
             prove_result = subprocess.run(
@@ -715,7 +892,9 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
                     "--run-id",
                     "legacy-approve",
                     "--agent-backend",
-                    "demo",
+                    "command",
+                    "--agent-command",
+                    f"{sys.executable} {provider_script}",
                 ],
                 cwd=project_root,
                 env=env,
@@ -765,6 +944,7 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
             source_path = project_root / "examples" / "inputs" / "zero_add.md"
+            provider_script = project_root / "examples" / "providers" / "scripted_repair_provider.py"
             env = {**os.environ, "PYTHONPATH": str(project_root / "src")}
 
             prove_result = subprocess.run(
@@ -781,7 +961,9 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
                     "--run-id",
                     "compat-spec",
                     "--agent-backend",
-                    "demo",
+                    "command",
+                    "--agent-command",
+                    f"{sys.executable} {provider_script}",
                 ],
                 cwd=project_root,
                 env=env,
@@ -872,10 +1054,17 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
         project_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
+            provider_script = project_root / "examples" / "providers" / "scripted_repair_provider.py"
             run_root = self._write_manifest(
                 repo_root,
                 "legacy-enrichment-reject",
                 current_stage="awaiting_enrichment_review",
+                agent_name="subprocess:scripted_repair_provider.py",
+                agent_config={
+                    "backend": "command",
+                    "command": ["python3", str(provider_script)],
+                    "codex_model": None,
+                },
             )
             self._write_basic_legacy_inputs(run_root)
             (run_root / "03_enrichment").mkdir(parents=True, exist_ok=True)
@@ -916,10 +1105,17 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
         project_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
+            provider_script = project_root / "examples" / "providers" / "scripted_repair_provider.py"
             run_root = self._write_manifest(
                 repo_root,
                 "legacy-plan-reject",
                 current_stage="awaiting_plan_review",
+                agent_name="subprocess:scripted_repair_provider.py",
+                agent_config={
+                    "backend": "command",
+                    "command": ["python3", str(provider_script)],
+                    "codex_model": None,
+                },
             )
             self._write_basic_legacy_inputs(run_root)
             (run_root / "06_plan").mkdir(parents=True, exist_ok=True)
