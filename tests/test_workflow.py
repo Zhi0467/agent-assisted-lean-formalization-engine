@@ -496,6 +496,7 @@ class WorkflowTest(unittest.TestCase):
         directory: Path,
         *,
         name: str = "lake-cache",
+        cache_on_update: bool = True,
         transitive_packages: tuple[tuple[str, str], ...] = (),
     ) -> Path:
         fake_lake = directory / name
@@ -509,6 +510,7 @@ class WorkflowTest(unittest.TestCase):
                     "def main() -> int:",
                     "    args = sys.argv[1:]",
                     "    cwd = pathlib.Path.cwd()",
+                    f"    cache_on_update = {cache_on_update!r}",
                     f"    transitive_packages = {list(transitive_packages)!r}",
                     "    if args[:1] == ['--version']:",
                     f"        print({name!r})",
@@ -527,6 +529,11 @@ class WorkflowTest(unittest.TestCase):
                     "            package_dir = cwd / '.lake' / 'packages' / package_name",
                     "            package_dir.mkdir(parents=True, exist_ok=True)",
                     "            (package_dir / f'{root_module_name}.lean').write_text(f'-- {package_name}\\n', encoding='utf-8')",
+                    "        if cache_on_update:",
+                    "            for package_name, root_module_name in [('mathlib', 'Mathlib'), *transitive_packages]:",
+                    "                cache_root = cwd / '.lake' / 'packages' / package_name / '.lake' / 'build' / 'lib' / 'lean'",
+                    "                cache_root.mkdir(parents=True, exist_ok=True)",
+                    "                (cache_root / f'{root_module_name}.olean').write_text('cached\\n', encoding='utf-8')",
                     "        return 0",
                     "    if args[:3] == ['exe', 'cache', 'get']:",
                     "        for package_name, root_module_name in [('mathlib', 'Mathlib'), *transitive_packages]:",
@@ -3780,7 +3787,7 @@ class WorkflowTest(unittest.TestCase):
                 ["lake-transitive update", "lake-transitive build FormalizationEngineWorkspace"],
             )
 
-    def test_lean_runner_restores_mathlib_cache_before_build(self) -> None:
+    def test_lean_runner_skips_redundant_mathlib_cache_restore_after_update(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
             packaged_template = (
@@ -3815,11 +3822,10 @@ class WorkflowTest(unittest.TestCase):
                 result.command,
                 [
                     "lake-cache update",
-                    "lake-cache exe cache get",
                     "lake-cache build FormalizationEngineWorkspace",
                 ],
             )
-            self.assertIn("restored mathlib cache", result.stdout)
+            self.assertNotIn("restored mathlib cache", result.stdout)
 
     def test_lean_runner_restores_mathlib_cache_in_reused_workspace_without_update(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

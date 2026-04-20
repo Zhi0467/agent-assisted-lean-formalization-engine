@@ -166,30 +166,31 @@ class LeanRunner:
                         passed=False,
                         status="compile_failed",
                     )
-            cache_restore_result = self._restore_mathlib_cache(workspace, lake_path)
-            if cache_restore_result is not None:
-                cache_command_text = " ".join([self._display_lake(), "exe", "cache", "get"])
-                command_texts.append(cache_command_text)
-                stdout_sections.append(
-                    self._format_process_output(
-                        cache_command_text,
-                        cache_restore_result.stdout,
-                        store,
-                        workspace,
-                        lake_path,
-                        candidate_relative_path,
+            if update_result is None:
+                cache_restore_result = self._restore_mathlib_cache(workspace, lake_path)
+                if cache_restore_result is not None:
+                    cache_command_text = " ".join([self._display_lake(), "exe", "cache", "get"])
+                    command_texts.append(cache_command_text)
+                    stdout_sections.append(
+                        self._format_process_output(
+                            cache_command_text,
+                            cache_restore_result.stdout,
+                            store,
+                            workspace,
+                            lake_path,
+                            candidate_relative_path,
+                        )
                     )
-                )
-                stderr_sections.append(
-                    self._format_process_output(
-                        cache_command_text,
-                        cache_restore_result.stderr,
-                        store,
-                        workspace,
-                        lake_path,
-                        candidate_relative_path,
+                    stderr_sections.append(
+                        self._format_process_output(
+                            cache_command_text,
+                            cache_restore_result.stderr,
+                            store,
+                            workspace,
+                            lake_path,
+                            candidate_relative_path,
+                        )
                     )
-                )
             generated_path = workspace / "FormalizationEngineWorkspace" / "Generated.lean"
             generated_path.parent.mkdir(parents=True, exist_ok=True)
             generated_path.write_text(content, encoding="utf-8")
