@@ -491,7 +491,13 @@ class WorkflowTest(unittest.TestCase):
     def _write_named_fake_lake(self, directory: Path, name: str) -> Path:
         return self._write_fake_lake(directory, name=name, version=name)
 
-    def _write_fake_lake_with_mathlib_cache(self, directory: Path, *, name: str = "lake-cache") -> Path:
+    def _write_fake_lake_with_mathlib_cache(
+        self,
+        directory: Path,
+        *,
+        name: str = "lake-cache",
+        transitive_packages: tuple[tuple[str, str], ...] = (),
+    ) -> Path:
         fake_lake = directory / name
         fake_lake.write_text(
             "\n".join(
@@ -503,6 +509,7 @@ class WorkflowTest(unittest.TestCase):
                     "def main() -> int:",
                     "    args = sys.argv[1:]",
                     "    cwd = pathlib.Path.cwd()",
+                    f"    transitive_packages = {list(transitive_packages)!r}",
                     "    if args[:1] == ['--version']:",
                     f"        print({name!r})",
                     "        return 0",
@@ -512,20 +519,29 @@ class WorkflowTest(unittest.TestCase):
                     "        mathlib_dir = cwd / '.lake' / 'packages' / 'mathlib'",
                     "        mathlib_dir.mkdir(parents=True, exist_ok=True)",
                     "        (mathlib_dir / 'Mathlib.lean').write_text('-- mathlib\\n', encoding='utf-8')",
-                    "        (mathlib_dir / 'lakefile.lean').write_text('lean_exe cache where\\n  root := `Cache.Main\\n', encoding='utf-8')",
+                    "        mathlib_lakefile_lines = ['lean_exe cache where', '  root := `Cache.Main']",
+                    "        for package_name, _root_module_name in transitive_packages:",
+                    "            mathlib_lakefile_lines.append(f'require {package_name}')",
+                    "        (mathlib_dir / 'lakefile.lean').write_text('\\n'.join(mathlib_lakefile_lines) + '\\n', encoding='utf-8')",
+                    "        for package_name, root_module_name in transitive_packages:",
+                    "            package_dir = cwd / '.lake' / 'packages' / package_name",
+                    "            package_dir.mkdir(parents=True, exist_ok=True)",
+                    "            (package_dir / f'{root_module_name}.lean').write_text(f'-- {package_name}\\n', encoding='utf-8')",
                     "        return 0",
                     "    if args[:3] == ['exe', 'cache', 'get']:",
-                    "        cache_root = cwd / '.lake' / 'packages' / 'mathlib' / '.lake' / 'build' / 'lib' / 'lean'",
-                    "        cache_root.mkdir(parents=True, exist_ok=True)",
-                    "        (cache_root / 'Mathlib.olean').write_text('cached\\n', encoding='utf-8')",
+                    "        for package_name, root_module_name in [('mathlib', 'Mathlib'), *transitive_packages]:",
+                    "            cache_root = cwd / '.lake' / 'packages' / package_name / '.lake' / 'build' / 'lib' / 'lean'",
+                    "            cache_root.mkdir(parents=True, exist_ok=True)",
+                    "            (cache_root / f'{root_module_name}.olean').write_text('cached\\n', encoding='utf-8')",
                     "        print('restored mathlib cache')",
                     "        return 0",
                     "    if args[:2] == ['build', 'FormalizationEngineWorkspace']:",
                     "        generated = cwd / 'FormalizationEngineWorkspace' / 'Generated.lean'",
-                    "        cache_file = cwd / '.lake' / 'packages' / 'mathlib' / '.lake' / 'build' / 'lib' / 'lean' / 'Mathlib.olean'",
-                    "        if not cache_file.exists():",
-                    "            print('missing mathlib cache', file=sys.stderr)",
-                    "            return 1",
+                    "        for package_name, root_module_name in [('mathlib', 'Mathlib'), *transitive_packages]:",
+                    "            cache_file = cwd / '.lake' / 'packages' / package_name / '.lake' / 'build' / 'lib' / 'lean' / f'{root_module_name}.olean'",
+                    "            if not cache_file.exists():",
+                    "                print(f'missing {package_name} cache', file=sys.stderr)",
+                    "                return 1",
                     "        if 'sorry' in generated.read_text(encoding='utf-8'):",
                     "            print(f'{generated}: found sorry', file=sys.stderr)",
                     "            return 1",
@@ -3872,6 +3888,80 @@ class WorkflowTest(unittest.TestCase):
                 [
                     "lake-cache-reuse exe cache get",
                     "lake-cache-reuse build FormalizationEngineWorkspace",
+                ],
+            )
+
+    def test_lean_runner_restores_transitive_mathlib_cache_in_reused_workspace_without_update(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            packaged_template = (
+                Path(__file__).resolve().parents[1] / "src" / "lean_formalization_engine" / "workspace_template"
+            ).resolve()
+            shutil.copytree(packaged_template, temp_root / "lean_workspace_template")
+            fake_lake = self._write_fake_lake_with_mathlib_cache(
+                temp_root,
+                name="lake-cache-transitive-reuse",
+                transitive_packages=(("batteries", "Batteries"),),
+            )
+            runner = LeanRunner(
+                temp_root / "lean_workspace_template",
+                repo_root=temp_root,
+                lake_path=str(fake_lake),
+            )
+
+            first_store = RunStore(temp_root / "artifacts", "mathlib-cache-transitive-first")
+            first_store.ensure_new()
+            first_store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem mathlib_cache_transitive_first (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+            first_result = runner.compile_candidate(first_store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(first_result.passed)
+
+            cache_file = (
+                temp_root
+                / ".terry"
+                / "lean_workspace"
+                / ".lake"
+                / "packages"
+                / "batteries"
+                / ".lake"
+                / "build"
+                / "lib"
+                / "lean"
+                / "Batteries.olean"
+            )
+            cache_file.unlink()
+
+            second_store = RunStore(temp_root / "artifacts", "mathlib-cache-transitive-second")
+            second_store.ensure_new()
+            second_store.write_text(
+                "03_proof/attempts/attempt_0001/candidate.lean",
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem mathlib_cache_transitive_second (n : Nat) : 0 + n = n := by",
+                        "  simpa using Nat.zero_add n",
+                        "",
+                    ]
+                ),
+            )
+            second_result = runner.compile_candidate(second_store, "03_proof/attempts/attempt_0001/candidate.lean", 1)
+            self.assertTrue(second_result.passed)
+            self.assertEqual(
+                second_result.command,
+                [
+                    "lake-cache-transitive-reuse exe cache get",
+                    "lake-cache-transitive-reuse build FormalizationEngineWorkspace",
                 ],
             )
 

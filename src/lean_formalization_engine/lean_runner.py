@@ -865,8 +865,6 @@ class LeanRunner:
         mathlib_dir = workspace / ".lake" / "packages" / "mathlib"
         if not self._package_declares_lean_executable(mathlib_dir, "cache"):
             return None
-        if self._mathlib_cache_ready(mathlib_dir):
-            return None
         return subprocess.run(
             [lake_path, "exe", "cache", "get"],
             cwd=workspace,
@@ -874,9 +872,6 @@ class LeanRunner:
             text=True,
             check=False,
         )
-
-    def _mathlib_cache_ready(self, mathlib_dir: Path) -> bool:
-        return (mathlib_dir / ".lake" / "build" / "lib" / "lean" / "Mathlib.olean").exists()
 
     def _package_declares_lean_executable(self, package_dir: Path, executable_name: str) -> bool:
         if not package_dir.exists() or not package_dir.is_dir():
