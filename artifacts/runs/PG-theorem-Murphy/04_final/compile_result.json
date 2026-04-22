@@ -1,0 +1,24 @@
+{
+  "attempt": 1,
+  "build_passed": true,
+  "command": [
+    "lake exe cache get",
+    "lake build FormalizationEngineWorkspace"
+  ],
+  "contains_sorry": false,
+  "diagnostics": [
+    "$ lake exe cache get",
+    "\u2139 [21/21] Replayed cache:exe",
+    "info: stderr:",
+    "ld64.lld: warning: directory not found for option -L/usr/local/lib",
+    "$ lake build FormalizationEngineWorkspace"
+  ],
+  "fast_check_passed": true,
+  "missing_toolchain": false,
+  "passed": true,
+  "quality_gate_passed": true,
+  "returncode": 0,
+  "status": "passed",
+  "stderr": "$ lake exe cache get\n\u2139 [21/21] Replayed cache:exe\ninfo: stderr:\nld64.lld: warning: directory not found for option -L/usr/local/lib\n$ lake build FormalizationEngineWorkspace\n",
+  "stdout": "$ lake exe cache get\nCurrent branch: HEAD\nUsing cache (Azure) from origin: leanprover-community/mathlib4\nNo files to download\nAlready decompressed 8232 file(s)\n$ lake build FormalizationEngineWorkspace\n\u26a0 [8249/8251] Built FormalizationEngineWorkspace.Generated (32s)\nwarning: FormalizationEngineWorkspace/Generated.lean:64:100: This line exceeds the 100 character limit, please shorten it!\n\nNote: This linter can be disabled with `set_option linter.style.longLine false`\nwarning: FormalizationEngineWorkspace/Generated.lean:76:100: This line exceeds the 100 character limit, please shorten it!\n\nNote: This linter can be disabled with `set_option linter.style.longLine false`\n\u2714 [8250/8251] Built FormalizationEngineWorkspace (6.5s)\nBuild completed successfully (8251 jobs).\n"
+}

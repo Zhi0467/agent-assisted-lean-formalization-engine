@@ -1,0 +1,15 @@
+$ lake exe cache get
+Current branch: HEAD
+Using cache (Azure) from origin: leanprover-community/mathlib4
+No files to download
+Already decompressed 8232 file(s)
+$ lake build FormalizationEngineWorkspace
+⚠ [8249/8251] Built FormalizationEngineWorkspace.Generated (32s)
+warning: FormalizationEngineWorkspace/Generated.lean:64:100: This line exceeds the 100 character limit, please shorten it!
+
+Note: This linter can be disabled with `set_option linter.style.longLine false`
+warning: FormalizationEngineWorkspace/Generated.lean:76:100: This line exceeds the 100 character limit, please shorten it!
+
+Note: This linter can be disabled with `set_option linter.style.longLine false`
+✔ [8250/8251] Built FormalizationEngineWorkspace (6.5s)
+Build completed successfully (8251 jobs).

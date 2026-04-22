@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-04-18 07:58 UTC
+Last updated: 2026-04-22 06:35 UTC
 
 ## Current Status
 
@@ -215,6 +215,9 @@ Gate:
 - at least one review-requested change is handled through Terry without manual artifact surgery
 
 ### Activity Log
+
+- [2026-04-22 06:35 UTC] Terry completed the new PDF run `PG-theorem-Murphy` in `--yolo` mode against Andy Jones's policy-gradient note after a real theorem-surface review loop, not a straight-through approval. Two Athena deep consult turns (see `.agent/runtime/consult_history/1776835875.401889.jsonl`) drove the enrichment corrections: the first rejection blocked a fake “matrix endgame” theorem that had collapsed the result to the final algebraic rewrite, and the second rejection blocked an under-hypothesized infinite-series theorem that still lacked local analytic justification. The accepted third handoff renamed the formal target honestly to `policy_gradient_theorem_of_local_bellman_identities`, made the local Bellman/differentiability strengthening explicit, and preserved the source object to PDF pages `1-4` only.
+- [2026-04-22 06:35 UTC] Once that theorem surface was locked, Terry's proof loop completed in a single attempt. Attempt `1` compiled cleanly with no `sorry`, the review pass found no proof error to repair, and final approval wrote `artifacts/runs/PG-theorem-Murphy/04_final/final.lean`. This is a useful milestone-3 example because the review-requested change happened at the enrichment theorem stage rather than only after a failed Lean attempt.
 
 - [2026-04-18 06:39 UTC] Terry now treats the natural-language proof as a real gate rather than a prompt-only preference. Enrichment must write `proof_status.json`, plan generation refuses to start until that status reports `obtained: true` and `natural_language_proof.md` is on disk, and rejected enrichment or plan handoffs now rerun the rejected stage instead of leaving Terry parked on stale artifacts.
 - [2026-04-18 06:39 UTC] Added Terry's explicit proof-review surface. Every proof attempt now triggers a backend-owned review pass that writes `walkthrough.md`, `readable_candidate.lean`, and `error.md` under the attempt's `review/` subdirectory, the CLI exposes `terry review <run_id> --attempt <n>` to regenerate those artifacts, and `terry retry <run_id> --attempts N` now grants extra blocked proof attempts without hand-editing `03_proof/review.md`.

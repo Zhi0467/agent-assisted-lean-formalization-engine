@@ -1,0 +1,9 @@
+Wrote the enrichment outputs in `artifacts/runs/PG-theorem-Murphy/01_enrichment`:
+
+- `proof_status.json`
+- `natural_language_statement.md`
+- `natural_language_proof.md`
+- `theorem_statement.lean`
+- `relevant_lean_objects.md`
+
+The statement and proof are based on Andy Jones pages 1-4 of the provided PDF, with the theorem surface strengthened by explicit local differentiability and local Bellman-identity hypotheses to address the reviewer note. `theorem_statement.lean` was parse-checked against the cached mathlib environment and compiles with only the expected `sorry` warning.

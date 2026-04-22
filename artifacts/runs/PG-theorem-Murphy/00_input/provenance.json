@@ -1,0 +1,7 @@
+{
+  "source": {
+    "kind": "pdf",
+    "path": "examples/inputs/policy-gradient-theorem.pdf"
+  },
+  "source_snapshot_path": "00_input/source.pdf"
+}
