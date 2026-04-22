@@ -25,7 +25,6 @@ Required outputs:
 Stale prior outputs from the superseded iteration (treat them as stale context only; overwrite them if needed):
 - artifacts/runs/PG-theorem-Murphy/01_enrichment/proof_status.json
 - artifacts/runs/PG-theorem-Murphy/01_enrichment/natural_language_statement.md
-- artifacts/runs/PG-theorem-Murphy/01_enrichment/natural_language_proof.md
 - artifacts/runs/PG-theorem-Murphy/01_enrichment/relevant_lean_objects.md
 - artifacts/runs/PG-theorem-Murphy/01_enrichment/theorem_statement.lean
 

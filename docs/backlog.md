@@ -57,7 +57,6 @@ Current verification:
 
 Open follow-ups:
 
-- [ ] Formalize the full policy-gradient theorem from `examples/inputs/policy-gradient-theorem.pdf`, not just the archived local-Bellman strengthening in `artifacts/runs/PG-theorem-Murphy/04_final/final.lean`. That follow-up needs an explicit analytic theorem surface for differentiating the occupancy / value identities through the infinite-series definition, rather than reusing the current local `J = d · r`, `J = p0 · q`, and Bellman-near-`theta` assumptions.
 - [ ] Decide whether Terry's default `3`-attempt proof budget should become a CLI-level knob instead of a code default.
 - [ ] Decide whether final approval should add a second fresh-workspace verification pass instead of trusting one passing Terry compile.
 - [ ] Build a small checked-in benchmark set beyond `convergent-seq-bounded` so proof-loop behavior is not judged from one theorem.

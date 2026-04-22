@@ -4,12 +4,21 @@ Using cache (Azure) from origin: leanprover-community/mathlib4
 No files to download
 Already decompressed 8232 file(s)
 $ lake build FormalizationEngineWorkspace
-⚠ [8249/8251] Built FormalizationEngineWorkspace.Generated (32s)
-warning: FormalizationEngineWorkspace/Generated.lean:64:100: This line exceeds the 100 character limit, please shorten it!
+⚠ [8249/8251] Built FormalizationEngineWorkspace.Generated (34s)
+warning: FormalizationEngineWorkspace/Generated.lean:3:0: Unscoped option maxHeartbeats is not allowed:
+Please scope this to individual declarations, as in
+```
+set_option maxHeartbeats in
+-- comment explaining why this is necessary
+example : ... := ...
+```
+
+Note: This linter can be disabled with `set_option linter.style.setOption false`
+warning: FormalizationEngineWorkspace/Generated.lean:13:100: This line exceeds the 100 character limit, please shorten it!
 
 Note: This linter can be disabled with `set_option linter.style.longLine false`
-warning: FormalizationEngineWorkspace/Generated.lean:76:100: This line exceeds the 100 character limit, please shorten it!
+warning: FormalizationEngineWorkspace/Generated.lean:66:100: This line exceeds the 100 character limit, please shorten it!
 
 Note: This linter can be disabled with `set_option linter.style.longLine false`
-✔ [8250/8251] Built FormalizationEngineWorkspace (6.5s)
+✔ [8250/8251] Built FormalizationEngineWorkspace (6.6s)
 Build completed successfully (8251 jobs).

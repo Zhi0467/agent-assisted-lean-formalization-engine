@@ -1,13 +1,44 @@
-Key Mathlib objects to reuse for the downstream proof:
+The downstream proof should reuse existing mathlib objects for series manipulation, matrix-vector algebra, and differentiation rather than introducing custom definitions.
 
-- `Matrix.dotProduct` in `Mathlib/Data/Matrix/Mul.lean:72`. This is the scalar pairing for vectors indexed by a finite type, and it matches the source's `d · r`, `p0 · q`, and the final scalar `d Pi' q`.
-- `Matrix.dotProduct_assoc` in `Mathlib/Data/Matrix/Mul.lean:80`. This is the basic reassociation lemma for converting between `u · (M v)` and `(u M) · v`.
-- `Matrix.mulVec` in `Mathlib/Data/Matrix/Mul.lean:698` and `Matrix.vecMul` in `Mathlib/Data/Matrix/Mul.lean:711`. These are the right and left matrix-vector actions needed for the Bellman identities `r = (I - Pi) q` and `p0 = d (I - Pi)`.
-- `Matrix.dotProduct_mulVec` in `Mathlib/Data/Matrix/Mul.lean:749` and `Matrix.vecMul_mulVec` in `Mathlib/Data/Matrix/Mul.lean:1080`. These are likely the most direct lemmas for turning the scalar expression in the conclusion into a form compatible with the Bellman identities.
-- `HasDerivAt` for Pi-valued functions is supported by Mathlib's calculus stack; see `Mathlib/Analysis/Calculus/Deriv/Pi.lean`. This is the relevant derivative interface for `d`, `q`, and matrix-valued `PiM` when the parameter space is `R`.
-- `Matrix.mulVecLin` and the operator-norm material in `Mathlib/Analysis/Matrix/Normed.lean` are useful if the proof worker chooses to package matrix multiplication as continuous linear maps before applying derivative rules.
+- `HasSum.zero_add` and `HasSum.sum_range_add`:
+  These are the standard shift lemmas for series over `ℕ`. They are the right tools for splitting off the `k = 0` term and rewriting the tail as a shifted series.
 
-Visible gaps in the current context:
+- `HasSum.unique`:
+  After mapping a convergent series through a linear functional, this gives equality of the two resulting sums. It is the clean way to conclude `J t = dotProduct (d t) r` and `J t = dotProduct p0 (q t)`.
 
-- No existing policy-gradient theorem or reinforcement-learning-specific library objects were found in the visible Lean surface.
-- The provided source PDF does not state a formal theorem that justifies differentiating the infinite matrix series directly. The downstream proof should therefore work from the explicit local Bellman hypotheses in `theorem_statement.lean`, not assume a hidden summability or matrix-geometric-series theorem.
+- `HasSum.mapL`:
+  This is the standard lemma for pushing a convergent series through a continuous linear map. It should be used with the dot-product functionals from `d`-space and `q`-space to derive the scalar identities for `J`.
+
+- `Matrix.vecMul_vecMul`:
+  Reassociates row-vector/matrix/matrix multiplication:
+  `Matrix.vecMul (Matrix.vecMul v M) N = Matrix.vecMul v (M * N)`.
+  This is the key algebraic lemma for identifying the shifted tail in the `d`-series.
+
+- `Matrix.mulVec_mulVec`:
+  Reassociates matrix/matrix/column-vector multiplication:
+  `M.mulVec (N.mulVec v) = (M * N).mulVec v`.
+  This is the analogous lemma for the `q`-series.
+
+- `Matrix.vecMul_one` and `Matrix.one_mulVec`:
+  These discharge the `k = 0` terms after splitting the series.
+
+- `Matrix.vecMul_sub` and `Matrix.sub_mulVec`:
+  These rewrite multiplication by `1 - Pi t` into the difference of the two simpler terms needed for the Bellman identities.
+
+- `Matrix.dotProduct_mulVec`:
+  This is exactly the reassociation identity used in the last line of the proof:
+  `dotProduct x (Matrix.mulVec A y) = dotProduct (Matrix.vecMul x A) y`.
+
+- `Matrix.vecMulLinear`, `Matrix.mulVecLin`, and `dotProductBilin`:
+  These provide the linear or bilinear packaging of the matrix operations. They are the natural mathlib entry points for differentiating identities involving `Matrix.vecMul`, `Matrix.mulVec`, and `dotProduct`.
+
+Likely proof shape in Lean:
+
+- First derive local Bellman identities from `hd_series` and `hq_series`.
+- Then derive the local scalar identity `J t = dotProduct (d t) r` from `hd_series` and `hJ_series` using `HasSum.mapL`.
+- Differentiate those local identities at `theta`.
+- Finish with `Matrix.dotProduct_mulVec` and the evaluated Bellman identity for `q theta`.
+
+Important gap:
+
+- No policy-gradient-specific lemma or theorem is present in the provided context. The proof worker will need to assemble these standard mathlib pieces into a custom theorem for this run.

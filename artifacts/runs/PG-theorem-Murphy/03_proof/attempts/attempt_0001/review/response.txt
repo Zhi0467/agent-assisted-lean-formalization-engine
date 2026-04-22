@@ -1,3 +1,1 @@
-Wrote the three review artifacts in `artifacts/runs/PG-theorem-Murphy/03_proof/attempts/attempt_0001/review/`.
-
-`walkthrough.md` explains how the Lean proof matches the natural-language left-hand derivation, `readable_candidate.lean` is a commented readability rewrite of the candidate without changing the theorem content, and `error.md` records that the attempt compiled cleanly and separates that from non-failing readability notes, including the missing `plan_handoff` context file.
+Wrote `walkthrough.md`, `readable_candidate.lean`, and `error.md` in the review directory. The walkthrough maps the Lean proof to the natural-language argument, the readable candidate is a commented cleanup of the same theorem content, and the error note records that attempt 1 compiled cleanly with only non-failing style/toolchain warnings.

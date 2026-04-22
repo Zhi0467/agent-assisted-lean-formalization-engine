@@ -1,5 +1,5 @@
 {
   "obtained": true,
-  "source": "artifacts/runs/PG-theorem-Murphy/00_input/source.pdf (Andy Jones, \"A Clearer Proof of the Policy Gradient Theorem\", pages 1-4)",
-  "notes": "The source supplies the algebraic policy-gradient proof. The exported Lean statement is intentionally strengthened with explicit local differentiability and local Bellman-identity hypotheses at theta, following artifacts/runs/PG-theorem-Murphy/01_enrichment/review.md, because the PDF does not itself formalize the analytic interchange steps."
+  "source": "artifacts/runs/PG-theorem-Murphy/00_input/source.pdf; artifacts/runs/PG-theorem-Murphy/01_enrichment/review.md",
+  "notes": "Natural-language proof taken from the PDF's 'The Correct Proof' together with the reviewer-provided derivation from the local HasSum hypotheses. No prior Lean theorem statement was present in the provided context, so theorem_statement.lean reconstructs a minimal series-level statement over a finite index type and a real parameter."
 }

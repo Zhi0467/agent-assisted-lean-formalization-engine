@@ -23,7 +23,6 @@
   "stale_output_paths": [
     "artifacts/runs/PG-theorem-Murphy/01_enrichment/proof_status.json",
     "artifacts/runs/PG-theorem-Murphy/01_enrichment/natural_language_statement.md",
-    "artifacts/runs/PG-theorem-Murphy/01_enrichment/natural_language_proof.md",
     "artifacts/runs/PG-theorem-Murphy/01_enrichment/relevant_lean_objects.md",
     "artifacts/runs/PG-theorem-Murphy/01_enrichment/theorem_statement.lean"
   ],

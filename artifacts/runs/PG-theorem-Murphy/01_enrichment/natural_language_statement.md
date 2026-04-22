@@ -1,14 +1,17 @@
-Statement extracted from Andy Jones, "A Clearer Proof of the Policy Gradient Theorem," pages 1-4 of the provided PDF, with the local analytic hypothesis made explicit so that the differentiation steps are honest.
+Let `p0` be the initial row distribution on a finite state-action space, let `r` be the reward column vector, and let `Π(t)` be the transition matrix of the policy as a function of a real parameter `t`.
 
-Fix a finite state-action space. Let `p0` be the initial state-action distribution, `r` the reward vector, `Pi(theta)` the transition matrix induced by the policy parameter `theta`, `d(theta)` the state-action visitation-frequency row vector, `q(theta)` the state-action value column vector, and `J(theta)` the total reward.
+Assume that for all `t` sufficiently close to a base point `θ`, the following three series converge and define the occupancy vector `d(t)`, the value vector `q(t)`, and the total return `J(t)`:
 
-Assume that `Pi`, `d`, `q`, and `J` are differentiable at the parameter value `theta`. Assume also that, on some neighborhood of `theta`, the Bellman identities
+- `d(t) = Σ_k p0 Π(t)^k`
+- `q(t) = Σ_k Π(t)^k r`
+- `J(t) = Σ_k p0 Π(t)^k r`
 
-- `p0 = d(theta') (I - Pi(theta'))`
-- `r = (I - Pi(theta')) q(theta')`
+Assume also that `Π` and `d` are differentiable at `θ`.
 
-hold, and that on that same neighborhood the total reward may be written both as `J(theta') = d(theta') · r` and as `J(theta') = p0 · q(theta')`.
+Then `J` is differentiable at `θ`, and its derivative is given by the policy-gradient formula
 
-Then the derivative of the total reward at `theta` is
+`J'(θ) = d(θ) Π'(θ) q(θ)`.
 
-`J'(theta) = d(theta) Pi'(theta) q(theta)`.
+Equivalently, in row/column notation,
+
+`J'(θ) = dotProduct (d(θ) · Π'(θ)) (q(θ))`.

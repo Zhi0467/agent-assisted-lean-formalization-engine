@@ -1,23 +1,29 @@
-# Compile / Error Review
+# Error Review
 
-## Compiler status
+## Compiler / proof status
 
-No concrete Lean or compiler error is present in this attempt.
+This attempt compiled cleanly.
 
-- `compile_result.json` reports `passed: true`, `build_passed: true`, and return code `0`.
-- `contains_sorry` is `false`.
-- The recorded warnings are style warnings in `FormalizationEngineWorkspace/Generated.lean`, not proof failures in `attempt_0001/candidate.lean`.
+- `compile_result.json` reports `passed: true`, `build_passed: true`, and `contains_sorry: false`.
+- There is no Lean type error, no failed proof obligation, and no missing theorem fact exposed by the provided context surface.
 
-So, from the visible compile surface, this attempt compiled cleanly.
+In other words, there is no proof-repair error to fix for attempt 1. The review artifacts are therefore aimed at readability and auditability rather than recovery from a broken compile.
 
-## Proof-status note
+## Diagnostics that did appear
 
-The proof is complete relative to the visible theorem statement and compile result. There is no repair-facing theorem failure to diagnose in this review pass.
+The compile result still contains non-failing warnings:
 
-## Readability comments only
+- External linker warning:
+  `ld64.lld: warning: directory not found for option -L/usr/local/lib`
+- Lean style warning:
+  `set_option maxHeartbeats 0` was used unscoped in the generated file.
+- Lean style warnings:
+  two lines exceeded the configured 100-character limit.
 
-These are not errors:
+These are not proof failures. They did not prevent the theorem from compiling.
 
-- The hypothesis `hJ_right` is not used by the proof body except through `let _ := hJ_right`; the script follows only the left-hand derivation from the source.
-- The differentiated Bellman identity for `d` is proved by expanding coordinates and finite sums explicitly, which is correct but dense.
-- The stage instructions mention a `plan_handoff` input, but no such file was present in the visible context surface. This is a context-gap note, not a compile issue.
+## Readability comments
+
+- The mathematical argument is consistent with the natural-language proof and the source PDF's "The Correct Proof" section.
+- The helper definitions for continuous-linear packaging are dense enough that a human reader benefits from a commented rewrite; that is what `readable_candidate.lean` provides.
+- No `plan_handoff` pointer was supplied in the listed review context, so this review does not assume any extra orchestrator-side proof plan beyond the files explicitly provided.

@@ -1,122 +1,148 @@
-# Attempt 0001 Walkthrough
+# Review Walkthrough
 
-## Context reviewed
+## Context
 
-This review was written from the following visible inputs only:
+- Reviewed against the provided theorem statement, natural-language statement, natural-language proof, relevant Lean object inventory, enrichment review note, source PDF, and the current attempt plus its compile result.
+- No `plan_handoff` pointer was supplied in the listed context surface, so this walkthrough does not assume any additional hidden proof plan.
+- The current attempt compiled successfully, so this walkthrough explains why the Lean proof matches the intended mathematics rather than diagnosing a broken proof.
 
-- `01_enrichment/theorem_statement.lean`
-- `01_enrichment/natural_language_statement.md`
-- `01_enrichment/natural_language_proof.md`
-- `01_enrichment/relevant_lean_objects.md`
-- `01_enrichment/review.md`
-- `01_enrichment/proof_status.json`
-- `00_input/provenance.json`
-- `00_input/source.pdf` (checked via text extraction of pages 1-4)
-- `03_proof/attempts/attempt_0001/candidate.lean`
-- `03_proof/attempts/attempt_0001/compile_result.json`
+## What the Lean file is proving
 
-The stage instructions also mention `plan_handoff`, but no such file was present in the visible context surface. Nothing below assumes hidden handoff notes.
+The theorem is the local-series formulation of the policy gradient theorem:
 
-## Proof idea
+- `d t = Σ_k p0 (Π t)^k`
+- `q t = Σ_k (Π t)^k r`
+- `J t = Σ_k p0 (Π t)^k r`
 
-The Lean proof implements the left-hand derivation from the natural-language proof and from page 4 of the source PDF:
+under differentiability of `Π` and `d` at `theta`, the proof shows
 
-1. Rewrite `J` locally as `d · r` and differentiate to get `J' = d' · r`.
-2. Use the Bellman identity `d (I - Pi) = p0`, differentiate it at `theta`, and conclude
-   `d' (I - Pi(theta)) = d(theta) Pi'(theta)`.
-3. Use the Bellman identity `r = (I - Pi(theta)) q(theta)`.
-4. Substitute to obtain `J' = d(theta) Pi'(theta) q(theta)`.
+- `J'(theta) = d(theta) Π'(theta) q(theta)`
 
-The proof does not use the symmetric right-hand derivation through `J = p0 · q`; the hypothesis `hJ_right` is retained in the statement but is not mathematically needed by this proof script.
+written in Lean as
 
-## Code-to-proof mapping
+- `dotProduct (Matrix.vecMul (d theta) Pi') (q theta)`.
 
-### 1. Scalar derivatives are extracted from the bundled function derivatives
+This matches the source PDF's "The Correct Proof" route and the enrichment-side natural-language proof.
 
-The helpers
+## Proof map from Lean to mathematics
 
-- `hd_apply`
-- `hq_apply`
-- `hPiM_apply`
+### 1. Continuous-linear wrappers for differentiation
 
-turn the Pi-valued derivatives `hd`, `hq`, and `hPiM` into coordinatewise scalar derivatives. This is the technical bridge that lets the rest of the proof use finite sums and the scalar product rule.
+`dotProductCLM` and `vecMulCLM` package the bilinear operations
 
-### 2. The derivative of `J = d · r` is computed explicitly
+- `dotProduct`
+- `Matrix.vecMul`
 
-`hJ_model` rewrites the derivative hypothesis `hJ` along the local identity `hJ_left`, so Lean sees `J` near `theta` as the scalar function `x ↦ (d x) ⬝ᵥ r`.
+as continuous linear maps in the form expected by `hasFDerivAt_of_bilinear`. These are infrastructure only; they do not add mathematical content.
 
-`hJ_model'` then differentiates that scalar function directly as a finite sum:
+### 2. `rowBellman` derives `p0 = d (1 - A)`
 
-- each summand is `d x i * r i`
-- `r i` is constant
-- the derivative of the summand is `d' i * r i`
+`rowBellman` starts from
 
-From uniqueness of derivatives, `hJ_eq` concludes
+- `HasSum (fun k => Matrix.vecMul p0 (A ^ k)) d`.
 
-`J' = d' ⬝ᵥ r`.
+It then:
 
-This is exactly the first displayed step in the natural-language proof.
+1. names the summand `f k = p0 A^k`;
+2. maps the series through right-multiplication by `A`;
+3. rewrites the mapped series as the shifted tail `f (k + 1)` using `Matrix.vecMul_vecMul` and `pow_succ`;
+4. uses `HasSum.zero_add` to split off the `k = 0` term;
+5. identifies the sum uniquely to get `d = p0 + d A`;
+6. rearranges to `p0 = d - d A = d (1 - A)`.
 
-### 3. The Bellman identity for `q` is specialized at the base point
+This is exactly the row Bellman identity from step 1 of the natural-language proof.
 
-`hBellman_q_theta` uses `Filter.EventuallyEq.eq_of_nhds` to turn the local identity
+### 3. `colBellman` derives `r = (1 - A) q`
 
-`(I - Pi x) q x = r`
+`colBellman` is the column-vector analogue:
 
-into the pointwise equality at `theta`
+- start from `HasSum (fun k => Matrix.mulVec (A ^ k) r) q`,
+- shift the tail via left-multiplication by `A`,
+- use `Matrix.mulVec_mulVec` and `pow_succ'`,
+- split off the `k = 0` term,
+- conclude `q = r + A q`,
+- rearrange to `r = q - A q = (1 - A) q`.
 
-`Matrix.mulVec (1 - PiM theta) (q theta) = r`.
+This is step 2 of the natural-language proof.
 
-This supplies the substitution for `r` used in the final calculation.
+### 4. `jEqDot` derives `J = d ⋅ r`
 
-### 4. The Bellman identity for `d` is differentiated coordinatewise
+`jEqDot` uses the occupancy series and the `J` series:
 
-`hBellman_d_coord_eventually` first projects the local vector identity
+- it maps the `d`-series through the continuous linear functional `x ↦ dotProduct x r`;
+- after a `dotProduct_comm` rewrite, the mapped sum is exactly the scalar series defining `J`;
+- `HasSum.unique` then yields `J = dotProduct d r`.
 
-`d x (I - Pi x) = p0`
+This is step 3 of the natural-language proof, specialized to the `J = d ⋅ r` branch.
 
-onto a fixed coordinate `j`.
+### 5. The main theorem first turns local series hypotheses into local identities
 
-`hBellman_d_coord_deriv` differentiates that `j`-th coordinate. The derivative is expanded as a finite sum over `i`, using:
+Inside `policy_gradient_theorem_of_local_series`, the eventual `HasSum` hypotheses near `theta` are turned into eventual equalities:
 
-- the scalar derivative of `d x i`
-- the scalar derivative of `((1 : Matrix ι ι ℝ) - PiM x) i j`
-- the product rule term-by-term
+- `hrow : p0 = d(t) (1 - Π(t))` eventually, via `rowBellman`;
+- `hcol : r = (1 - Π(t)) q(t)` eventually, via `colBellman`;
+- `hJdot : J(t) = d(t) ⋅ r` eventually, via `jEqDot`.
 
-After algebraic simplification, the derivative of the `j`-th coordinate becomes
+This matches step 4 of the natural-language proof: the identities are proved pointwise for every nearby `t`, then promoted to statements valid eventually on `𝓝 theta`.
 
-`((Matrix.vecMul d' (1 - PiM theta)) j) - ((Matrix.vecMul (d theta) PiM') j)`.
+### 6. Differentiate `J(t) = d(t) ⋅ r`
 
-Since the original coordinate function is locally constant with value `p0 j`, `hBellman_d_const` gives it derivative `0`. Uniqueness of derivatives then yields the coordinate equation
+`hJ_deriv` differentiates the eventual identity
 
-`((Matrix.vecMul d' (1 - PiM theta)) j) - ((Matrix.vecMul (d theta) PiM') j) = 0`.
+- `J(t) = dotProduct (d t) r`
 
-Extensionality over `j` produces
+using the derivative of `d` and the fact that `r` is constant. The continuous-bilinear packaging in `dotProductCLM` supplies the product rule, yielding
 
-`hBellman_d_eq :
-  Matrix.vecMul d' (1 - PiM theta) = Matrix.vecMul (d theta) PiM'`.
+- `J'(theta) = dotProduct d' r`.
 
-This is the formal version of the differentiated identity
+This is step 5 of the natural-language proof.
 
-`d'(I - Pi(theta)) = d(theta) Pi'(theta)`.
+### 7. Differentiate `p0 = d(t) (1 - Π(t))`
 
-### 5. The final calculation is just substitution and reassociation
+The proof next differentiates the row Bellman identity:
 
-The closing `calc` block performs the algebra:
+- `hrow_zero` says the derivative of `t ↦ d(t) (1 - Π(t))` is `0`, because this function is eventually equal to the constant `p0`;
+- `hrow_formula` computes the same derivative by the bilinear product rule:
+  `d'(1 - Π(theta)) - d(theta) Π'`;
+- `HasDerivAt.unique` forces these derivatives to agree, giving
+  `d'(1 - Π(theta)) = d(theta) Π'`.
 
-1. replace `J'` by `d' ⬝ᵥ r` using `hJ_eq`
-2. replace `r` by `(I - Pi(theta)) q(theta)` using `hBellman_q_theta`
-3. reassociate with `Matrix.dotProduct_mulVec` to get
-   `Matrix.vecMul d' (1 - PiM theta) ⬝ᵥ q theta`
-4. replace `Matrix.vecMul d' (1 - PiM theta)` by `Matrix.vecMul (d theta) PiM'` using `hBellman_d_eq`
+In Lean this is
 
-The result is the claimed theorem:
+- `Matrix.vecMul d' (1 - Pi theta) = Matrix.vecMul (d theta) Pi'`.
 
-`J' = Matrix.vecMul (d theta) PiM' ⬝ᵥ q theta`.
+This is step 6 of the natural-language proof.
 
-## Review notes
+### 8. Evaluate the column Bellman identity at `theta`
 
-- The attempt compiles cleanly; there is no proof failure to repair.
-- The argument is faithful to the visible natural-language proof and the source PDF.
-- The main readability cost is that the differentiated Bellman identity for `d` is proved by explicit coordinate expansion, because no higher-level matrix calculus lemma is used from the visible context.
-- `hJ_right` remains unused except for `let _ := hJ_right`, which suppresses an unused-hypothesis warning while keeping the original theorem statement unchanged.
+`hcol_theta` converts the eventual equality
+
+- `r = (1 - Π(t)) q(t)`
+
+into the pointwise identity at the base point
+
+- `r = (1 - Π(theta)) q(theta)`.
+
+This is step 7's substitution input.
+
+### 9. Finish by substitution and reassociation
+
+`hfinal` performs the last chain of equalities:
+
+1. replace `r` by `(1 - Π(theta)) q(theta)`;
+2. reassociate `dotProduct d' ((1 - Π(theta)) q(theta))` into
+   `dotProduct (d'(1 - Π(theta))) q(theta)` using `Matrix.dotProduct_mulVec`;
+3. replace `d'(1 - Π(theta))` by `d(theta) Π'` using the differentiated row Bellman identity.
+
+The result is exactly
+
+- `dotProduct d' r = dotProduct (Matrix.vecMul (d theta) Pi') (q theta)`.
+
+Combined with `hJ_deriv`, this yields the theorem.
+
+## Review conclusion
+
+- The Lean proof follows the intended mathematics closely.
+- It uses only the generic ingredients anticipated in `relevant_lean_objects.md`: `HasSum` manipulations, matrix reassociation lemmas, and bilinear differentiation.
+- The proof takes the `J = d ⋅ r` route and does not use the symmetric `J = p0 ⋅ q` route from the source PDF, but that is a legitimate specialization of the same argument.
+- Since the attempt compiled cleanly, the main value of this review is readability and trust, not repair of a failing proof.

@@ -1,0 +1,28 @@
+{
+  "attempt": 1,
+  "divide_and_conquer": false,
+  "input_paths": {
+    "enrichment_review": "artifacts/runs/PG-theorem-Murphy/01_enrichment/review.md",
+    "enrichment_theorem_statement": "artifacts/runs/PG-theorem-Murphy/01_enrichment/theorem_statement.lean",
+    "natural_language_proof": "artifacts/runs/PG-theorem-Murphy/01_enrichment/natural_language_proof.md",
+    "natural_language_statement": "artifacts/runs/PG-theorem-Murphy/01_enrichment/natural_language_statement.md",
+    "proof_status": "artifacts/runs/PG-theorem-Murphy/01_enrichment/proof_status.json",
+    "provenance": "artifacts/runs/PG-theorem-Murphy/00_input/provenance.json",
+    "relevant_lean_objects": "artifacts/runs/PG-theorem-Murphy/01_enrichment/relevant_lean_objects.md",
+    "source": "artifacts/runs/PG-theorem-Murphy/00_input/source.pdf"
+  },
+  "latest_compile_result_path": null,
+  "max_attempts": 3,
+  "output_dir": "artifacts/runs/PG-theorem-Murphy/03_proof/attempts/attempt_0001",
+  "previous_attempt_dir": null,
+  "repo_root": "/Users/murphy/Research/projects/agent-assisted-lean-formalization-engine",
+  "required_outputs": [
+    "candidate.lean"
+  ],
+  "review_notes_path": "artifacts/runs/PG-theorem-Murphy/01_enrichment/review.md",
+  "run_dir": "artifacts/runs/PG-theorem-Murphy",
+  "run_id": "PG-theorem-Murphy",
+  "stage": "proof",
+  "stale_output_paths": [],
+  "yolo": true
+}

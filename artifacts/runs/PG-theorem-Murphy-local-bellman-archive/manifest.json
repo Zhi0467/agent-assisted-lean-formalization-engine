@@ -1,0 +1,34 @@
+{
+  "agent_config": {
+    "backend": "codex",
+    "command": null,
+    "model": null
+  },
+  "agent_name": "codex:default",
+  "attempt_count": 1,
+  "created_at": "2026-04-22T05:35:48Z",
+  "current_stage": "completed",
+  "divide_and_conquer": false,
+  "final_output_path": "04_final/final.lean",
+  "lake_path": null,
+  "latest_error": null,
+  "run_id": "PG-theorem-Murphy",
+  "source": {
+    "kind": "pdf",
+    "path": "examples/inputs/policy-gradient-theorem.pdf"
+  },
+  "template_dir": "/Users/murphy/Research/projects/agent-assisted-lean-formalization-engine/lean_workspace_template",
+  "updated_at": "2026-04-22T06:34:47Z",
+  "workflow_tags": [
+    "three-checkpoint",
+    "review-files",
+    "terry-cli",
+    "bounded-prove-loop",
+    "backend-owned-stage-files",
+    "proof-gated-plan",
+    "attempt-review",
+    "yolo"
+  ],
+  "workflow_version": "0.5.0",
+  "yolo": true
+}

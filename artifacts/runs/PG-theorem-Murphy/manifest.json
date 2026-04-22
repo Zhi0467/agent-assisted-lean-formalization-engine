@@ -6,7 +6,7 @@
   },
   "agent_name": "codex:default",
   "attempt_count": 1,
-  "created_at": "2026-04-22T05:35:48Z",
+  "created_at": "2026-04-22T07:01:33Z",
   "current_stage": "completed",
   "divide_and_conquer": false,
   "final_output_path": "04_final/final.lean",
@@ -18,7 +18,7 @@
     "path": "examples/inputs/policy-gradient-theorem.pdf"
   },
   "template_dir": "/Users/murphy/Research/projects/agent-assisted-lean-formalization-engine/lean_workspace_template",
-  "updated_at": "2026-04-22T06:34:47Z",
+  "updated_at": "2026-04-22T07:49:27Z",
   "workflow_tags": [
     "three-checkpoint",
     "review-files",
