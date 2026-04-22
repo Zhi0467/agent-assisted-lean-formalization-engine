@@ -185,7 +185,9 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--source", required=True, type=Path, help=argparse.SUPPRESS)
     run_parser.add_argument("--run-id", required=True, help=argparse.SUPPRESS)
     run_parser.add_argument("--auto-approve", action="store_true", help=argparse.SUPPRESS)
-    run_parser.add_argument("--divide-and-conquer", action="store_true", help=argparse.SUPPRESS)
+    run_mode_group = run_parser.add_mutually_exclusive_group()
+    run_mode_group.add_argument("--divide-and-conquer", action="store_true", help=argparse.SUPPRESS)
+    run_mode_group.add_argument("--yolo", action="store_true", help=argparse.SUPPRESS)
     _add_backend_arguments(run_parser)
 
     resume_parser = subparsers.add_parser(
@@ -305,13 +307,23 @@ def _add_prove_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("source", type=Path)
     parser.add_argument("--run-id")
     parser.add_argument("--auto-approve", action="store_true")
-    parser.add_argument(
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
         "--divide-and-conquer",
         action="store_true",
         help=(
             "Use the divide-and-conquer workflow variant: enrichment must write "
             "`01_enrichment/prerequisites/`, plan must write `02_plan/dependency_graph.md`, "
             "and proof turns are prompted to decompose work from that dependency graph."
+        ),
+    )
+    mode_group.add_argument(
+        "--yolo",
+        action="store_true",
+        help=(
+            "Skip the plan stage entirely. Enrichment produces the natural-language "
+            "proof, theorem statement, and formal statement in one pass, then the "
+            "proof loop starts immediately."
         ),
     )
     _add_backend_arguments(parser)
@@ -1047,6 +1059,7 @@ def main() -> None:
                 run_id,
                 auto_approve=args.auto_approve,
                 divide_and_conquer=args.divide_and_conquer,
+                yolo=args.yolo,
             )
 
         elif args.command == "resume":

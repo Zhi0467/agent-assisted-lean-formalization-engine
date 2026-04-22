@@ -94,6 +94,15 @@ def _write_plan(request: dict[str, object]) -> str:
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "handoff.md").write_text(handoff, encoding="utf-8")
+    theorem_statement = "\n".join(
+        [
+            "import FormalizationEngineWorkspace.Basic",
+            "",
+            "theorem zero_add_provider (n : Nat) : 0 + n = n := sorry",
+            "",
+        ]
+    )
+    (output_dir / "theorem_statement.lean").write_text(theorem_statement, encoding="utf-8")
     if divide_and_conquer:
         (output_dir / "dependency_graph.md").write_text(
             "\n".join(

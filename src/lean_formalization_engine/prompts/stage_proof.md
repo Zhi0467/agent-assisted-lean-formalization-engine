@@ -1,8 +1,5 @@
-- Read `plan_handoff`, `natural_language_statement`, `natural_language_proof`, optional `relevant_lean_objects`, and any `plan_review` / `proof_review` notes before editing Lean.
-- Objective: produce exactly the next `candidate.lean` for this attempt while staying inside the approved theorem statement and proof route.
-- Formalize the approved plan into Lean.
-- Reuse the existing Lean/mathlib objects identified during enrichment when that pointer is available.
+- Read every pointer listed in the "Stage inputs" block above — especially `plan_handoff`, `plan_theorem_statement`, `natural_language_statement`, `natural_language_proof`, optional `relevant_lean_objects`, and any `plan_review` / `proof_review` reviewer notes — before editing Lean.
+- `plan_theorem_statement` points to the plan-stage `theorem_statement.lean` file. Reproduce the theorem signature (name, binders, hypotheses, conclusion) from that file verbatim in `candidate.lean` and only replace the `sorry` placeholder with a real proof body.
+- The imports listed in `plan_theorem_statement` and `relevant_lean_objects` are advisory starting points, not closed sets. If the natural-language proof requires additional mathlib modules (e.g. `Mathlib.Analysis.Matrix.Normed`), add the import — do not refuse to proceed because an import was not pre-listed.
+- Objective: formalize the natural-language proof into a Lean 4 proof that compiles cleanly. Treat the plan as a reference, not a contract — if its route diverges from what Lean/mathlib actually supports, follow the math and adjust tactics, lemmas, or intermediate steps until the proof type-checks. Do not stop, fall back to `sorry`, or hand back a half-finished draft until you believe the Lean compiler will come back clean on this `candidate.lean`.
 - Keep the theorem surface aligned with the approved statement unless reviewer notes explicitly change it.
-- On repair attempts, read the previous candidate and compile result before editing.
-- Read any previous walkthrough, readable-candidate, or error-report pointers before repairing.
-- Write only `candidate.lean` for this attempt.

@@ -1,130 +1,82 @@
 # Plan Handoff
 
-## Scope Locked From Supplied Pointers
+## Context Used
 
-This plan was prepared only from the supplied stage inputs:
+- Read `01_enrichment/handoff.md`, `natural_language_statement.md`, `natural_language_proof.md`, `proof_status.json`, `relevant_lean_objects.md`, `00_input/provenance.json`, `00_input/source.pdf`, and the reviewer note at `02_plan/review.md`.
+- No `enrichment_review` pointer was provided in the stage inputs.
+- `source.pdf` confirms that the intended proof route is Andy Jones's fixed-point argument from the section headed "The Correct Proof".
 
-- `enrichment_handoff`
-- `natural_language_statement`
-- `natural_language_proof`
-- `proof_status`
-- `provenance`
-- `relevant_lean_objects`
-- `source`
-
-No direct `enrichment_review` pointer was supplied for this turn. References to `review.md` inside the supplied files were treated as second-hand context only.
-
-## Status Gate
-
-`proof_status.json` says the theorem surface was obtained, but the referenced review outcome is still `reject`. The proof worker should not widen scope, replace the proof, or import unstated assumptions. The job here is to formalize the already-pinned statement/proof route once approval exists.
-
-## Locked Formalization Shape
-
-Use one finite type `SA` for state-action pairs. If a later stage wants separate state and action types, instantiate `SA := S × A`; do not build a custom reinforcement-learning API first.
-
-Use the matrix/vector conventions that match the supplied proof:
-
-- row vectors: `SA → ℝ`
-- column vectors: `SA → ℝ`
-- transition matrix: `Matrix SA SA ℝ`
-- row-vector action on a matrix: `Matrix.vecMul`
-- matrix action on a column vector: `Matrix.mulVec`
-- scalar return: `dotProduct d r`
-
-Preserve the theorem surface from the natural-language statement:
-
-- `Π(θ)[x,y]` is the state-action transition matrix
-- `q(θ) = (1 - Π(θ))⁻¹ * r` in column-vector form
-- `d(θ) = p₀ * (1 - Π(θ))⁻¹` in row-vector form
-- `J(θ) = d(θ) ⬝ᵥ r = p₀ ⬝ᵥ q(θ)`
-- the target conclusion is the coordinate/scalar-line derivative formula
-
-In Lean terms, the first proof target should be the algebraic core of the Jones argument, with derivative objects supplied as data rather than derived from matrix inverse calculus.
-
-## Locked Theorem Target
-
-Prove this core theorem first:
+## Locked Imports
 
 ```lean
-theorem policyGradient_core
-    {SA : Type*} [Fintype SA] [DecidableEq SA]
-    (Π Π' : Matrix SA SA ℝ)
-    (p₀ d d' q r : SA → ℝ)
-    (hd_fix : p₀ = Matrix.vecMul d (1 - Π))
-    (hq_fix : r = Matrix.mulVec (1 - Π) q)
-    (hd_diff : Matrix.vecMul d' (1 - Π) = Matrix.vecMul d Π') :
-    dotProduct d' r = dotProduct d (Matrix.mulVec Π' q)
-```
-
-This is the supplied proof route in exact Lean-friendly form:
-
-- `hd_fix` is `p₀ = d (I - Π)`
-- `hq_fix` is `r = (I - Π) q`
-- `hd_diff` is the differentiated first fixed-point identity
-- the conclusion is the policy-gradient scalar identity
-
-After that core theorem exists, the proof worker may add a thin wrapper theorem for a scalar parameter line `θ : ℝ`, or for one coordinate line through a multivariate parameter space, but that wrapper is secondary. Do not make the first proof depend on differentiating `(1 - Π)⁻¹` directly.
-
-## Imports Locked For The Worker
-
-Minimal imports for the core theorem:
-
-```lean
+import Mathlib.Analysis.Calculus.Deriv.Basic
 import Mathlib.Data.Matrix.Mul
+import Mathlib.LinearAlgebra.Matrix.Determinant
 import Mathlib.LinearAlgebra.Matrix.NonsingularInverse
 ```
 
-Only add the following if the worker also builds the scalar-derivative wrapper in the same file:
+## Locked Theorem Surface
 
 ```lean
-import Mathlib.LinearAlgebra.Matrix.ToLin
-import Mathlib.Analysis.Calculus.FDeriv.Mul
-import Mathlib.Analysis.Calculus.ContDiff.Operations
-import Mathlib.Analysis.Matrix.Normed
+import Mathlib.Analysis.Calculus.Deriv.Basic
+import Mathlib.Data.Matrix.Mul
+import Mathlib.LinearAlgebra.Matrix.Determinant
+import Mathlib.LinearAlgebra.Matrix.NonsingularInverse
+
+theorem policyGradient_matrix_coordinate
+    {Idx SA : Type*}
+    [DecidableEq Idx]
+    [Fintype SA]
+    [DecidableEq SA]
+    (Pi : (Idx → ℝ) → Matrix SA SA ℝ)
+    (p0 r : SA → ℝ)
+    (theta : Idx → ℝ)
+    (i : Idx)
+    (Pi_i' : Matrix SA SA ℝ)
+    (hInv : ∀ theta0 : Idx → ℝ, Matrix.det ((1 : Matrix SA SA ℝ) - Pi theta0) ≠ 0)
+    (hPi_i' :
+      ∀ a b : SA,
+        HasDerivAt
+          (fun x : ℝ => Pi (Function.update theta i x) a b)
+          (Pi_i' a b)
+          (theta i)) :
+    let q : SA → ℝ :=
+      Matrix.mulVec (((1 : Matrix SA SA ℝ) - Pi theta)⁻¹) r
+    let d : SA → ℝ :=
+      Matrix.vecMul p0 (((1 : Matrix SA SA ℝ) - Pi theta)⁻¹)
+    let J : (Idx → ℝ) → ℝ :=
+      fun theta0 =>
+        dotProduct
+          (Matrix.vecMul p0 (((1 : Matrix SA SA ℝ) - Pi theta0)⁻¹))
+          r
+    HasDerivAt
+      (fun x : ℝ => J (Function.update theta i x))
+      (dotProduct d (Matrix.mulVec Pi_i' q))
+      (theta i) := by
+  sorry
 ```
 
-The supplied context does not pin a default matrix norm instance. If the wrapper theorem needs matrix-valued calculus, the worker must explicitly choose a matrix norm scope in that file instead of assuming one exists by default.
+## Locked Proof Route
 
-## Proof Route Locked
+1. Work on the one-variable slice `x ↦ Function.update theta i x` and define
+   - `A x := (1 : Matrix SA SA ℝ) - Pi (Function.update theta i x)`
+   - `qS x := Matrix.mulVec (A x)⁻¹ r`
+   - `dS x := Matrix.vecMul p0 (A x)⁻¹`
+   - `JS x := dotProduct (dS x) r`
+2. Use `hInv` and the nonsingular-inverse cancellation lemmas from `Mathlib.LinearAlgebra.Matrix.NonsingularInverse` to derive, for every `x`,
+   - `r = Matrix.mulVec (A x) (qS x)`
+   - `p0 = Matrix.vecMul (dS x) (A x)`
+   These are the formal fixed-point identities behind the natural-language proof.
+3. Keep the theorem surface entrywise: `hPi_i'` is intentionally scalar-on-entries, not matrix-valued `HasDerivAt`. `relevant_lean_objects.md` explicitly says the current context does not fix a default matrix norm scope, so the plan must not assume hidden normed-matrix infrastructure in the statement.
+4. Prove the needed differentiability of `A`, `qS`, and `dS` on the slice. This may use an auxiliary inverse-smoothness lemma, but only as support for the fixed-point proof. The main proof spine is still Jones's differentiated fixed-point argument, not a direct derivative-of-resolvent proof.
+5. Differentiate the two fixed-point identities at `x = theta i` and obtain the Lean versions of
+   - `dS'(theta i) * A(theta i) = d * Pi_i'`
+   - `A(theta i) * qS'(theta i) = Pi_i' * q`
+   expressed with `Matrix.vecMul` and `Matrix.mulVec`.
+6. Differentiate `JS x = dotProduct (dS x) r`, substitute `r = Matrix.mulVec (A (theta i)) q`, and use the differentiated visitation identity to rewrite the derivative to `dotProduct d (Matrix.mulVec Pi_i' q)`.
+7. Do not switch the proof to the symmetric `p0 · q` branch or a direct closed-form inverse derivative unless needed as a local auxiliary lemma. The locked route is the `d · r` branch from `natural_language_proof.md` and the Jones source.
 
-Follow this route and do not replace it with a different argument:
+## Explicit Gaps
 
-1. Work over a generic finite type `SA` with real matrices/vectors.
-2. Define `d` and `q` from inverse formulas under an explicit invertibility hypothesis on `1 - Π`.
-3. Derive the fixed-point identities
-   - `p₀ = Matrix.vecMul d (1 - Π)`
-   - `r = Matrix.mulVec (1 - Π) q`
-   using inverse cancellation lemmas from `Mathlib.LinearAlgebra.Matrix.NonsingularInverse`.
-4. Prove `policyGradient_core` by the same substitutions as in the natural-language proof:
-   - start from `dotProduct d' r`
-   - rewrite `r` using `hq_fix`
-   - use `Matrix.dotProduct_mulVec` and vector/matrix associativity
-   - replace `Matrix.vecMul d' (1 - Π)` with `Matrix.vecMul d Π'` via `hd_diff`
-   - conclude `dotProduct d (Matrix.mulVec Π' q)`
-5. Only after the algebraic core is done, add the scalar derivative shell if needed:
-   - differentiate `p₀ = d(t) (1 - Π(t))` to obtain `hd_diff`
-   - optionally differentiate `r = (1 - Π(t)) q(t)` for the symmetric route, but it is not needed for the main proof
-   - combine with `J(t) = dotProduct (d(t)) r`
-
-The worker should stay with the fixed-point proof from the supplied Jones article / natural-language proof. Do not switch to a direct proof by differentiating the inverse formula for `d` or `q`.
-
-## Reuse Surface To Prefer
-
-The supplied reuse inventory points to these objects first:
-
-- `Matrix.vecMul`
-- `Matrix.mulVec`
-- `dotProduct`
-- `Matrix.dotProduct_mulVec`
-- `Matrix.vecMul_sub`
-- `Matrix.mulVec_sub`
-- inverse cancellation lemmas in `Mathlib.LinearAlgebra.Matrix.NonsingularInverse`
-
-Use those before introducing bespoke linear-algebra abstractions.
-
-## Explicit Limits From The Visible Context
-
-- No direct `enrichment_review` pointer was supplied, so assumptions from `review.md` are only available indirectly through `enrichment_handoff.md` and `proof_status.json`.
-- No Lean project files or toolchain files are present under the repo root in this stage workspace, so the import list above is locked from `relevant_lean_objects.md`, not from local compilation.
-- No reinforcement-learning theorem/object library was supplied. Build the theorem over generic finite matrices/vectors, not over hidden MDP definitions.
-- The supplied context supports taking invertibility/transience of `1 - Π(θ)` as an assumption, but it does not supply a ready-made bridge from spectral-radius facts to invertibility in Lean. The first formalization should therefore assume invertibility explicitly.
+- The provided context does not fix a matrix norm scope, so a later proof worker must make that proof-engineering choice only if it is needed for an auxiliary inverse-differentiability lemma.
+- This run directory is not a Lean project and does not contain a local mathlib checkout, so the statement was locked from the supplied context surface and reuse inventory rather than from local compilation.

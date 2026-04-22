@@ -1,0 +1,26 @@
+$ lake update
+installing leantar 0.1.17
+Fetching ProofWidgets cloud release... done!
+Current branch: HEAD
+Using cache (Azure) from origin: leanprover-community/mathlib4
+Attempting to download 8232 file(s) from leanprover-community/mathlib4 cache
+Decompressed 8232 file(s)
+Already decompressed 8232 file(s)
+$ lake exe cache get
+Current branch: HEAD
+Using cache (Azure) from origin: leanprover-community/mathlib4
+No files to download
+Already decompressed 8232 file(s)
+$ lake build FormalizationEngineWorkspace
+✖ [8247/8252] Running Mathlib.LinearAlgebra.Matrix.Determinant
+error: no such file or directory (error code: 4294967294)
+  file: .terry/lean_workspace/.lake/packages/mathlib/Mathlib/LinearAlgebra/Matrix/Determinant.lean
+✖ [8248/8252] Running FormalizationEngineWorkspace.Generated
+error: FormalizationEngineWorkspace/Generated.lean: bad import 'Mathlib.LinearAlgebra.Matrix.Determinant'
+✖ [8249/8252] Running FormalizationEngineWorkspace
+error: FormalizationEngineWorkspace.lean: bad import 'FormalizationEngineWorkspace.Generated'
+✔ [8251/8252] Built FormalizationEngineWorkspace.Basic (80s)
+Some required targets logged failures:
+- Mathlib.LinearAlgebra.Matrix.Determinant
+- FormalizationEngineWorkspace.Generated
+- FormalizationEngineWorkspace

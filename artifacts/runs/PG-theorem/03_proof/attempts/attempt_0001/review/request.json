@@ -1,0 +1,35 @@
+{
+  "attempt": 1,
+  "divide_and_conquer": false,
+  "input_paths": {
+    "attempt_candidate": "artifacts/runs/PG-theorem/03_proof/attempts/attempt_0001/candidate.lean",
+    "attempt_compile_result": "artifacts/runs/PG-theorem/03_proof/attempts/attempt_0001/compile_result.json",
+    "enrichment_handoff": "artifacts/runs/PG-theorem/01_enrichment/handoff.md",
+    "enrichment_review": "artifacts/runs/PG-theorem/01_enrichment/review.md",
+    "natural_language_proof": "artifacts/runs/PG-theorem/01_enrichment/natural_language_proof.md",
+    "natural_language_statement": "artifacts/runs/PG-theorem/01_enrichment/natural_language_statement.md",
+    "plan_handoff": "artifacts/runs/PG-theorem/02_plan/handoff.md",
+    "plan_review": "artifacts/runs/PG-theorem/02_plan/review.md",
+    "plan_theorem_statement": "artifacts/runs/PG-theorem/02_plan/theorem_statement.lean",
+    "previous_compile_result": "artifacts/runs/PG-theorem/03_proof/attempts/attempt_0001/compile_result.json",
+    "proof_status": "artifacts/runs/PG-theorem/01_enrichment/proof_status.json",
+    "provenance": "artifacts/runs/PG-theorem/00_input/provenance.json",
+    "relevant_lean_objects": "artifacts/runs/PG-theorem/01_enrichment/relevant_lean_objects.md",
+    "source": "artifacts/runs/PG-theorem/00_input/source.pdf"
+  },
+  "latest_compile_result_path": "artifacts/runs/PG-theorem/03_proof/attempts/attempt_0001/compile_result.json",
+  "max_attempts": 3,
+  "output_dir": "artifacts/runs/PG-theorem/03_proof/attempts/attempt_0001/review",
+  "previous_attempt_dir": null,
+  "repo_root": "/Users/zhiwang/Desktop/research/agent-assisted-lean-formalization-engine",
+  "required_outputs": [
+    "walkthrough.md",
+    "readable_candidate.lean",
+    "error.md"
+  ],
+  "review_notes_path": "artifacts/runs/PG-theorem/02_plan/review.md",
+  "run_dir": "artifacts/runs/PG-theorem",
+  "run_id": "PG-theorem",
+  "stage": "review",
+  "stale_output_paths": []
+}

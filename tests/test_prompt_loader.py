@@ -19,8 +19,10 @@ from lean_formalization_engine.prompt_loader import (
 _ALL_TEMPLATES = [
     "stage_common.md",
     "stage_enrichment.md",
+    "stage_enrichment_yolo.md",
     "stage_plan.md",
     "stage_proof.md",
+    "stage_proof_yolo.md",
     "stage_review.md",
 ]
 

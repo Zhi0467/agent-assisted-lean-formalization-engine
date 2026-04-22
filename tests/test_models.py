@@ -134,5 +134,61 @@ class TestEnums(unittest.TestCase):
         self.assertIsNotNone(RunStage.LEGACY_AWAITING_PLAN_REVIEW)
 
 
+class TestYoloField(unittest.TestCase):
+    def test_stage_request_yolo_defaults_to_false(self):
+        request = StageRequest(
+            stage=BackendStage.PROOF,
+            run_id="test",
+            repo_root="/tmp",
+            run_dir="artifacts/runs/test",
+            output_dir="artifacts/runs/test/03_proof/attempts/attempt_0001",
+            input_paths={},
+            required_outputs=["candidate.lean"],
+        )
+        self.assertFalse(request.yolo)
+
+    def test_stage_request_yolo_round_trips_via_to_jsonable(self):
+        request = StageRequest(
+            stage=BackendStage.PROOF,
+            run_id="test",
+            repo_root="/tmp",
+            run_dir="artifacts/runs/test",
+            output_dir="artifacts/runs/test/03_proof/attempts/attempt_0001",
+            input_paths={},
+            required_outputs=["candidate.lean"],
+            yolo=True,
+        )
+        data = to_jsonable(request)
+        self.assertTrue(data["yolo"])
+
+    def test_run_manifest_yolo_defaults_to_false(self):
+        manifest = RunManifest(
+            run_id="test",
+            source=SourceRef(path="input.md", kind=SourceKind.MARKDOWN),
+            agent_name="test",
+            agent_config=AgentConfig(backend="codex"),
+            template_dir="/tmp",
+            created_at=utc_now(),
+            updated_at=utc_now(),
+            current_stage=RunStage.CREATED,
+        )
+        self.assertFalse(manifest.yolo)
+
+    def test_run_manifest_yolo_round_trips_via_to_jsonable(self):
+        manifest = RunManifest(
+            run_id="test",
+            source=SourceRef(path="input.md", kind=SourceKind.MARKDOWN),
+            agent_name="test",
+            agent_config=AgentConfig(backend="codex"),
+            template_dir="/tmp",
+            created_at=utc_now(),
+            updated_at=utc_now(),
+            current_stage=RunStage.CREATED,
+            yolo=True,
+        )
+        data = to_jsonable(manifest)
+        self.assertTrue(data["yolo"])
+
+
 if __name__ == "__main__":
     unittest.main()

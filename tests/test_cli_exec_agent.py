@@ -372,7 +372,6 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
             self.assertIn("previous_walkthrough", prompt)
             self.assertIn("previous_readable_candidate", prompt)
             self.assertIn("previous_error_report", prompt)
-            self.assertIn("Read any previous walkthrough, readable-candidate, or error-report pointers before repairing.", prompt)
 
     def test_codex_prompt_adds_divide_and_conquer_instructions(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -427,6 +426,7 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
             ),
             "stage_proof.md": (
                 "`plan_handoff`",
+                "`plan_theorem_statement`",
                 "`natural_language_statement`",
                 "`natural_language_proof`",
                 "`relevant_lean_objects`",
@@ -1438,3 +1438,93 @@ class CliAndBackendSurfaceTest(unittest.TestCase):
             lakefile_text = (target_dir / "lakefile.toml").read_text(encoding="utf-8")
             self.assertIn('name = "FormalizationEngineWorkspace"', lakefile_text)
             self.assertIn('rev = "v4.31.0"', lakefile_text)
+
+    def test_yolo_proof_prompt_uses_yolo_template(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            agent = CodexCliFormalizationAgent(repo_root=repo_root)
+            request = StageRequest(
+                stage=BackendStage.PROOF,
+                run_id="sample",
+                repo_root=str(repo_root),
+                run_dir="artifacts/runs/sample",
+                output_dir="artifacts/runs/sample/03_proof/attempts/attempt_0001",
+                input_paths={
+                    "source": "artifacts/runs/sample/00_input/source.pdf",
+                    "natural_language_statement": "artifacts/runs/sample/01_enrichment/natural_language_statement.md",
+                    "natural_language_proof": "artifacts/runs/sample/01_enrichment/natural_language_proof.md",
+                    "enrichment_theorem_statement": "artifacts/runs/sample/01_enrichment/theorem_statement.lean",
+                },
+                required_outputs=["candidate.lean"],
+                attempt=1,
+                max_attempts=3,
+                yolo=True,
+            )
+
+            prompt = agent._build_prompt(request)
+
+            self.assertIn("enrichment_theorem_statement", prompt)
+            self.assertNotIn("plan_handoff", prompt)
+            self.assertNotIn("plan_theorem_statement", prompt)
+            self.assertIn("natural-language proof is your contract", prompt)
+
+    def test_yolo_enrichment_prompt_uses_yolo_template(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            agent = CodexCliFormalizationAgent(repo_root=repo_root)
+            request = StageRequest(
+                stage=BackendStage.ENRICHMENT,
+                run_id="sample",
+                repo_root=str(repo_root),
+                run_dir="artifacts/runs/sample",
+                output_dir="artifacts/runs/sample/01_enrichment",
+                input_paths={
+                    "source": "artifacts/runs/sample/00_input/source.pdf",
+                    "provenance": "artifacts/runs/sample/00_input/provenance.json",
+                },
+                required_outputs=["proof_status.json", "natural_language_statement.md", "natural_language_proof.md", "theorem_statement.lean"],
+                yolo=True,
+            )
+
+            prompt = agent._build_prompt(request)
+
+            self.assertIn("theorem_statement.lean", prompt)
+            self.assertIn("first and only pre-proof stage", prompt)
+            self.assertNotIn("handoff.md", prompt.split("Stage-specific instructions:")[-1])
+
+    def test_yolo_review_prompt_falls_back_to_base_template(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            agent = CodexCliFormalizationAgent(repo_root=repo_root)
+            request = StageRequest(
+                stage=BackendStage.REVIEW,
+                run_id="sample",
+                repo_root=str(repo_root),
+                run_dir="artifacts/runs/sample",
+                output_dir="artifacts/runs/sample/03_proof/attempts/attempt_0001/review",
+                input_paths={
+                    "source": "artifacts/runs/sample/00_input/source.pdf",
+                    "attempt_candidate": "artifacts/runs/sample/03_proof/attempts/attempt_0001/candidate.lean",
+                    "attempt_compile_result": "artifacts/runs/sample/03_proof/attempts/attempt_0001/compile_result.json",
+                },
+                required_outputs=["walkthrough.md", "readable_candidate.lean", "error.md"],
+                yolo=True,
+            )
+
+            prompt = agent._build_prompt(request)
+            self.assertIn("repair-facing artifacts", prompt)
+
+    def test_yolo_stage_templates_name_core_input_pointers(self) -> None:
+        expected_snippets = {
+            "stage_enrichment_yolo.md": ("`source`", "`provenance`", "`theorem_statement.lean`"),
+            "stage_proof_yolo.md": (
+                "`enrichment_theorem_statement`",
+                "`natural_language_statement`",
+                "`natural_language_proof`",
+                "`relevant_lean_objects`",
+            ),
+        }
+        for template_name, snippets in expected_snippets.items():
+            template = load_prompt_template(template_name)
+            for snippet in snippets:
+                self.assertIn(snippet, template, f"{template_name} missing {snippet}")

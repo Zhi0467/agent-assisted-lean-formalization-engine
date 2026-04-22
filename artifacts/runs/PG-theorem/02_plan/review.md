@@ -1,6 +1,6 @@
 # Plan Approval
 
-decision: pending
+decision: approve
 
 You only need to edit this file if you want to leave reviewer notes or reject the handoff.
 To approve with no comments, skip this file and run:

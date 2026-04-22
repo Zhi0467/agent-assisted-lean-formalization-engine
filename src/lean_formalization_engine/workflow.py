@@ -51,8 +51,10 @@ ENRICHMENT_PROOF_STATUS = f"{ENRICHMENT_DIR}/proof_status.json"
 ENRICHMENT_NATURAL_LANGUAGE_STATEMENT = f"{ENRICHMENT_DIR}/natural_language_statement.md"
 ENRICHMENT_NATURAL_LANGUAGE_PROOF = f"{ENRICHMENT_DIR}/natural_language_proof.md"
 ENRICHMENT_RELEVANT_LEAN_OBJECTS = f"{ENRICHMENT_DIR}/relevant_lean_objects.md"
+ENRICHMENT_THEOREM_STATEMENT = f"{ENRICHMENT_DIR}/theorem_statement.lean"
 ENRICHMENT_PREREQUISITES_DIR = f"{ENRICHMENT_DIR}/prerequisites"
 PLAN_HANDOFF = f"{PLAN_DIR}/handoff.md"
+PLAN_THEOREM_STATEMENT = f"{PLAN_DIR}/theorem_statement.lean"
 PLAN_DEPENDENCY_GRAPH = f"{PLAN_DIR}/dependency_graph.md"
 PROOF_BLOCKER = f"{PROOF_DIR}/blocker.md"
 PROOF_LOOP = f"{PROOF_DIR}/loop.md"
@@ -120,20 +122,24 @@ class FormalizationWorkflow:
             repo_root=repo_root,
         )
 
-    def _workflow_tags(self, *, divide_and_conquer: bool) -> list[str]:
+    def _workflow_tags(self, *, divide_and_conquer: bool, yolo: bool = False) -> list[str]:
         tags = list(DEFAULT_WORKFLOW_TAGS)
         if divide_and_conquer and "divide-and-conquer" not in tags:
             tags.append("divide-and-conquer")
+        if yolo and "yolo" not in tags:
+            tags.append("yolo")
         return tags
 
     def _enrichment_required_outputs(self, manifest: RunManifest) -> list[str]:
+        if manifest.yolo:
+            return ["proof_status.json", "natural_language_statement.md", "natural_language_proof.md", "theorem_statement.lean"]
         outputs = ["handoff.md", "proof_status.json", "natural_language_statement.md"]
         if manifest.divide_and_conquer:
             outputs.append("prerequisites")
         return outputs
 
     def _plan_required_outputs(self, manifest: RunManifest) -> list[str]:
-        outputs = ["handoff.md"]
+        outputs = ["handoff.md", "theorem_statement.lean"]
         if manifest.divide_and_conquer:
             outputs.append("dependency_graph.md")
         return outputs
@@ -145,7 +151,10 @@ class FormalizationWorkflow:
         auto_approve: bool = False,
         *,
         divide_and_conquer: bool = False,
+        yolo: bool = False,
     ) -> RunManifest:
+        if yolo and divide_and_conquer:
+            raise ValueError("--yolo and --divide-and-conquer are mutually exclusive.")
         store = self._store(run_id)
         source_ref = SourceRef(
             path=self._display_path(source_path),
@@ -163,8 +172,9 @@ class FormalizationWorkflow:
             updated_at=utc_now(),
             current_stage=RunStage.CREATED,
             lake_path=self._persisted_lake_path(),
-            workflow_tags=self._workflow_tags(divide_and_conquer=divide_and_conquer),
+            workflow_tags=self._workflow_tags(divide_and_conquer=divide_and_conquer, yolo=yolo),
             divide_and_conquer=divide_and_conquer,
+            yolo=yolo,
         )
         self._save_manifest(store, manifest)
 
@@ -345,6 +355,13 @@ class FormalizationWorkflow:
                     review_notes_relative_path=f"{ENRICHMENT_DIR}/review.md",
                     rerun=True,
                 )
+            if manifest.yolo:
+                return self._prove_loop(
+                    store,
+                    manifest,
+                    auto_approve=auto_approve,
+                    review_notes_relative_path=f"{ENRICHMENT_DIR}/review.md",
+                )
             return self._run_plan_stage(
                 store,
                 manifest,
@@ -515,6 +532,7 @@ class FormalizationWorkflow:
             )
         decision = ReviewDecision("approve", utc_now(), notes)
         self._write_decision(store, stage_dir, decision)
+        self._apply_review_decision(store, stage_dir, "approve", notes)
         store.append_log(
             "checkpoint_approved_via_cli",
             f"Human approved the {manifest.current_stage.value} checkpoint via `terry resume --approve`.",
@@ -598,7 +616,7 @@ class FormalizationWorkflow:
                 return self._complete_from_candidate(store, manifest)
             return self._pause_for_final(store, manifest)
 
-        if self._turn_artifacts_ready(store, PLAN_DIR, self._plan_required_outputs(manifest)):
+        if not manifest.yolo and self._turn_artifacts_ready(store, PLAN_DIR, self._plan_required_outputs(manifest)):
             decision = self._resolve_checkpoint_decision(
                 store,
                 PLAN_DIR,
@@ -637,6 +655,13 @@ class FormalizationWorkflow:
                         auto_approve=auto_approve,
                         review_notes_relative_path=f"{ENRICHMENT_DIR}/review.md",
                         rerun=True,
+                    )
+                if manifest.yolo:
+                    return self._prove_loop(
+                        store,
+                        manifest,
+                        auto_approve=auto_approve,
+                        review_notes_relative_path=f"{ENRICHMENT_DIR}/review.md",
                     )
                 return self._run_plan_stage(
                     store,
@@ -680,6 +705,7 @@ class FormalizationWorkflow:
                     ENRICHMENT_NATURAL_LANGUAGE_STATEMENT,
                     ENRICHMENT_NATURAL_LANGUAGE_PROOF,
                     ENRICHMENT_RELEVANT_LEAN_OBJECTS,
+                    ENRICHMENT_THEOREM_STATEMENT,
                     ENRICHMENT_PREREQUISITES_DIR,
                 )
                 if rerun
@@ -693,6 +719,7 @@ class FormalizationWorkflow:
             extra_stale_outputs=[
                 ENRICHMENT_NATURAL_LANGUAGE_PROOF.removeprefix(f"{ENRICHMENT_DIR}/"),
                 ENRICHMENT_RELEVANT_LEAN_OBJECTS.removeprefix(f"{ENRICHMENT_DIR}/"),
+                ENRICHMENT_THEOREM_STATEMENT.removeprefix(f"{ENRICHMENT_DIR}/"),
                 ENRICHMENT_PREREQUISITES_DIR.removeprefix(f"{ENRICHMENT_DIR}/"),
             ],
             backend_attempt_limit=1 if rerun else None,
@@ -705,6 +732,11 @@ class FormalizationWorkflow:
         if manifest.divide_and_conquer and not self._prerequisites_dir_ready(store):
             raise RuntimeError(
                 "Divide-and-conquer mode requires a non-empty `01_enrichment/prerequisites/` directory "
+                "before Terry can leave enrichment."
+            )
+        if manifest.yolo and not store.exists(ENRICHMENT_THEOREM_STATEMENT):
+            raise RuntimeError(
+                "Yolo mode requires `01_enrichment/theorem_statement.lean` "
                 "before Terry can leave enrichment."
             )
         if not proof_status.obtained and store.exists(ENRICHMENT_NATURAL_LANGUAGE_PROOF):
@@ -737,6 +769,13 @@ class FormalizationWorkflow:
                 "Enrichment checkpoint auto-approved.",
                 stage="enrichment",
             )
+            if manifest.yolo:
+                return self._prove_loop(
+                    store,
+                    manifest,
+                    auto_approve=auto_approve,
+                    review_notes_relative_path=f"{ENRICHMENT_DIR}/review.md",
+                )
             return self._run_plan_stage(
                 store,
                 manifest,
@@ -793,7 +832,12 @@ class FormalizationWorkflow:
                 required_outputs=self._plan_required_outputs(manifest),
                 review_notes_relative_path=review_notes_relative_path,
                 stale_output_paths=(
-                    self._existing_stage_outputs(store, PLAN_HANDOFF, PLAN_DEPENDENCY_GRAPH)
+                    self._existing_stage_outputs(
+                        store,
+                        PLAN_HANDOFF,
+                        PLAN_THEOREM_STATEMENT,
+                        PLAN_DEPENDENCY_GRAPH,
+                    )
                     if force_rerun
                     else None
                 ),
@@ -1200,21 +1244,28 @@ class FormalizationWorkflow:
 
     def _pause_for_enrichment(self, store: RunStore, manifest: RunManifest) -> RunManifest:
         proof_status = self._load_proof_status(store)
-        summary = "Terry is waiting for enrichment approval before locking the formalization scope."
+        if manifest.yolo:
+            summary = "Terry is waiting for enrichment approval before starting the proof loop."
+        else:
+            summary = "Terry is waiting for enrichment approval before opening the plan stage."
         if proof_status is not None and not proof_status.obtained:
             summary = (
-                "Terry still needs an existing natural-language proof before it can open the plan stage. "
+                "Terry still needs an existing natural-language proof before it can proceed. "
                 "Use the enrichment review notes to supply that proof or point Terry at it, then rerun enrichment."
             )
-        artifact_paths = [
-            ENRICHMENT_HANDOFF,
+        artifact_paths: list[str] = []
+        if not manifest.yolo:
+            artifact_paths.append(ENRICHMENT_HANDOFF)
+        artifact_paths.extend([
             ENRICHMENT_PROOF_STATUS,
             ENRICHMENT_NATURAL_LANGUAGE_STATEMENT,
-        ]
+        ])
         if store.exists(ENRICHMENT_NATURAL_LANGUAGE_PROOF):
             artifact_paths.append(ENRICHMENT_NATURAL_LANGUAGE_PROOF)
         if store.exists(ENRICHMENT_RELEVANT_LEAN_OBJECTS):
             artifact_paths.append(ENRICHMENT_RELEVANT_LEAN_OBJECTS)
+        if manifest.yolo and store.exists(ENRICHMENT_THEOREM_STATEMENT):
+            artifact_paths.append(ENRICHMENT_THEOREM_STATEMENT)
         if manifest.divide_and_conquer and self._prerequisites_dir_ready(store):
             artifact_paths.append(ENRICHMENT_PREREQUISITES_DIR)
         return self._pause_for_checkpoint(
@@ -1518,33 +1569,47 @@ class FormalizationWorkflow:
                 f"{LEGACY_ENRICHMENT_DIR}/review.md",
             )
         if stage in {BackendStage.PROOF, BackendStage.REVIEW}:
-            self._maybe_add_input_path(store, input_paths, "plan_handoff", PLAN_HANDOFF)
-            if manifest.divide_and_conquer:
+            if manifest.yolo:
                 self._maybe_add_input_path(
                     store,
                     input_paths,
-                    "dependency_graph",
-                    PLAN_DEPENDENCY_GRAPH,
+                    "enrichment_theorem_statement",
+                    ENRICHMENT_THEOREM_STATEMENT,
                 )
-            self._maybe_add_input_path(
-                store,
-                input_paths,
-                "legacy_plan",
-                f"{LEGACY_PLAN_DIR}/formalization_plan.approved.json",
-            )
-            self._maybe_add_input_path(
-                store,
-                input_paths,
-                "legacy_plan",
-                f"{LEGACY_PLAN_DIR}/formalization_plan.json",
-            )
-            self._maybe_add_review_input_path(store, input_paths, "plan_review", f"{PLAN_DIR}/review.md")
-            self._maybe_add_review_input_path(
-                store,
-                input_paths,
-                "legacy_plan_review",
-                f"{LEGACY_PLAN_DIR}/review.md",
-            )
+            else:
+                self._maybe_add_input_path(store, input_paths, "plan_handoff", PLAN_HANDOFF)
+                self._maybe_add_input_path(
+                    store,
+                    input_paths,
+                    "plan_theorem_statement",
+                    PLAN_THEOREM_STATEMENT,
+                )
+                if manifest.divide_and_conquer:
+                    self._maybe_add_input_path(
+                        store,
+                        input_paths,
+                        "dependency_graph",
+                        PLAN_DEPENDENCY_GRAPH,
+                    )
+                self._maybe_add_input_path(
+                    store,
+                    input_paths,
+                    "legacy_plan",
+                    f"{LEGACY_PLAN_DIR}/formalization_plan.approved.json",
+                )
+                self._maybe_add_input_path(
+                    store,
+                    input_paths,
+                    "legacy_plan",
+                    f"{LEGACY_PLAN_DIR}/formalization_plan.json",
+                )
+                self._maybe_add_review_input_path(store, input_paths, "plan_review", f"{PLAN_DIR}/review.md")
+                self._maybe_add_review_input_path(
+                    store,
+                    input_paths,
+                    "legacy_plan_review",
+                    f"{LEGACY_PLAN_DIR}/review.md",
+                )
             if latest_compile_result_path and store.exists(latest_compile_result_path):
                 input_paths["previous_compile_result"] = self._repo_relative(store.path(latest_compile_result_path))
             elif attempt is not None and attempt > 1:
@@ -1636,6 +1701,7 @@ class FormalizationWorkflow:
             max_attempts=max_attempts,
             stale_output_paths=list(stale_output_paths or []),
             divide_and_conquer=manifest.divide_and_conquer,
+            yolo=manifest.yolo,
         )
 
     def _maybe_add_input_path(
@@ -2121,6 +2187,65 @@ class FormalizationWorkflow:
     def _write_decision(self, store: RunStore, stage_dir: str, decision: ReviewDecision) -> None:
         store.write_json(f"{stage_dir}/decision.json", decision)
 
+    def _apply_review_decision(
+        self,
+        store: RunStore,
+        stage_dir: str,
+        decision_value: str,
+        notes: str = "",
+    ) -> None:
+        """Rewrite the stage's ``review.md`` to reflect an approval decision.
+
+        Keeps the file in sync with ``decision.json`` so runs approved through
+        ``terry resume --approve`` look identical on disk to runs approved by
+        editing ``review.md`` directly. The first ``decision:`` line outside
+        the ``Notes:`` section is replaced with ``decision: <value>``; when
+        ``notes`` is non-empty the ``Notes:`` body is replaced with the
+        supplied text.
+        """
+        review_path = f"{stage_dir}/review.md"
+        if not store.exists(review_path):
+            return
+        content = store.read_text(review_path)
+        trailing_newline = content.endswith("\n")
+        raw_lines = content.splitlines()
+        prefix: list[str] = []
+        notes_header_idx: int | None = None
+        decision_replaced = False
+        in_notes = False
+        for idx, raw_line in enumerate(raw_lines):
+            stripped = raw_line.strip()
+            if not in_notes and stripped.lower() == "notes:":
+                notes_header_idx = idx
+                break
+            if not in_notes and not decision_replaced and stripped.lower().startswith("decision:"):
+                prefix.append(f"decision: {decision_value}")
+                decision_replaced = True
+                continue
+            prefix.append(raw_line)
+
+        updated: list[str]
+        if notes_header_idx is not None:
+            updated = list(prefix)
+            updated.append(raw_lines[notes_header_idx])
+            if notes:
+                updated.append("")
+                updated.extend(notes.splitlines())
+            else:
+                updated.extend(raw_lines[notes_header_idx + 1 :])
+        else:
+            updated = list(prefix)
+            if notes:
+                updated.extend(["", "Notes:", "", *notes.splitlines()])
+
+        if not decision_replaced:
+            updated.insert(0, f"decision: {decision_value}")
+
+        final = "\n".join(updated)
+        if trailing_newline and not final.endswith("\n"):
+            final += "\n"
+        store.write_text(review_path, final)
+
     def _parse_review_file(self, content: str) -> ReviewDecision | None:
         valid_decisions = {"approve", "retry", "reject"}
         lines = content.splitlines()
@@ -2195,6 +2320,9 @@ class FormalizationWorkflow:
         divide_and_conquer = payload.get("divide_and_conquer")
         if divide_and_conquer is None:
             divide_and_conquer = "divide-and-conquer" in workflow_tags
+        yolo = payload.get("yolo")
+        if yolo is None:
+            yolo = "yolo" in workflow_tags
 
         return RunManifest(
             run_id=payload["run_id"],
@@ -2212,6 +2340,7 @@ class FormalizationWorkflow:
             workflow_version=payload.get("workflow_version", DEFAULT_WORKFLOW_VERSION),
             workflow_tags=workflow_tags,
             divide_and_conquer=bool(divide_and_conquer),
+            yolo=bool(yolo),
             attempt_count=payload.get("attempt_count", 0),
             latest_error=payload.get("latest_error"),
             final_output_path=payload.get("final_output_path"),

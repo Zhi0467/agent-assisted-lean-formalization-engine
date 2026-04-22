@@ -147,7 +147,7 @@ class CliExecFormalizationAgent:
     def _build_prompt(self, request: StageRequest) -> str:
         stage_inputs = render_bullet_list(f"{name}: {path}" for name, path in sorted(request.input_paths.items()))
         required_outputs = render_bullet_list(f"{request.output_dir}/{path}" for path in request.required_outputs)
-        stage_instructions = load_prompt_template(f"stage_{request.stage.value}.md").strip()
+        stage_instructions = _load_stage_instructions(request)
 
         return render_prompt_template(
             "stage_common.md",
@@ -228,6 +228,16 @@ class CliExecFormalizationAgent:
 # Backwards-compatible alias so existing imports `from ... import CodexCliFormalizationAgent`
 # continue to function. New code should import `CliExecFormalizationAgent` directly.
 CodexCliFormalizationAgent = CliExecFormalizationAgent
+
+
+def _load_stage_instructions(request: StageRequest) -> str:
+    if request.yolo:
+        yolo_name = f"stage_{request.stage.value}_yolo.md"
+        try:
+            return load_prompt_template(yolo_name).strip()
+        except FileNotFoundError:
+            pass
+    return load_prompt_template(f"stage_{request.stage.value}.md").strip()
 
 
 def _render_mode_instructions(request: StageRequest) -> str:

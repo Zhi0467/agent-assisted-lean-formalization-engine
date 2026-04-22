@@ -1,7 +1,17 @@
 - Read `enrichment_handoff`, `natural_language_statement`, `natural_language_proof`, `proof_status`, optional `relevant_lean_objects`, and any `enrichment_review` pointer before planning.
-- Objective: lock the Lean statement, imports, and proof route for the already-available natural-language proof, not to discover a different proof.
+- Objective: produce the formal Lean statement, a known-good starting set of imports, and a reference proof route grounded in the already-available natural-language proof — not to discover a different proof.
 - Treat the natural-language statement and natural-language proof as the cornerstone for the Lean plan.
 - Keep the enrichment handoff, proof-status pointer, optional library-reuse inventory, and any enrichment review notes visible while planning.
-- If `relevant_lean_objects` is present, treat it as the primary reuse surface for existing Lean/mathlib objects and use it to choose imports, statement shape, and proof route.
+- If `relevant_lean_objects` is present, treat it as a helpful reuse inventory produced by enrichment; consult it first, but it is not exhaustive — add imports or lemmas beyond it when the natural-language proof actually requires them.
 - Do not invent a new proof route that is not grounded in the available natural-language proof.
-- Use `handoff.md` to lock the formal statement, imports, and the Lean proof route the proof worker should follow.
+- Use `handoff.md` to record the formal statement, a starting set of imports, and the proof route the proof worker should follow. Use the section headers `## Starting Imports`, `## Theorem Surface`, and `## Proof Route (reference)`:
+  - `## Starting Imports` is a known-good set of `import` lines. The proof worker may extend this set if the math demands additional mathlib modules.
+  - `## Theorem Surface` is the one section that must stay byte-for-byte identical in `theorem_statement.lean` and downstream `candidate.lean`. It contains the theorem name, binders, hypotheses, and conclusion.
+  - `## Proof Route (reference)` outlines the tactic / lemma strategy. The proof worker should follow it as a guide but may adjust tactics, intermediate steps, or lemma choices when Lean/mathlib requires it.
+- Always also write `theorem_statement.lean` next to `handoff.md`. This file is the primary human review surface for the formal statement.
+- `theorem_statement.lean` must be a self-contained Lean 4 source file that mirrors `handoff.md`:
+  - the starting imports (verbatim `import ...` lines from `## Starting Imports`),
+  - the theorem signature from `## Theorem Surface` (name, binders, hypotheses, conclusion),
+  - a placeholder proof body of `:= sorry` (or a `by sorry` block),
+  - no additional definitions, comments, or tactics beyond what the imports and signature require to parse.
+- Do not change the theorem surface between `handoff.md` and `theorem_statement.lean`. If you adjust one, adjust the other so they stay identical up to the placeholder proof.

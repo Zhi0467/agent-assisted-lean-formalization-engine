@@ -71,6 +71,10 @@ launch the backend, but theorem content itself should travel only through files.
 - `02_plan/handoff.md`
   The default human review target for stage 2. The backend may add any supporting files
   beside it.
+- `02_plan/theorem_statement.lean`
+  A self-contained Lean 4 file mirroring the locked imports and theorem signature from
+  `handoff.md` with a `sorry` placeholder body. It is the primary reviewable surface for
+  the formal theorem statement before Terry enters the proof loop.
 - `02_plan/dependency_graph.md` in divide-and-conquer mode
   A bottom-up dependency map from prerequisite definitions and lemmas to the final
   theorem, including any independently formalizable components.

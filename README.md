@@ -18,6 +18,8 @@ edit the `review.md` file when you want to leave reviewer notes or reject the ha
 
 ## Flow
 
+### Standard mode
+
 ```mermaid
 flowchart TD
     start[terry prove] --> input[write 00_input/]
@@ -33,6 +35,32 @@ flowchart TD
     attempt --> review[write candidate + review artifacts]
     review --> compile{compile}
     compile -->|pass| review3[handoff 3: 04_final checkpoint]
+    compile -->|fail, budget left| attempt
+    compile -->|fail at cap or no toolchain| blocked[03_proof proof-blocked handoff]
+    blocked -->|terry retry --attempts N| attempt
+    review3 --> fd{decision}
+    fd -->|approve| done[final.lean written, run complete]
+    fd -->|non-approve| paused[run paused at final]
+```
+
+### Yolo mode (`--yolo`)
+
+Yolo mode collapses enrichment and plan into a single pre-proof stage. The enrichment
+worker produces the NL proof, the formal theorem statement, and the NL statement in one
+pass, then the proof loop starts immediately after enrichment approval — no plan stage
+or plan approval gate.
+
+```mermaid
+flowchart TD
+    start["terry prove --yolo"] --> input[write 00_input/]
+    input --> enrich["run backend into 01_enrichment/ (+ theorem_statement.lean)"]
+    enrich --> eh[handoff 1: 01_enrichment checkpoint]
+    eh --> ed{decision}
+    ed -->|approve + proof present| attempt[03_proof attempt n]
+    ed -->|reject or approve w/o proof| enrich
+    attempt --> review[write candidate + review artifacts]
+    review --> compile{compile}
+    compile -->|pass| review3[handoff 2: 04_final checkpoint]
     compile -->|fail, budget left| attempt
     compile -->|fail at cap or no toolchain| blocked[03_proof proof-blocked handoff]
     blocked -->|terry retry --attempts N| attempt
@@ -58,6 +86,14 @@ Start a run:
 
 ```bash
 terry prove examples/inputs/right_add_zero.md --run-id right-add-zero
+```
+
+For a faster iteration loop that skips the plan stage entirely, use yolo mode:
+
+```bash
+terry prove examples/inputs/right_add_zero.md \
+  --run-id right-add-zero-yolo \
+  --yolo
 ```
 
 For theorem sources that include prerequisite definitions and lemmas before the main
@@ -98,19 +134,19 @@ terry prove examples/inputs/right_add_zero.md \
   --agent-command "python3 examples/providers/scripted_repair_provider.py"
 ```
 
-Terry pauses at three human checkpoints:
+Terry pauses at human checkpoints (three in standard mode, two in yolo mode):
 
 1. `01_enrichment/checkpoint.md` + `01_enrichment/review.md`
-2. `02_plan/checkpoint.md` + `02_plan/review.md`
+2. `02_plan/checkpoint.md` + `02_plan/review.md` (skipped in `--yolo` mode)
 3. `04_final/checkpoint.md` + `04_final/review.md`
 
 The stage flow is now:
 
 1. `terry prove` snapshots the original source file under `00_input/` and runs the backend into `01_enrichment/`. Terry does not normalize or ingest the theorem source itself anymore; the backend does that in enrichment. There is no separate statement-only checkpoint anymore; statement extraction and proof provenance are one combined enrichment handoff.
-2. `01_enrichment/` must contain `handoff.md`, `natural_language_statement.md`, and `proof_status.json`, plus `natural_language_proof.md` whenever `proof_status.json` reports `obtained: true`. In `--divide-and-conquer` mode it must also contain a non-empty `prerequisites/` subfolder that captures prerequisite definitions and lemmas from the source.
-3. If enrichment is accepted with a real proof on disk, Terry opens `02_plan/`.
-4. `02_plan/` writes the merged meaning + Lean plan handoff. In `--divide-and-conquer` mode it must also write `dependency_graph.md`, which maps the theorem bottom up from prerequisite definitions and lemmas to the final theorem.
-5. If plan is accepted, Terry enters the bounded `03_proof/` prove-and-repair loop.
+2. `01_enrichment/` must contain `handoff.md`, `natural_language_statement.md`, and `proof_status.json`, plus `natural_language_proof.md` whenever `proof_status.json` reports `obtained: true`. In `--divide-and-conquer` mode it must also contain a non-empty `prerequisites/` subfolder. In `--yolo` mode the required outputs are `proof_status.json`, `natural_language_statement.md`, `natural_language_proof.md`, and `theorem_statement.lean` (no `handoff.md`).
+3. If enrichment is accepted with a real proof on disk, Terry opens `02_plan/` (or goes straight to `03_proof/` in `--yolo` mode).
+4. `02_plan/` writes the merged meaning + Lean plan handoff. In `--divide-and-conquer` mode it must also write `dependency_graph.md`, which maps the theorem bottom up from prerequisite definitions and lemmas to the final theorem. This stage is skipped entirely in `--yolo` mode.
+5. If plan is accepted (or enrichment is accepted in yolo mode), Terry enters the bounded `03_proof/` prove-and-repair loop.
 6. Each proof attempt writes `03_proof/attempts/attempt_<n>/candidate.lean`, Terry compiles it, and Terry/backend write `03_proof/attempts/attempt_<n>/review/walkthrough.md`, `03_proof/attempts/attempt_<n>/review/readable_candidate.lean`, and `03_proof/attempts/attempt_<n>/review/error.md`.
 7. If an attempt compiles, Terry opens `04_final/`.
 8. The final handoff shows `04_final/final_candidate.lean`, `04_final/compile_result.json`, and the latest attempt review artifacts.
@@ -140,7 +176,7 @@ comments when you approve via the flag.
 
 The exact branch behavior at each handoff is:
 
-- `01_enrichment/`: `approve` with a proof present opens `02_plan/`. `approve` with the proof still missing reruns enrichment with notes from `01_enrichment/review.md` instead of entering plan. `reject` also reruns enrichment with those notes. `retry` is ignored here, and if `checkpoint.md` or `review.md` is missing, `terry resume` recreates the checkpoint and pauses again. In `--divide-and-conquer` mode the enrichment checkpoint also exposes `01_enrichment/prerequisites/` and Terry will not leave enrichment without that non-empty directory.
+- `01_enrichment/`: `approve` with a proof present opens `02_plan/` (or goes straight to `03_proof/` in `--yolo` mode). `approve` with the proof still missing reruns enrichment with notes from `01_enrichment/review.md` instead of advancing. `reject` also reruns enrichment with those notes. `retry` is ignored here, and if `checkpoint.md` or `review.md` is missing, `terry resume` recreates the checkpoint and pauses again. In `--divide-and-conquer` mode the enrichment checkpoint also exposes `01_enrichment/prerequisites/` and Terry will not leave enrichment without that non-empty directory. In `--yolo` mode the enrichment checkpoint exposes `01_enrichment/theorem_statement.lean` and Terry will not leave enrichment without it.
 - `02_plan/`: the plan worker gets pointers to `01_enrichment/handoff.md`, `natural_language_statement.md`, `natural_language_proof.md`, `proof_status.json`, and enrichment review notes when they exist. In `--divide-and-conquer` mode it also gets `01_enrichment/prerequisites/` and must write `02_plan/dependency_graph.md`. `approve` enters the prove-and-repair loop. `reject` reruns plan with `02_plan/review.md` as notes. `retry` is ignored here too. Terry will not start plan unless the enrichment proof gate is satisfied, except for the explicit legacy pre-gate rerun compatibility path.
 - `03_proof/`: each proof turn gets pointers to the enrichment files above, `02_plan/handoff.md`, plan review notes when present, the previous compile result, the previous candidate, and the previous attempt review artifacts (`previous_walkthrough`, `previous_readable_candidate`, `previous_error_report`) when they exist. In `--divide-and-conquer` mode proof turns also get `01_enrichment/prerequisites/` and `02_plan/dependency_graph.md`, and the proof prompt explicitly asks the backend to decompose the work from that graph without actually spawning workers. Compile pass queues final review. Compile failure with budget left starts the next attempt automatically. Compile failure at the retry cap or because Lean/toolchain is unavailable opens the proof-blocked handoff. If attempt review generation failed on a prior attempt, `terry resume` regenerates the missing review artifacts before advancing. `terry review <run_id> --attempt n` only regenerates attempt review artifacts; it is not a human checkpoint.
 - Proof-blocked handoff: this lives in `03_proof/` and is the only divergence that does not continue through `terry resume`. Terry writes `blocker.md`, `loop.md`, the latest compile result, and exposes `03_proof/review.md` for guidance. To continue, run `terry retry <run_id> --attempts N`. Terry then passes the notes in `03_proof/review.md` into the next proof turn.
@@ -189,8 +225,8 @@ under `logs/timeline.md` and `logs/workflow.jsonl`.
 Each run lives under `artifacts/runs/<run_id>/`:
 
 - `00_input/` — opaque source-file snapshot plus minimal source metadata
-- `01_enrichment/` — backend-owned combined statement/proof-provenance handoff, `handoff.md`, `natural_language_statement.md`, `proof_status.json`, optional `natural_language_proof.md`, optional `relevant_lean_objects.md`, mode-specific `prerequisites/`, plus Terry's checkpoint files
-- `02_plan/` — backend-owned merged meaning+Lean-plan handoff, mode-specific `dependency_graph.md`, plus Terry's checkpoint files
+- `01_enrichment/` — backend-owned combined statement/proof-provenance handoff, `handoff.md` (not in yolo), `natural_language_statement.md`, `proof_status.json`, optional `natural_language_proof.md`, optional `relevant_lean_objects.md`, `theorem_statement.lean` (yolo only), mode-specific `prerequisites/`, plus Terry's checkpoint files
+- `02_plan/` — backend-owned merged meaning+Lean-plan handoff, mode-specific `dependency_graph.md`, plus Terry's checkpoint files (skipped entirely in `--yolo` mode)
 - `03_proof/` — bounded prove-and-repair attempts, `attempt_<n>/candidate.lean`, per-attempt `review/` artifacts, compile results, and the proof-blocked handoff under `03_proof/` when Terry cannot continue automatically
 - `04_final/` — final candidate, compile result, latest attempt review artifacts, Terry's final checkpoint files, and the approved `final.lean`
 - `logs/` — readable `timeline.md` plus structured `workflow.jsonl`

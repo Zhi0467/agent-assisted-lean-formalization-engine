@@ -27,9 +27,13 @@ Run from the repo root after Lean and the Codex CLI are available:
    `terry resume right-add-zero` afterwards.
 7. Read the plan checkpoint:
    `cat artifacts/runs/right-add-zero/02_plan/checkpoint.md`
-8. Review the backend-written plan handoff:
+8. Review the backend-written plan handoff and the locked Lean theorem statement:
    `cat artifacts/runs/right-add-zero/02_plan/handoff.md`
-   If the backend wrote extra support files inside `02_plan/`, inspect those too.
+   `cat artifacts/runs/right-add-zero/02_plan/theorem_statement.lean`
+   `theorem_statement.lean` is a standalone Lean file with the locked imports and
+   theorem signature plus a `sorry` placeholder, so you can open it in your editor to
+   review the formal statement before approving the plan. If the backend wrote extra
+   support files inside `02_plan/`, inspect those too.
 9. Approve the plan and enter the prove-and-repair loop:
    `terry resume right-add-zero --approve`
    Same rule as before: only edit `02_plan/review.md` when you need to leave notes

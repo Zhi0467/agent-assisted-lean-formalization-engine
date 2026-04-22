@@ -1,0 +1,5 @@
+Wrote the three review artifacts in `artifacts/runs/PG-theorem/03_proof/attempts/attempt_0001/review`:
+
+- `walkthrough.md`: maps the Lean attempt to the fixed-point proof steps from the plan/source and marks exactly where the proof stops.
+- `readable_candidate.lean`: a commented, reorganized rewrite of the current candidate without changing its mathematical content.
+- `error.md`: separates the actual compile blocker (`bad import 'Mathlib.LinearAlgebra.Matrix.Determinant'`) from the separate unfinished-proof issue (`sorry` and the unresolved inverse-differentiability step).

@@ -1,0 +1,17 @@
+- This is the first and only pre-proof stage. There is no separate plan stage — you produce everything the proof worker needs in one pass.
+- Read the stage inputs named `source`, `provenance`, and any reviewer-notes pointer before deciding the theorem surface.
+- `source` points to the original input file Terry was given for this run. `provenance` carries only minimal source metadata.
+- Enrichment is also the library-reuse discovery stage. Search for existing Lean / mathlib definitions, structures, lemmas, and theorems that later stages should reuse instead of reinventing.
+- Objective: pin an existing natural-language statement and proof with honest provenance, produce the formal Lean theorem statement, then hand off to the proof worker. If you cannot find the proof, set `obtained: false` and ask the human.
+- Do not invent a proof. Terry should formalize an existing proof, not author a new one.
+- Always write `natural_language_statement.md`, `natural_language_proof.md`, `proof_status.json`, and `theorem_statement.lean`.
+- When library reuse matters, also write `relevant_lean_objects.md` summarizing the key existing Lean objects to reuse, why they fit, and any important gaps.
+- `proof_status.json` must contain JSON with `obtained` (boolean), `source` (string), and optional `notes`.
+- `natural_language_statement.md` should restate the theorem in plain language, not Lean syntax.
+- `natural_language_proof.md` should contain the natural-language proof. If no proof is available from the source, prior notes, or a trustworthy cited reference, set `obtained: false` in `proof_status.json` instead and do not write this file.
+- `theorem_statement.lean` must be a self-contained Lean 4 source file with:
+  - the imports needed for the statement to parse,
+  - the theorem signature (name, binders, hypotheses, conclusion),
+  - a placeholder proof body of `:= sorry` (or a `by sorry` block),
+  - no additional definitions, comments, or tactics beyond what the imports and signature require to parse.
+- The theorem signature in `theorem_statement.lean` is the one surface that must stay byte-for-byte identical in the downstream `candidate.lean`. The imports are a known-good starting set that the proof worker may extend.

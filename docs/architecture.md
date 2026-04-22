@@ -11,6 +11,8 @@
 
 ## Flow Figure
 
+### Standard mode
+
 ```mermaid
 flowchart TD
     A[terry prove] --> B[00_input source snapshot]
@@ -23,6 +25,28 @@ flowchart TD
     C3 -->|obtained: true| D[02_plan]
     D --> E[approved plan]
     E --> F[03_proof attempt n]
+    F --> G[compile]
+    G --> H[attempt walkthrough/readable/error]
+    H --> I{passed?}
+    I -->|no| J[next attempt or terry retry]
+    J --> F
+    I -->|yes| K[04_final]
+    K --> L[approved final]
+```
+
+### Yolo mode (`--yolo`)
+
+```mermaid
+flowchart TD
+    A["terry prove --yolo"] --> B[00_input source snapshot]
+    B --> C["01_enrichment (+ theorem_statement.lean)"]
+    C --> C1[natural_language_statement.md]
+    C --> C2[natural_language_proof.md]
+    C --> C3[proof_status.json]
+    C --> C4[theorem_statement.lean]
+    C3 -->|obtained: false| C5[human supplies proof via enrichment review]
+    C5 --> C
+    C3 -->|obtained: true| F[03_proof attempt n]
     F --> G[compile]
     G --> H[attempt walkthrough/readable/error]
     H --> I{passed?}
@@ -67,6 +91,15 @@ Terry will not enter `02_plan/` unless the enrichment stage reports that a
 natural-language proof was actually obtained. If the proof is missing, Terry stays at
 the enrichment checkpoint and expects the backend to ask the human for that proof rather
 than inventing one.
+
+When `terry prove --yolo` is enabled, Terry collapses enrichment and plan into a single
+pre-proof stage. The enrichment worker additionally produces `theorem_statement.lean`
+(the formal Lean statement with a `sorry` placeholder) alongside the NL artifacts.
+There is no `02_plan/` directory and no plan approval gate — enrichment approval feeds
+directly into the proof loop. The proof worker receives `enrichment_theorem_statement`
+instead of `plan_theorem_statement` / `plan_handoff`, and its prompt instructs it to
+treat the natural-language proof as the contract and the imports as an advisory starting
+set. `--yolo` and `--divide-and-conquer` are mutually exclusive.
 
 When `terry prove --divide-and-conquer` is enabled, Terry also hard-gates plan/proof on
 two extra backend-owned artifacts:
@@ -195,11 +228,14 @@ Each backend stage call gets a narrow control-plane payload:
 
 The backend is expected to write the required output file inside that output directory:
 
-- `01_enrichment/handoff.md`
+- `01_enrichment/handoff.md` (not required in yolo mode)
 - `01_enrichment/natural_language_statement.md`
 - `01_enrichment/proof_status.json`
+- `01_enrichment/natural_language_proof.md` (required in yolo mode; optional otherwise, gated by `proof_status.json`)
+- `01_enrichment/theorem_statement.lean` (yolo mode only)
 - `01_enrichment/prerequisites/` in divide-and-conquer mode
-- `02_plan/handoff.md`
+- `02_plan/handoff.md` (not produced in yolo mode)
+- `02_plan/theorem_statement.lean` (not produced in yolo mode)
 - `02_plan/dependency_graph.md` in divide-and-conquer mode
 - `03_proof/attempts/attempt_<n>/candidate.lean`
 - `03_proof/attempts/attempt_<n>/review/walkthrough.md`

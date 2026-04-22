@@ -23,6 +23,10 @@ Stage inputs:
 
 Required outputs:
 - artifacts/runs/PG-theorem/02_plan/handoff.md
+- artifacts/runs/PG-theorem/02_plan/theorem_statement.lean
+
+Stale prior outputs from the superseded iteration (treat them as stale context only; overwrite them if needed):
+- artifacts/runs/PG-theorem/02_plan/handoff.md
 
 
 Stage-specific instructions:
@@ -33,5 +37,13 @@ Stage-specific instructions:
 - If `relevant_lean_objects` is present, treat it as the primary reuse surface for existing Lean/mathlib objects and use it to choose imports, statement shape, and proof route.
 - Do not invent a new proof route that is not grounded in the available natural-language proof.
 - Use `handoff.md` to lock the formal statement, imports, and the Lean proof route the proof worker should follow.
+- Always also write `theorem_statement.lean` next to `handoff.md`. This file is the primary human review surface for the locked formal statement.
+- `theorem_statement.lean` must be a self-contained Lean 4 source file that mirrors `handoff.md`:
+  - the same locked imports (verbatim `import ...` lines),
+  - the same locked theorem signature (name, binders, hypotheses, conclusion),
+  - a placeholder proof body of `:= sorry` (or a `by sorry` block),
+  - no additional definitions, comments, or tactics beyond what the locked imports and signature require to parse.
+- Do not change the theorem surface between `handoff.md` and `theorem_statement.lean`. If you adjust one, adjust the other so they stay identical up to the placeholder proof.
+Reviewer notes path: artifacts/runs/PG-theorem/02_plan/review.md
 
 When you are done, reply with a brief plain-text note describing what you wrote.

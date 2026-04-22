@@ -111,6 +111,17 @@ class SinglePassAgent:
                 ),
                 encoding="utf-8",
             )
+            (output_dir / "theorem_statement.lean").write_text(
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem single_pass_zero_add (n : Nat) : 0 + n = n := sorry",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
             if request.divide_and_conquer:
                 (output_dir / "dependency_graph.md").write_text(
                     "# Dependency Graph\n\n- `Nat.zero_add` -> `single_pass_zero_add`\n",
@@ -198,6 +209,17 @@ class RecordingRepairAgent:
                 ]
             )
             (output_dir / "handoff.md").write_text(content, encoding="utf-8")
+            (output_dir / "theorem_statement.lean").write_text(
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem recorded_zero_add (n : Nat) : 0 + n = n := sorry",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
             if request.divide_and_conquer:
                 (output_dir / "dependency_graph.md").write_text(
                     "# Dependency Graph\n\n- `Nat.zero_add` -> `recorded_zero_add`\n",
@@ -292,6 +314,17 @@ class AlwaysSorryAgent:
                 ),
                 encoding="utf-8",
             )
+            (output_dir / "theorem_statement.lean").write_text(
+                "\n".join(
+                    [
+                        "import FormalizationEngineWorkspace.Basic",
+                        "",
+                        "theorem stuck_zero_add (n : Nat) : 0 + n = n := sorry",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
             if request.divide_and_conquer:
                 (output_dir / "dependency_graph.md").write_text(
                     "# Dependency Graph\n\n- `Nat.zero_add` -> `stuck_zero_add`\n",
@@ -369,6 +402,10 @@ class MissingProofAgent:
             )
         elif request.stage == BackendStage.PLAN:
             (output_dir / "handoff.md").write_text("# Plan Handoff\n\nShould never run.\n", encoding="utf-8")
+            (output_dir / "theorem_statement.lean").write_text(
+                "-- Should never run\ntheorem never : True := sorry\n",
+                encoding="utf-8",
+            )
         elif request.stage == BackendStage.REVIEW:
             (output_dir / "walkthrough.md").write_text("# Attempt Walkthrough\n", encoding="utf-8")
             (output_dir / "readable_candidate.lean").write_text("-- Readable rewrite\n", encoding="utf-8")
@@ -634,7 +671,7 @@ class WorkflowTest(unittest.TestCase):
             manifest = workflow.resume("manual-review", auto_approve=False)
             self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
 
-    def test_approve_current_checkpoint_advances_without_editing_review(self) -> None:
+    def test_approve_current_checkpoint_updates_review_and_decision(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
             source_path = temp_root / "input.md"
@@ -662,8 +699,13 @@ class WorkflowTest(unittest.TestCase):
             )
             self.assertEqual(decision_payload["decision"], "approve")
             self.assertEqual(decision_payload["notes"], "")
-            still_pending = (run_root / "01_enrichment" / "review.md").read_text(encoding="utf-8")
-            self.assertIn("decision: pending", still_pending)
+            updated_review = (run_root / "01_enrichment" / "review.md").read_text(encoding="utf-8")
+            decision_lines = [
+                line.strip()
+                for line in updated_review.splitlines()
+                if line.strip().lower().startswith("decision:")
+            ]
+            self.assertEqual(decision_lines, ["decision: approve"])
 
             manifest = workflow.resume("flag-approve", auto_approve=False)
             self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
@@ -4663,6 +4705,12 @@ class WorkflowTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (run_root / "02_plan" / "handoff.md").write_text("# Existing Plan Handoff\n", encoding="utf-8")
+            (run_root / "02_plan" / "theorem_statement.lean").write_text(
+                "import FormalizationEngineWorkspace.Basic\n"
+                "\n"
+                "theorem reused_zero_add (n : Nat) : 0 + n = n := sorry\n",
+                encoding="utf-8",
+            )
             (run_root / "02_plan" / "request.json").write_text('{"stage": "plan"}', encoding="utf-8")
             (run_root / "02_plan" / "prompt.md").write_text("plan prompt", encoding="utf-8")
             (run_root / "02_plan" / "response.txt").write_text("plan response", encoding="utf-8")
@@ -4726,6 +4774,12 @@ class WorkflowTest(unittest.TestCase):
                 if request.stage == BackendStage.PLAN:
                     self.plan_calls += 1
                     (output_dir / "handoff.md").write_text("# Plan Handoff\n", encoding="utf-8")
+                    (output_dir / "theorem_statement.lean").write_text(
+                        "import FormalizationEngineWorkspace.Basic\n"
+                        "\n"
+                        "theorem failed_plan (n : Nat) : 0 + n = n := sorry\n",
+                        encoding="utf-8",
+                    )
                     raise ValueError("plan serialization failed")
                 raise AssertionError("Proof should not run while the plan turn is still failing.")
 
@@ -4779,6 +4833,12 @@ class WorkflowTest(unittest.TestCase):
                     return AgentTurn({"stage": "enrichment"}, "enrichment prompt", "enrichment response")
                 if request.stage == BackendStage.PLAN:
                     (output_dir / "handoff.md").write_text("# Plan Handoff\n", encoding="utf-8")
+                    (output_dir / "theorem_statement.lean").write_text(
+                        "import FormalizationEngineWorkspace.Basic\n"
+                        "\n"
+                        "theorem failed_proof (n : Nat) : 0 + n = n := sorry\n",
+                        encoding="utf-8",
+                    )
                     return AgentTurn({"stage": "plan"}, "plan prompt", "plan response")
                 self.proof_calls += 1
                 (output_dir / "candidate.lean").write_text(
@@ -4842,6 +4902,12 @@ class WorkflowTest(unittest.TestCase):
                     return AgentTurn({"stage": "enrichment"}, "enrichment prompt", "enrichment response")
                 if request.stage == BackendStage.PLAN:
                     (output_dir / "handoff.md").write_text("# Plan Handoff\n", encoding="utf-8")
+                    (output_dir / "theorem_statement.lean").write_text(
+                        "import FormalizationEngineWorkspace.Basic\n"
+                        "\n"
+                        "theorem failed_proof (n : Nat) : 0 + n = n := sorry\n",
+                        encoding="utf-8",
+                    )
                     return AgentTurn({"stage": "plan"}, "plan prompt", "plan response")
                 (output_dir / "candidate.lean").write_text(
                     "\n".join(
@@ -4879,6 +4945,12 @@ class WorkflowTest(unittest.TestCase):
                     )
                 elif request.stage == BackendStage.PLAN:
                     (output_dir / "handoff.md").write_text("# Plan Handoff\n", encoding="utf-8")
+                    (output_dir / "theorem_statement.lean").write_text(
+                        "import FormalizationEngineWorkspace.Basic\n"
+                        "\n"
+                        "theorem failed_proof (n : Nat) : 0 + n = n := sorry\n",
+                        encoding="utf-8",
+                    )
                 return AgentTurn({"stage": request.stage.value}, f"{request.stage.value} prompt", f"{request.stage.value} response")
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -5174,6 +5246,12 @@ class WorkflowTest(unittest.TestCase):
                         )
                 elif request.stage == BackendStage.PLAN:
                     (output_dir / "handoff.md").write_text("# Plan Handoff\n\nPlan is now grounded.\n", encoding="utf-8")
+                    (output_dir / "theorem_statement.lean").write_text(
+                        "import FormalizationEngineWorkspace.Basic\n"
+                        "\n"
+                        "theorem recovered_zero_add (n : Nat) : 0 + n = n := sorry\n",
+                        encoding="utf-8",
+                    )
                 else:
                     raise ValueError(f"Unsupported stage {request.stage.value}")
 
@@ -5267,6 +5345,10 @@ class WorkflowTest(unittest.TestCase):
                         )
                 elif request.stage == BackendStage.PLAN:
                     (output_dir / "handoff.md").write_text("# Plan Handoff\n\nShould stay gated.\n", encoding="utf-8")
+                    (output_dir / "theorem_statement.lean").write_text(
+                        "-- Should stay gated\ntheorem gated : True := sorry\n",
+                        encoding="utf-8",
+                    )
                 else:
                     raise ValueError(f"Unsupported stage {request.stage.value}")
 
@@ -5518,12 +5600,22 @@ class WorkflowTest(unittest.TestCase):
                     self.plan_calls += 1
                     if self.plan_calls == 1:
                         (output_dir / "handoff.md").write_text("# Plan Handoff\n\nFirst plan.\n", encoding="utf-8")
+                        (output_dir / "theorem_statement.lean").write_text(
+                            "import FormalizationEngineWorkspace.Basic\n"
+                            "\n"
+                            "theorem flaky_zero_add (n : Nat) : 0 + n = n := sorry\n",
+                            encoding="utf-8",
+                        )
                         return AgentTurn(
                             request_payload={"stage": request.stage.value},
                             prompt=f"{request.stage.value} prompt",
                             raw_response=f"{request.stage.value} response",
                         )
-                    if request.stale_output_paths != ["artifacts/runs/reject-plan-once/02_plan/handoff.md"]:
+                    expected_stale = {
+                        "artifacts/runs/reject-plan-once/02_plan/handoff.md",
+                        "artifacts/runs/reject-plan-once/02_plan/theorem_statement.lean",
+                    }
+                    if set(request.stale_output_paths) != expected_stale:
                         raise AssertionError(f"unexpected stale plan outputs: {request.stale_output_paths!r}")
                     raise RuntimeError("network timeout while rerunning plan")
                 else:
@@ -5806,6 +5898,10 @@ class WorkflowTest(unittest.TestCase):
                     (prerequisites_dir / "lemma_001.md").write_text("# Lemma\n", encoding="utf-8")
                 elif request.stage == BackendStage.PLAN:
                     (output_dir / "handoff.md").write_text("# Plan Handoff\n", encoding="utf-8")
+                    (output_dir / "theorem_statement.lean").write_text(
+                        "-- dependency graph missing on purpose\ntheorem pending : True := sorry\n",
+                        encoding="utf-8",
+                    )
                 else:
                     raise AssertionError(request.stage.value)
                 return AgentTurn(
@@ -5861,6 +5957,211 @@ class WorkflowTest(unittest.TestCase):
             self.assertEqual(manifest.current_stage, RunStage.AWAITING_PLAN_APPROVAL)
             plan_checkpoint = (run_root / "02_plan" / "checkpoint.md").read_text(encoding="utf-8")
             self.assertIn("02_plan/dependency_graph.md", plan_checkpoint)
+
+    def test_yolo_and_divide_and_conquer_are_mutually_exclusive(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=SinglePassAgent(),
+                agent_config=AgentConfig(backend="codex"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+            with self.assertRaises(ValueError) as ctx:
+                workflow.prove(
+                    source_path=source_path,
+                    run_id="yolo-and-dnc",
+                    auto_approve=True,
+                    divide_and_conquer=True,
+                    yolo=True,
+                )
+            self.assertIn("mutually exclusive", str(ctx.exception))
+
+    def test_yolo_run_skips_plan_stage_and_goes_straight_to_proof(self) -> None:
+        class YoloAgent:
+            name = "yolo_agent"
+
+            def run_stage(self, request: StageRequest) -> AgentTurn:
+                output_dir = Path(request.repo_root) / request.output_dir
+                output_dir.mkdir(parents=True, exist_ok=True)
+
+                if request.stage == BackendStage.ENRICHMENT:
+                    (output_dir / "natural_language_statement.md").write_text(
+                        "# Statement\n\nFor every natural number n, 0 + n = n.\n",
+                        encoding="utf-8",
+                    )
+                    (output_dir / "natural_language_proof.md").write_text(
+                        "# Proof\n\nUse `Nat.zero_add`.\n",
+                        encoding="utf-8",
+                    )
+                    (output_dir / "proof_status.json").write_text(
+                        json.dumps({"obtained": True, "source": "input", "notes": ""}),
+                        encoding="utf-8",
+                    )
+                    (output_dir / "theorem_statement.lean").write_text(
+                        "theorem zero_add (n : Nat) : 0 + n = n := sorry\n",
+                        encoding="utf-8",
+                    )
+                elif request.stage == BackendStage.PROOF:
+                    (output_dir / "candidate.lean").write_text(
+                        "theorem zero_add (n : Nat) : 0 + n = n := by\n  simpa using Nat.zero_add n\n",
+                        encoding="utf-8",
+                    )
+                elif request.stage == BackendStage.REVIEW:
+                    (output_dir / "walkthrough.md").write_text("# Walkthrough\n", encoding="utf-8")
+                    (output_dir / "readable_candidate.lean").write_text("-- readable\n", encoding="utf-8")
+                    (output_dir / "error.md").write_text("# Error\nNone.\n", encoding="utf-8")
+                else:
+                    raise ValueError(f"Unexpected stage {request.stage.value} in yolo mode")
+                return AgentTurn(
+                    request_payload={"stage": request.stage.value},
+                    prompt=f"{request.stage.value} prompt",
+                    raw_response=f"{request.stage.value} response",
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("For every natural number n, 0 + n = n.\n", encoding="utf-8")
+
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=YoloAgent(),
+                agent_config=AgentConfig(backend="codex"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+            manifest = workflow.prove(
+                source_path=source_path,
+                run_id="yolo-test",
+                auto_approve=True,
+                yolo=True,
+            )
+
+            self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
+            self.assertTrue(manifest.yolo)
+            self.assertIn("yolo", manifest.workflow_tags)
+            run_root = temp_root / "artifacts" / "runs" / "yolo-test"
+            self.assertFalse((run_root / "02_plan").exists())
+            self.assertTrue((run_root / "01_enrichment" / "theorem_statement.lean").exists())
+            self.assertTrue((run_root / "04_final" / "final.lean").exists())
+
+    def test_yolo_resume_after_enrichment_approval_starts_proof(self) -> None:
+        class YoloPausingAgent:
+            name = "yolo_pausing_agent"
+            calls: list[str] = []
+
+            def run_stage(self, request: StageRequest) -> AgentTurn:
+                self.calls.append(request.stage.value)
+                output_dir = Path(request.repo_root) / request.output_dir
+                output_dir.mkdir(parents=True, exist_ok=True)
+
+                if request.stage == BackendStage.ENRICHMENT:
+                    (output_dir / "natural_language_statement.md").write_text("# Stmt\n", encoding="utf-8")
+                    (output_dir / "natural_language_proof.md").write_text("# Proof\n", encoding="utf-8")
+                    (output_dir / "proof_status.json").write_text(
+                        json.dumps({"obtained": True, "source": "input"}),
+                        encoding="utf-8",
+                    )
+                    (output_dir / "theorem_statement.lean").write_text(
+                        "theorem foo : True := sorry\n",
+                        encoding="utf-8",
+                    )
+                elif request.stage == BackendStage.PROOF:
+                    (output_dir / "candidate.lean").write_text(
+                        "theorem foo : True := trivial\n",
+                        encoding="utf-8",
+                    )
+                elif request.stage == BackendStage.REVIEW:
+                    (output_dir / "walkthrough.md").write_text("# Walkthrough\n", encoding="utf-8")
+                    (output_dir / "readable_candidate.lean").write_text("-- readable\n", encoding="utf-8")
+                    (output_dir / "error.md").write_text("# Error\nNone.\n", encoding="utf-8")
+                else:
+                    raise ValueError(f"Unexpected stage {request.stage.value}")
+                return AgentTurn(
+                    request_payload={"stage": request.stage.value},
+                    prompt=f"{request.stage.value} prompt",
+                    raw_response=f"{request.stage.value} response",
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_path = temp_root / "input.md"
+            source_path.write_text("True\n", encoding="utf-8")
+
+            agent = YoloPausingAgent()
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=agent,
+                agent_config=AgentConfig(backend="codex"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+            manifest = workflow.prove(
+                source_path=source_path,
+                run_id="yolo-resume",
+                auto_approve=False,
+                yolo=True,
+            )
+            self.assertEqual(manifest.current_stage, RunStage.AWAITING_ENRICHMENT_APPROVAL)
+            self.assertEqual(agent.calls, ["enrichment"])
+
+            workflow.approve_current_checkpoint("yolo-resume")
+            manifest = workflow.resume("yolo-resume", auto_approve=True)
+
+            self.assertEqual(manifest.current_stage, RunStage.COMPLETED)
+            self.assertNotIn("plan", agent.calls)
+            self.assertIn("proof", agent.calls)
+
+    def test_yolo_proof_stage_request_carries_enrichment_theorem_statement(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            workflow = FormalizationWorkflow(
+                repo_root=temp_root,
+                agent=RecordingRepairAgent(),
+                agent_config=AgentConfig(backend="codex"),
+                lean_runner=ContentCheckingLeanRunner(),
+            )
+            store = RunStore(temp_root / "artifacts", "yolo-pointers")
+            store.ensure_new()
+            store.write_text("00_input/source.md", "theorem\n")
+            store.write_json("00_input/provenance.json", {})
+            store.write_text("01_enrichment/natural_language_statement.md", "# Statement\n")
+            store.write_text("01_enrichment/natural_language_proof.md", "# Proof\n")
+            store.write_json("01_enrichment/proof_status.json", {"obtained": True, "source": "input"})
+            store.write_text("01_enrichment/theorem_statement.lean", "theorem foo : True := sorry\n")
+
+            manifest = RunManifest(
+                run_id="yolo-pointers",
+                source=SourceRef(path="input.md", kind=SourceKind.MARKDOWN),
+                agent_name="recording_repair_agent",
+                agent_config=AgentConfig(backend="codex"),
+                template_dir=str((temp_root / "lean_workspace_template").resolve()),
+                created_at="2026-04-16T00:00:00Z",
+                updated_at="2026-04-16T00:00:00Z",
+                current_stage=RunStage.AWAITING_ENRICHMENT_APPROVAL,
+                yolo=True,
+            )
+
+            proof_request = workflow._build_stage_request(
+                store,
+                manifest,
+                stage=BackendStage.PROOF,
+                output_dir="03_proof/attempts/attempt_0001",
+                required_outputs=["candidate.lean"],
+                attempt=1,
+                max_attempts=3,
+            )
+
+            self.assertTrue(proof_request.yolo)
+            self.assertIn("enrichment_theorem_statement", proof_request.input_paths)
+            self.assertTrue(
+                proof_request.input_paths["enrichment_theorem_statement"].endswith("01_enrichment/theorem_statement.lean")
+            )
+            self.assertNotIn("plan_handoff", proof_request.input_paths)
+            self.assertNotIn("plan_theorem_statement", proof_request.input_paths)
+            self.assertNotIn("plan_review", proof_request.input_paths)
 
     def test_enrichment_checkpoint_lists_relevant_lean_objects_when_present(self) -> None:
         class RelevantObjectsAgent:
@@ -6374,6 +6675,12 @@ class WorkflowTest(unittest.TestCase):
                     )
                 elif request.stage == BackendStage.PLAN:
                     (output_dir / "handoff.md").write_text("# Plan Handoff\n\nUse `Nat.zero_add`.\n", encoding="utf-8")
+                    (output_dir / "theorem_statement.lean").write_text(
+                        "import FormalizationEngineWorkspace.Basic\n"
+                        "\n"
+                        "theorem zero_add_stub (n : Nat) : 0 + n = n := sorry\n",
+                        encoding="utf-8",
+                    )
                 elif request.stage == BackendStage.PROOF:
                     (output_dir / "candidate.lean").write_text(
                         "\n".join(
@@ -6443,6 +6750,12 @@ class WorkflowTest(unittest.TestCase):
                     )
                 elif request.stage == BackendStage.PLAN:
                     (output_dir / "handoff.md").write_text("# Plan Handoff\n\nUse `Nat.zero_add`.\n", encoding="utf-8")
+                    (output_dir / "theorem_statement.lean").write_text(
+                        "import FormalizationEngineWorkspace.Basic\n"
+                        "\n"
+                        "theorem zero_add_stub (n : Nat) : 0 + n = n := sorry\n",
+                        encoding="utf-8",
+                    )
                 elif request.stage == BackendStage.PROOF:
                     (output_dir / "candidate.lean").write_text(
                         "\n".join(
@@ -6516,6 +6829,12 @@ class WorkflowTest(unittest.TestCase):
                     )
                 elif request.stage == BackendStage.PLAN:
                     (output_dir / "handoff.md").write_text("# Plan Handoff\n\nUse `Nat.zero_add`.\n", encoding="utf-8")
+                    (output_dir / "theorem_statement.lean").write_text(
+                        "import FormalizationEngineWorkspace.Basic\n"
+                        "\n"
+                        "theorem zero_add_stub (n : Nat) : 0 + n = n := sorry\n",
+                        encoding="utf-8",
+                    )
                 elif request.stage == BackendStage.PROOF:
                     (output_dir / "candidate.lean").write_text(
                         "\n".join(
@@ -6882,6 +7201,7 @@ class WorkflowTest(unittest.TestCase):
                         "    (output_dir / 'proof_status.json').write_text(json.dumps({'obtained': True, 'source': 'input', 'notes': ''}), encoding='utf-8')",
                         "elif stage == 'plan':",
                         "    (output_dir / 'handoff.md').write_text('# Plan Handoff\\n\\nTarget statement: `theorem stuck_zero_add (n : Nat) : 0 + n = n`\\n', encoding='utf-8')",
+                        "    (output_dir / 'theorem_statement.lean').write_text('import FormalizationEngineWorkspace.Basic\\n\\ntheorem stuck_zero_add (n : Nat) : 0 + n = n := sorry\\n', encoding='utf-8')",
                         "elif stage == 'proof':",
                         "    (output_dir / 'candidate.lean').write_text('import FormalizationEngineWorkspace.Basic\\n\\ntheorem stuck_zero_add (n : Nat) : 0 + n = n := by\\n  sorry\\n', encoding='utf-8')",
                         "elif stage == 'review':",
